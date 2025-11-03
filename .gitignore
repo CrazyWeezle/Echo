@@ -1,0 +1,73 @@
+# --- General ---
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*.tmp
+*.bak
+*.orig
+*.rej
+
+# --- Node / pnpm / logs ---
+node_modules/
+.pnpm-store/
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+logs/
+*.log
+*.log.*
+
+# --- Build artifacts ---
+dist/
+build/
+coverage/
+apps/api/dist/
+apps/web/dist/
+
+# --- Environment and secrets ---
+# Ignore any .env-style files anywhere, but keep documented examples
+**/.env
+**/.env.*
+!**/.env.example
+!**/.env.*.example 
+
+# Hosting env files (keep examples)
+hosting/env/*.env
+!hosting/env/*.env.example
+
+# Common secret file patterns
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*.jks
+*.keystore
+*service-account*.json
+*firebase*.json
+*credentials*.json
+*.secret
+*.secrets
+*.secret.*
+
+# npm auth config (can contain tokens)
+*.npmrc
+
+# --- Editor / IDE ---
+.idea/
+.vscode/
+
+# --- Android (Capacitor) ---
+apps/web/android/**/build/
+apps/web/android/**/release/
+apps/web/android/local.properties
+apps/web/android/app/google-services.json
+*.keystore
+
+# --- Docker (local overrides) ---
+docker-compose.override.yml
+
+# --- Repo-specific temp files ---
+TEMP_DUMP

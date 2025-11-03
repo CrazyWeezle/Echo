@@ -1,0 +1,48 @@
+# ---------- builder ----------
+FROM node:20-alpine AS builder
+WORKDIR /repo
+# Pin pnpm to repo version and install native build tools for any native deps
+RUN corepack enable && corepack prepare pnpm@10.19.0 --activate \
+    && apk add --no-cache python3 make g++ libc6-compat ca-certificates
+
+# Copy only manifests for better layer caching
+COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
+COPY apps/api/package.json apps/api/package.json
+
+# Install only the api workspace (includes devDependencies like @nestjs/cli)
+RUN pnpm install --filter ./apps/api --no-frozen-lockfile
+
+# Bring in full source and build the API
+COPY . .
+WORKDIR /repo/apps/api
+# --- Prisma (optional, enable when DB ready) ---
+# If you switch UsersService back to Prisma, uncomment the block below.
+# It assumes you provide a DATABASE_URL at build time (or remove prisma.config.ts).
+#
+# COPY prisma ./prisma
+# ARG DATABASE_URL
+# ENV DATABASE_URL=$DATABASE_URL
+# # Generate Prisma Client before building Nest (requires DATABASE_URL when using prisma.config.ts)
+# RUN pnpm --filter api exec prisma generate --schema=apps/api/prisma/schema.prisma
+
+RUN pnpm run build
+
+# Back to repo root and create a minimal prod bundle for the API
+WORKDIR /repo
+RUN pnpm deploy --filter ./apps/api --prod --legacy /out \
+    && mkdir -p /out/dist \
+    && cp -r apps/api/dist/* /out/dist/
+
+
+
+# ---------- runtime ----------
+FROM node:20-alpine AS runtime
+ENV NODE_ENV=production
+WORKDIR /app
+COPY --from=builder /out/ .
+# Note: run Prisma migrations in CI/CD or an init container:
+#   pnpm --filter api exec prisma migrate deploy --schema=apps/api/prisma/schema.prisma
+# The production image typically does not include the Prisma CLI.
+USER node
+EXPOSE 5000
+CMD ["node", "dist/main.js"]

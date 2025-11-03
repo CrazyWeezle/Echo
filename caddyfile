@@ -1,0 +1,20 @@
+:80 {
+  encode zstd gzip
+
+  handle_path /api/* {
+    reverse_proxy api:5000
+  }
+
+  # Proxy S3/MinIO bucket via same-origin path for browser access and uploads
+  handle_path /files/* {
+    # Strip the /files prefix and forward to MinIO
+    reverse_proxy minio:9000
+  }
+
+  @static {
+    path *.js *.css *.png *.svg *.webp *.woff2
+  }
+  header @static Cache-Control "public, max-age=31536000, immutable"
+
+  reverse_proxy web:5173
+}

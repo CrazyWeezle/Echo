@@ -1,0 +1,29 @@
+# Exclude large or host-specific directories from build context
+node_modules
+**/node_modules
+
+# Output/build artifacts
+dist
+build
+coverage
+
+# VCS
+.git
+.gitignore
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+.vscode
+.idea
+
+# Docker
+Dockerfile
+Dockerfile.*
+docker-compose.yml
+docker-compose.*.yml
+hosting/docker-compose.yml
+
+# Env files (compose mounts them separately if needed)
+*.env
+env/

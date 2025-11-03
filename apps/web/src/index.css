@@ -1,0 +1,96 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* mobile helpers */
+:root { --vh: 1vh; }
+/* app height helper using JS-updated --vh; falls back below */
+.h-app { height: calc(var(--vh, 1vh) * 100); }
+:root {
+  --brand-bg-start: #0b2a2f; /* deep teal */
+  --brand-bg-end: #041b1f;   /* darker teal */
+  --brand-emerald: #0ea37e;  /* button/accents */
+  --brand-teal: #25c2a0;
+}
+.from-brand-emerald { --tw-gradient-from: var(--brand-emerald) var(--tw-gradient-from-position); --tw-gradient-to: rgb(14 163 126 / 0) var(--tw-gradient-to-position); --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to); }
+.to-brand-teal { --tw-gradient-to: var(--brand-teal) var(--tw-gradient-to-position); }
+
+/* Branded login background */
+.brand-login-bg {
+  background: radial-gradient(1200px 600px at 10% 5%, rgba(16,185,129,0.12), transparent 60%),
+              radial-gradient(900px 500px at 90% 95%, rgba(45,212,191,0.10), transparent 55%),
+              linear-gradient(180deg, var(--brand-bg-start), var(--brand-bg-end));
+}
+
+/* App-wide background (teal gradient, subtle) */
+.brand-app-bg {
+  background: radial-gradient(1200px 600px at 5% 0%, rgba(16,185,129,0.10), transparent 60%),
+              radial-gradient(900px 500px at 95% 100%, rgba(45,212,191,0.08), transparent 55%),
+              linear-gradient(180deg, var(--brand-bg-start), var(--brand-bg-end));
+}
+
+/* Landing hero animated glow */
+.hero-animated {
+  background:
+    radial-gradient(600px 300px at 20% 20%, rgba(16,185,129,0.20), transparent 60%),
+    radial-gradient(500px 260px at 80% 80%, rgba(45,212,191,0.18), transparent 55%),
+    linear-gradient(180deg, var(--brand-bg-start), var(--brand-bg-end));
+  background-size: 200% 200%, 200% 200%, 100% 100%;
+  animation: heroShift 14s ease-in-out infinite alternate;
+}
+
+@keyframes heroShift {
+  from { background-position: 0% 0%, 100% 100%, 0% 0%; }
+  to   { background-position: 100% 100%, 0% 0%, 0% 0%; }
+}
+@supports (height: 100dvh) {
+  .h-app { height: 100dvh; }
+}
+.safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
+.safe-top { padding-top: env(safe-area-inset-top); }
+
+/* optional: basic body reset so Tailwind controls layout */
+html, body, #root {
+  height: 100%;
+}
+body {
+  margin: 0;
+  overflow-x: hidden; /* prevent subtle 1px horizontal scroll on mobile */
+}
+
+/* Gentle fade/slide for settings sections */
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.fade-in { animation: fadeInUp 180ms ease-out; }
+
+/* Typing indicator dots */
+@keyframes typingBounce {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.6; }
+  30% { transform: translateY(-2px); opacity: 1; }
+}
+.typing-dots { display: inline-flex; gap: 4px; align-items: center; }
+.typing-dot { width: 6px; height: 6px; border-radius: 9999px; background: #34d399; opacity: 0.7; animation: typingBounce 1200ms infinite ease-in-out; }
+.typing-dot:nth-child(2) { animation-delay: 150ms; }
+.typing-dot:nth-child(3) { animation-delay: 300ms; }
+
+/* Theme overrides (accent + background hues) */
+[data-theme="emerald"] {
+  --brand-bg-start: #0b2a2f;
+  --brand-bg-end: #041b1f;
+  --brand-emerald: #0ea37e;
+  --brand-teal: #25c2a0;
+}
+[data-theme="blue"] {
+  --brand-bg-start: #0a2740; /* deep blue */
+  --brand-bg-end: #041628;   /* darker blue */
+  --brand-emerald: #3b82f6;  /* blue accents */
+  --brand-teal: #60a5fa;
+}
+[data-theme="purple"] {
+  --brand-bg-start: #2a0b2f; /* deep purple */
+  --brand-bg-end: #1a0a24;   /* darker purple */
+  --brand-emerald: #a855f7;  /* violet accents */
+  --brand-teal: #c084fc;
+}

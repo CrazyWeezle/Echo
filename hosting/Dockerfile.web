@@ -1,0 +1,31 @@
+# ---------- builder ----------
+FROM node:20-alpine AS builder
+WORKDIR /repo
+RUN corepack enable && corepack prepare pnpm@10.19.0 --activate
+
+# Build arg for Vite (default to /api)
+ARG VITE_API_URL=/api
+ENV VITE_API_URL=$VITE_API_URL
+# (optional: keep backward compat with older var name)
+ENV VITE_API_HTTP_URL=$VITE_API_URL
+
+COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
+COPY apps/web/package.json apps/web/package.json
+# Install only the web workspace (include devDependencies to build)
+RUN pnpm install --filter ./apps/web --frozen-lockfile
+
+COPY . .
+WORKDIR /repo/apps/web
+# Sanity: print tail of App.tsx to confirm builder sees latest source (remove when stable)
+RUN echo '--- apps/web/src/App.tsx tail (2185-2266) ---' \
+ && sed -n '2185,2266p' src/App.tsx || true
+# Vite will read VITE_* from env at build-time
+# Use the package script to avoid PATH quirks
+RUN pnpm run build
+
+# ---------- runtime ----------
+FROM nginx:alpine AS runtime
+COPY --from=builder /repo/apps/web/dist /usr/share/nginx/html
+# Nginx reverse proxy to API
+COPY hosting/nginx.conf /etc/nginx/conf.d/default.conf
+EXPOSE 80

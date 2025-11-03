@@ -1,0 +1,19 @@
+{
+    "files": [],
+    "references": [{ "path": "./apps/web" }],
+    "compilerOptions": {
+        "composite": true,
+        "target": "ES2020",
+        "module": "ESNext",
+        "moduleResolution": "bundler",
+        "lib": ["ES2020", "DOM", "DOM.Iterable"],
+        "jsx": "react-jsx",
+        "strict": true,
+        "skipLibCheck": true,
+        "noEmit": true,
+        "baseUrl": ".",
+        "paths": {
+            "@/*": ["apps/web/src/*"]
+        }
+    }
+}
