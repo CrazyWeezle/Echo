@@ -1,4 +1,8 @@
-// Minimal ECHO API: auth + socket events
+// ECHO API entrypoint
+// - Sets up HTTP server with CORS and a small router that delegates to feature modules in ./routes
+// - Initializes Socket.IO for realtime chat, presence, typing, reactions and simple voice signalling
+// - Performs DB bootstrap with retries so the container waits for Postgres
+// - Optionally initializes Firebase Admin for push notifications
 import http from 'node:http';
 import { randomUUID } from 'node:crypto';
 import jwt from 'jsonwebtoken';
@@ -6,7 +10,6 @@ import { pool, initDb } from './db.js';
 import { JWT_SECRET, ALLOWED_ORIGINS, PORT } from './config.js';
 import { json, guessImageContentType } from './utils.js';
 
-// HTTP route modules
 import { handleAuth } from './routes/auth.js';
 import { handleUsers } from './routes/users.js';
 import { handleSpaces } from './routes/spaces.js';
@@ -18,17 +21,16 @@ import { handleForms } from './routes/forms.js';
 import { handleHabits } from './routes/habits.js';
 import { handlePush } from './routes/push.js';
 
-// Shared chat helpers
 import { listSpaces, listChannels, getBacklog } from './services/chat.js';
 
-// Socket.IO
 import { Server as IOServer } from 'socket.io';
 
-// Global safety nets
+// Global error traps keep the process alive and surface diagnostics in logs
+
 process.on('unhandledRejection', (err) => { try { console.error('[api] Unhandled promise rejection', err); } catch {} });
 process.on('uncaughtException', (err) => { try { console.error('[api] Uncaught exception', err); } catch {} });
 
-// Initialize DB with retries so container waits for Postgres
+// --- DB bootstrap with retries -------------------------------------------------
 {
   let attempts = 0;
   const maxAttempts = Number(process.env.DB_INIT_MAX_ATTEMPTS || 60);
@@ -44,7 +46,7 @@ process.on('uncaughtException', (err) => { try { console.error('[api] Uncaught e
   }
 }
 
-// HTTP server
+// --- HTTP server + router ------------------------------------------------------
 const server = http.createServer(async (req, res) => {
   try {
     // CORS
@@ -59,16 +61,17 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'OPTIONS') { res.statusCode = 204; return res.end(); }
     if (!originAllowed && reqOrigin) return json(res, 403, { message: 'CORS origin not allowed' });
 
+    // Guard: only serve /api/*
     if (!req.url) return json(res, 404, { message: 'Not found' });
     if (!req.url.startsWith('/api/')) return json(res, 404, { message: 'Not found' });
 
-    // Body
+    // Parse JSON body (tiny, no streaming)
     const chunks = [];
     for await (const ch of req) chunks.push(ch);
     let body = {};
     try { body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'); } catch {}
 
-    // Dispatch to feature routes
+    // Delegate to feature modules (return true when a handler fully responded)
     if (req.url.startsWith('/api/auth/')) { const handled = await handleAuth(req, res, body, { io }); if (handled) return; }
     if (req.url.startsWith('/api/users/')) { const handled = await handleUsers(req, res, body, { io }); if (handled) return; }
     if (req.url.startsWith('/api/friends') || req.url.startsWith('/api/dms/')) { const handled = await handleFriends(req, res, body, { io }); if (handled) return; }
@@ -80,17 +83,17 @@ const server = http.createServer(async (req, res) => {
     if (req.url.startsWith('/api/habits')) { const handled = await handleHabits(req, res, body, { io }); if (handled) return; }
     if (req.url.startsWith('/api/push')) { const handled = await handlePush(req, res, body, { io }); if (handled) return; }
 
-    // Health
+    // Health check for container/platform readiness
     if (req.method === 'GET' && req.url === '/api/health') return json(res, 200, { status: 'ok' });
 
-    // Unknown
+    // Fallthrough: unknown route
     return json(res, 404, { message: 'Not found' });
   } catch (err) {
     try { console.error('[api] Unhandled error', err); json(res, 500, { message: 'Internal error' }); } catch {}
   }
 });
 
-// Optional Firebase Admin for FCM push; initialize only when credentials provided
+// --- Push notifications (optional Firebase Admin) -----------------------------
 let adminMessaging = null;
 try {
   const fb = await import('firebase-admin');
@@ -116,7 +119,7 @@ async function sendPushToUsers(userIds, payload) {
   } catch (e) { console.warn('sendPush failed', e?.message || e); }
 }
 
-// Socket.IO
+// --- Socket.IO: realtime transport -------------------------------------------
 const io = new IOServer(server, {
   path: '/socket.io',
   cors: {
@@ -129,9 +132,10 @@ const io = new IOServer(server, {
   pingTimeout: Number(process.env.SIO_PING_TIMEOUT_MS || 60000),
 });
 
-// Presence helpers
-const roomPresence = new Map(); // room -> Set<userId>
-const typingState = new Map(); // room -> Map<userId, boolean>
+// Presence/typing state in-memory (single-instance). For multi-instance,
+// back with a shared adapter (e.g., Redis) and shared presence store.
+const roomPresence = new Map();      // room -> Set<userId>
+const typingState = new Map();       // room -> Map<userId, boolean>
 function presenceJoin(room, userId) {
   if (!roomPresence.has(room)) roomPresence.set(room, new Set());
   roomPresence.get(room).add(userId);
@@ -154,7 +158,7 @@ function emitGlobalPresence() {
   io.to(room).emit('presence:global', { userIds });
 }
 
-// Socket auth
+// Authenticate socket using the access token provided in the handshake
 io.use(async (socket, next) => {
   const token = socket.handshake.auth && socket.handshake.auth.token;
   if (!token) return next(new Error('Missing token'));
@@ -169,7 +173,7 @@ io.use(async (socket, next) => {
   }
 });
 
-// Connection handler
+// Per-socket lifecycle and events
 io.on('connection', async (socket) => {
   const userId = socket.data.userId;
   const { rows } = await pool.query('SELECT name, avatar_url, name_color FROM users WHERE id=$1', [userId]);
@@ -186,6 +190,7 @@ io.on('connection', async (socket) => {
   const room = () => curChan;
   const spaceRoom = () => `space:${curVoid}`;
 
+  // Bootstrap: list spaces and channels
   const spaces = await listSpaces(userId);
   socket.emit('void:list', { voids: spaces });
   if (spaces[0]) {
@@ -203,6 +208,7 @@ io.on('connection', async (socket) => {
     socket.emit('void:list', { voids: await listSpaces(userId) });
   });
 
+  // Switch current space
   socket.on('void:switch', async ({ voidId }) => {
     if (!voidId) return;
     const { rows } = await pool.query('SELECT 1 FROM space_members WHERE space_id=$1 AND user_id=$2', [voidId, userId]);
@@ -217,6 +223,7 @@ io.on('connection', async (socket) => {
     socket.emit('channel:list', { voidId, channels: await listChannels(voidId) });
   });
 
+  // List channels for a space
   socket.on('channel:list', async ({ voidId }) => {
     if (!voidId) return;
     const { rows } = await pool.query('SELECT 1 FROM space_members WHERE space_id=$1 AND user_id=$2', [voidId, userId]);
@@ -224,6 +231,7 @@ io.on('connection', async (socket) => {
     socket.emit('channel:list', { voidId, channels: await listChannels(voidId) });
   });
 
+  // Enter a channel and send its backlog
   socket.on('channel:switch', async ({ voidId, channelId }) => {
     if (!channelId) return;
     const found = await pool.query('SELECT space_id FROM channels WHERE id=$1', [channelId]);
@@ -240,7 +248,7 @@ io.on('connection', async (socket) => {
     socket.emit('channel:backlog', { voidId: sid, channelId, messages: await getBacklog(channelId, userId) });
   });
 
-  // Voice signalling
+  // Simple voice signalling (room membership + peer relays)
   let curVoiceRid = '';
   socket.on('voice:join', async ({ channelId }) => {
     try {
@@ -287,7 +295,7 @@ io.on('connection', async (socket) => {
     } catch {}
   });
 
-  // Messages
+  // Send a message (with optional attachments)
   socket.on('message:send', async ({ voidId, channelId, content, tempId, attachments }) => {
     if (!channelId) return;
     const rid = channelId;
@@ -318,6 +326,7 @@ io.on('connection', async (socket) => {
     io.to(rid).emit('message:new', { voidId: sid, channelId, message, tempId });
   });
 
+  // Mark messages read up to a cutoff
   socket.on('read:up_to', async ({ channelId, lastMessageId }) => {
     const rid = String(channelId || '');
     const mid = String(lastMessageId || '');
@@ -336,6 +345,7 @@ io.on('connection', async (socket) => {
     io.to(rid).emit('message:seen', { channelId: rid, messageId: mid, userId, name: socket.data.name });
   });
 
+  // Edit a message (author only)
   socket.on('message:edit', async ({ messageId, content }) => {
     const { rows } = await pool.query('SELECT channel_id, author_id FROM messages WHERE id=$1', [String(messageId)]);
     const msg = rows[0]; if (!msg) return;
@@ -346,6 +356,7 @@ io.on('connection', async (socket) => {
     io.to(msg.channel_id).emit('message:edited', { channelId: msg.channel_id, messageId: String(messageId), content: String(content || ''), updatedAt: new Date().toISOString() });
   });
 
+  // Delete a message (author only)
   socket.on('message:delete', async ({ messageId }) => {
     const { rows } = await pool.query('SELECT channel_id, author_id FROM messages WHERE id=$1', [String(messageId)]);
     const msg = rows[0]; if (!msg) return;
@@ -356,6 +367,7 @@ io.on('connection', async (socket) => {
     io.to(msg.channel_id).emit('message:deleted', { channelId: msg.channel_id, messageId: String(messageId) });
   });
 
+  // Add a reaction
   socket.on('reaction:add', async ({ messageId, emoji }) => {
     const mid = String(messageId);
     const e = String(emoji || '').slice(0, 32); if (!e) return;
@@ -369,6 +381,7 @@ io.on('connection', async (socket) => {
     io.to(msg.channel_id).emit('message:reactions', { channelId: msg.channel_id, messageId: mid, reactions });
   });
 
+  // Remove a reaction
   socket.on('reaction:remove', async ({ messageId, emoji }) => {
     const mid = String(messageId);
     const e = String(emoji || '').slice(0, 32); if (!e) return;
@@ -382,6 +395,7 @@ io.on('connection', async (socket) => {
     io.to(msg.channel_id).emit('message:reactions', { channelId: msg.channel_id, messageId: mid, reactions });
   });
 
+  // Typing indicators (start/stop)
   socket.on('typing:set', async ({ voidId, channelId, isTyping }) => {
     const rid = channelId; if (!rid) return;
     if (!typingState.has(rid)) typingState.set(rid, new Map());
@@ -392,6 +406,7 @@ io.on('connection', async (socket) => {
     else socket.to(rid).emit('typing:stop', { voidId: sid, channelId, userId });
   });
 
+  // Cleanup on disconnect
   socket.on('disconnect', () => {
     presenceLeave(room(), userId); emitPresence(room());
     if (curVoid) { presenceLeave(spaceRoom(), userId); emitSpacePresence(spaceRoom(), curVoid); }
@@ -403,4 +418,3 @@ io.on('connection', async (socket) => {
 server.listen(PORT, () => {
   console.log(`[api] listening on :${PORT}`);
 });
-

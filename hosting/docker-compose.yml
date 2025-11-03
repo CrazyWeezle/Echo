@@ -55,6 +55,17 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: echo-cloudflared
+    # Token mode via Compose .env (hosting/.env)
+    # Put TUNNEL_TOKEN=eyJ... in hosting/.env
+    command: ["tunnel","--no-autoupdate","run","--token","${TUNNEL_TOKEN}"]
+    depends_on:
+      web:
+        condition: service_started
+    restart: unless-stopped
+
   db:
     image: postgres:16-alpine
     container_name: echo-postgres

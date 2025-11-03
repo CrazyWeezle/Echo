@@ -1,0 +1,27 @@
+# Cloudflare named tunnel configuration (credentials mode)
+#
+# Steps (one-time setup):
+# 1) In Cloudflare Zero Trust → Tunnels:
+#    - Create a tunnel (Named Tunnel) or pick your existing one.
+#    - Click the tunnel → Connectors → "Download credentials" (JSON).
+#    - Save that file as: hosting/cloudflared/credentials.json
+# 2) Copy the tunnel UUID from the Cloudflare UI (looks like 8-4-4-4-12 hex).
+# 3) Set the `tunnel:` field below to that UUID.
+# 4) In the same tunnel, add a Public Hostname mapping:
+#      app.echologin.org  →  http://web:80
+# 5) Bring up the service: from hosting/:  docker compose up -d cloudflared
+#
+# Notes:
+# - credentials-file path must match the mounted path in docker-compose.yml
+# - The `ingress` rules here are optional when hostnames are managed in the dashboard,
+#   but keeping a basic catch-all is recommended.
+
+tunnel: "CHANGE-ME-TUNNEL-UUID"
+credentials-file: /etc/cloudflared/credentials.json
+
+ingress:
+  # Optional: uncomment to enforce host routing from config too
+  # - hostname: app.echologin.org
+  #   service: http://web:80
+  - service: http_status:404
+
