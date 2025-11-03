@@ -2013,6 +2013,15 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                                   value={quickTextByFav[fid] || ''}
                                   onChange={(e) => setQuick(fid, (e.target as HTMLInputElement).value)}
                                   onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); quickSend(fid); } }}
+                                  autoComplete="off"
+                                  autoCorrect="off"
+                                  autoCapitalize="sentences"
+                                  spellCheck={true}
+                                  inputMode="text"
+                                  name="chat-message"
+                                  data-lpignore="true"
+                                  data-1p-ignore
+                                  data-bw-ignore
                                 />
                                 <button
                                   className="shrink-0 px-2 md:px-3 py-2 rounded border border-emerald-700 bg-emerald-800/70 hover:bg-emerald-700/70 text-emerald-50 flex items-center justify-center text-sm"
@@ -2668,6 +2677,15 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                   onChange={(e) => onInputChange(e.target.value)}
                   onPaste={onComposerPaste}
                   onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
+                  autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="sentences"
+                  spellCheck={true}
+                  inputMode="text"
+                  name="chat-message"
+                  data-lpignore="true"
+                  data-1p-ignore
+                  data-bw-ignore
                 />
                 <button
                   className="shrink-0 px-2 md:px-3 py-2 rounded border border-emerald-700 bg-emerald-800/70 hover:bg-emerald-700/70 text-emerald-50 flex items-center justify-center"
@@ -2998,7 +3016,6 @@ function ChatApp({ token, user }: { token: string; user: any }) {
     </div>
   );
 }
-
 
 
 

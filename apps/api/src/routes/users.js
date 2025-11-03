@@ -113,6 +113,25 @@ export async function handleUsers(req, res, body, ctx) {
                         : await pool.query('SELECT id, username, name, avatar_url as "avatarUrl", bio, COALESCE(status, \'\') as status, tone_url as "toneUrl", name_color as "nameColor", friend_ring_color as "friendRingColor", COALESCE(friend_ring_enabled, true) as "friendRingEnabled", COALESCE(pronouns, \'\') as pronouns, COALESCE(location, \'\') as location, COALESCE(website, \'\') as website, COALESCE(banner_url, \'\') as "bannerUrl" FROM users WHERE username=$1', [uname]);
     const row = q.rows[0];
     if (!row) return json(res, 404, { message: 'User not found' }), true;
+    // Enrich with friendship metadata relative to the viewer so the
+    // client can switch between "Add Friend" and "Message" states.
+    try {
+      if (row.id !== viewer) {
+        const a = String(row.id) < String(viewer) ? String(row.id) : String(viewer);
+        const b = String(row.id) < String(viewer) ? String(viewer) : String(row.id);
+        const fr = await pool.query('SELECT 1 FROM friendships WHERE user_id_a=$1 AND user_id_b=$2', [a, b]);
+        const isFriend = fr.rowCount > 0;
+        let incomingRequestId = null;
+        let outgoingRequestId = null;
+        if (!isFriend) {
+          const inc = await pool.query('SELECT id FROM friend_requests WHERE from_user=$1 AND to_user=$2', [row.id, viewer]);
+          if (inc.rowCount > 0) incomingRequestId = inc.rows[0].id;
+          const out = await pool.query('SELECT id FROM friend_requests WHERE from_user=$1 AND to_user=$2', [viewer, row.id]);
+          if (out.rowCount > 0) outgoingRequestId = out.rows[0].id;
+        }
+        return json(res, 200, { ...row, isFriend, incomingRequestId, outgoingRequestId }), true;
+      }
+    } catch {}
     return json(res, 200, row), true;
   }
 
@@ -139,4 +158,3 @@ export async function handleUsers(req, res, body, ctx) {
 
   return false;
 }
-

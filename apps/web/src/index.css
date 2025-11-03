@@ -58,6 +58,39 @@ body {
   overflow-x: hidden; /* prevent subtle 1px horizontal scroll on mobile */
 }
 
+/* Modern, rounded scrollbars that match theme */
+/* Defaults (emerald theme) */
+:root {
+  --scrollbar-thumb: rgba(14,163,126,0.65); /* from --brand-emerald */
+  --scrollbar-thumb-hover: rgba(14,163,126,0.85);
+  --scrollbar-track: rgba(255,255,255,0.06); /* subtle track on dark bg */
+}
+
+/* Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
+/* WebKit browsers */
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+  border-radius: 999px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 999px; /* rounded bubble */
+  border: 2px solid transparent; /* creates inset/bubble look */
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+
 /* Gentle fade/slide for settings sections */
 @keyframes fadeInUp {
   from { opacity: 0; transform: translateY(4px); }
@@ -81,16 +114,22 @@ body {
   --brand-bg-end: #041b1f;
   --brand-emerald: #0ea37e;
   --brand-teal: #25c2a0;
+  --scrollbar-thumb: rgba(14,163,126,0.65);
+  --scrollbar-thumb-hover: rgba(14,163,126,0.85);
 }
 [data-theme="blue"] {
   --brand-bg-start: #0a2740; /* deep blue */
   --brand-bg-end: #041628;   /* darker blue */
   --brand-emerald: #3b82f6;  /* blue accents */
   --brand-teal: #60a5fa;
+  --scrollbar-thumb: rgba(59,130,246,0.60);
+  --scrollbar-thumb-hover: rgba(59,130,246,0.80);
 }
 [data-theme="purple"] {
   --brand-bg-start: #2a0b2f; /* deep purple */
   --brand-bg-end: #1a0a24;   /* darker purple */
   --brand-emerald: #a855f7;  /* violet accents */
   --brand-teal: #c084fc;
+  --scrollbar-thumb: rgba(168,85,247,0.60);
+  --scrollbar-thumb-hover: rgba(168,85,247,0.80);
 }
