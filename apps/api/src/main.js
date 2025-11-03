@@ -9,6 +9,13 @@ import { handleAuth } from './routes/auth.js';
 import { handleUsers } from './routes/users.js';
 import { handleSpaces } from './routes/spaces.js';
 import { handleChannels } from './routes/channels.js';
+import { handleFriends } from './routes/friends.js';
+import { handleFiles } from './routes/files.js';
+import { handleKanban } from './routes/kanban.js';
+import { handleForms } from './routes/forms.js';
+import { handleHabits } from './routes/habits.js';
+import { handlePush } from './routes/push.js';
+import { listSpaces, listChannels, getBacklog } from './services/chat.js';
 
 // Global safety nets to avoid process crashes on unexpected errors
 process.on('unhandledRejection', (err) => {
@@ -101,12 +108,36 @@ const server = http.createServer(async (req, res) => {
     const handled = await handleUsers(req, res, body, { io });
     if (handled) return;
   }
+  if (req.url.startsWith('/api/friends') || req.url.startsWith('/api/dms/')) {
+    const handled = await handleFriends(req, res, body, { io });
+    if (handled) return;
+  }
   if (req.url.startsWith('/api/spaces') || req.url.startsWith('/api/invites/')) {
     const handled = await handleSpaces(req, res, body, { io });
     if (handled) return;
   }
   if (req.url.startsWith('/api/channels')) {
     const handled = await handleChannels(req, res, body, { io });
+    if (handled) return;
+  }
+  if (req.url.startsWith('/api/files')) {
+    const handled = await handleFiles(req, res, body, { io });
+    if (handled) return;
+  }
+  if (req.url.startsWith('/api/kanban')) {
+    const handled = await handleKanban(req, res, body, { io });
+    if (handled) return;
+  }
+  if (req.url.startsWith('/api/forms')) {
+    const handled = await handleForms(req, res, body, { io });
+    if (handled) return;
+  }
+  if (req.url.startsWith('/api/habits')) {
+    const handled = await handleHabits(req, res, body, { io });
+    if (handled) return;
+  }
+  if (req.url.startsWith('/api/push')) {
+    const handled = await handlePush(req, res, body, { io });
     if (handled) return;
   }
 
@@ -1558,105 +1589,7 @@ const io = new IOServer(server, {
   pingTimeout: Number(process.env.SIO_PING_TIMEOUT_MS || 60000),
 });
 
-// Helper queries
-async function listSpaces(userId) {
-  const { rows } = await pool.query(
-    'SELECT s.id, s.name, s.avatar_url as "avatarUrl" FROM spaces s JOIN space_members m ON m.space_id=s.id WHERE m.user_id=$1 ORDER BY s.name',
-    [userId]
-  );
-  return rows;
-}
-async function listChannels(spaceId) {
-  const { rows } = await pool.query('SELECT id, name, COALESCE(type,\'text\') as type FROM channels WHERE space_id=$1 ORDER BY name', [spaceId]);
-  return rows.map(r => ({ id: r.id, name: r.name, type: r.type, voidId: spaceId }));
-}
-
-async function getKanbanState(channelId) {
-  const { rows: lists } = await pool.query('SELECT id, name, pos FROM kanban_lists WHERE channel_id=$1 ORDER BY pos ASC, created_at ASC', [channelId]);
-  const ids = lists.map(l => l.id);
-  const itemsMap = new Map();
-  if (ids.length > 0) {
-    const { rows: items } = await pool.query('SELECT id, list_id, content, pos, done FROM kanban_items WHERE list_id = ANY($1::uuid[]) ORDER BY pos ASC, created_at ASC', [ids]);
-    for (const it of items) {
-      if (!itemsMap.has(it.list_id)) itemsMap.set(it.list_id, []);
-      itemsMap.get(it.list_id).push({ id: it.id, content: it.content, pos: it.pos, done: !!it.done });
-    }
-  }
-  return lists.map(l => ({ id: l.id, name: l.name, pos: l.pos, items: (itemsMap.get(l.id) || []) }));
-}
-
-async function getFormQuestions(channelId) {
-  const { rows } = await pool.query('SELECT id, prompt, kind, pos FROM form_questions WHERE channel_id=$1 ORDER BY pos ASC, created_at ASC', [channelId]);
-  return rows.map(r => ({ id: r.id, prompt: r.prompt, kind: r.kind || 'text', pos: r.pos }));
-}
-async function getBacklog(channelId, userId, limit = 50) {
-  const { rows } = await pool.query(
-    `SELECT m.id, m.content, m.created_at, m.updated_at, m.author_id, u.name as author_name, u.name_color as author_color
-     FROM messages m
-     JOIN users u ON u.id = m.author_id
-     WHERE m.channel_id = $1
-     ORDER BY m.created_at ASC
-     LIMIT $2`,
-    [channelId, limit]
-  );
-  const ids = rows.map(r => r.id);
-  const reactionMap = new Map(); // message_id -> { emoji -> { count, mine } }
-  if (ids.length > 0) {
-    const { rows: rxs } = await pool.query(
-      `SELECT message_id, reaction, COUNT(*)::int as count, BOOL_OR(user_id = $2) as mine
-       FROM message_reactions
-       WHERE message_id = ANY($1::uuid[])
-       GROUP BY message_id, reaction`,
-       [ids, userId]
-    );
-    for (const r of rxs) {
-      if (!reactionMap.has(r.message_id)) reactionMap.set(r.message_id, {});
-      reactionMap.get(r.message_id)[r.reaction] = { count: Number(r.count), mine: !!r.mine };
-    }
-  }
-  // attachments
-  const atts = new Map();
-  if (ids.length > 0) {
-    const { rows: ax } = await pool.query('SELECT message_id, url, content_type as "contentType", name, size_bytes as size FROM message_attachments WHERE message_id = ANY($1::uuid[]) ORDER BY created_at ASC', [ids]);
-    for (const a of ax) {
-      if (!atts.has(a.message_id)) atts.set(a.message_id, []);
-      atts.get(a.message_id).push({ url: a.url, contentType: a.contentType, name: a.name, size: a.size });
-    }
-  }
-  // reads (seen-by)
-  const reads = new Map(); // message_id -> Map<name, true>
-  const readsIds = new Map(); // message_id -> Set<user_id>
-  if (ids.length > 0) {
-    const { rows: rx } = await pool.query(
-      `SELECT mr.message_id, mr.user_id, COALESCE(u.name, '') as name
-       FROM message_reads mr
-       JOIN users u ON u.id = mr.user_id
-       WHERE mr.message_id = ANY($1::uuid[])`,
-      [ids]
-    );
-    for (const r of rx) {
-      if (!reads.has(r.message_id)) reads.set(r.message_id, new Map());
-      if (!readsIds.has(r.message_id)) readsIds.set(r.message_id, new Set());
-      const m = reads.get(r.message_id);
-      const label = r.name && r.name.trim() ? r.name : r.user_id;
-      m.set(label, true);
-      readsIds.get(r.message_id).add(r.user_id);
-    }
-  }
-  return rows.map(r => ({
-    id: r.id,
-    content: r.content,
-    createdAt: r.created_at,
-    updatedAt: r.updated_at,
-    authorId: r.author_id,
-    authorName: r.author_name,
-    authorColor: r.author_color || null,
-    reactions: reactionMap.get(r.id) || {},
-    attachments: atts.get(r.id) || [],
-    seenBy: (() => { const m = reads.get(r.id); return m ? Array.from(m.keys()) : []; })(),
-    seenByIds: (() => { const s = readsIds.get(r.id); return s ? Array.from(s) : []; })()
-  }));
-}
+// Helper queries moved to services/chat.js
 
 async function ensureMember(userId, spaceId, role = 'member') {
   await pool.query('INSERT INTO space_members(space_id, user_id, role) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING', [spaceId, userId, role]);

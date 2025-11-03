@@ -2,6 +2,7 @@ import jwt from 'jsonwebtoken';
 import { pool } from '../db.js';
 import { JWT_SECRET } from '../config.js';
 import { json, slugify } from '../utils.js';
+import { getBacklog } from '../services/chat.js';
 
 async function listChannels(spaceId) {
   const { rows } = await pool.query('SELECT id, name, COALESCE(type,\'text\') as type FROM channels WHERE space_id=$1 ORDER BY name', [spaceId]);
@@ -85,10 +86,22 @@ export async function handleChannels(req, res, body, ctx) {
     const a = req.headers['authorization'] || '';
     if (a.startsWith('Bearer ')) { try { const p = jwt.verify(a.slice(7), JWT_SECRET); userId = p.sub; } catch {} }
     if (!userId) return json(res, 401, { message: 'Unauthorized' }), true;
-    // Fall-through to main.js which already implements preview and backlog fully
-    return false;
+    let channelId = '';
+    let limit = 5;
+    try {
+      const u = new URL('http://x' + req.url);
+      channelId = String(u.searchParams.get('channelId') || '').trim();
+      limit = Math.max(1, Math.min(20, Number(u.searchParams.get('limit') || '5')));
+    } catch {}
+    if (!channelId) return json(res, 400, { message: 'channelId required' }), true;
+    const found = await pool.query('SELECT space_id FROM channels WHERE id=$1', [channelId]);
+    if (found.rowCount === 0) return json(res, 404, { message: 'channel not found' }), true;
+    const sid = found.rows[0].space_id;
+    const mem = await pool.query('SELECT 1 FROM space_members WHERE space_id=$1 AND user_id=$2', [sid, userId]);
+    if (mem.rowCount === 0) return json(res, 403, { message: 'Forbidden' }), true;
+    const messages = await getBacklog(channelId, userId, limit);
+    return json(res, 200, { messages }), true;
   }
 
   return false;
 }
-
