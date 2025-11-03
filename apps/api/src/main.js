@@ -5,6 +5,8 @@ import jwt from 'jsonwebtoken';
 import { pool, initDb } from './db.js';
 import { JWT_SECRET, ALLOWED_ORIGINS, PORT } from './config.js';
 import { json, guessImageContentType } from './utils.js';
+
+// HTTP route modules
 import { handleAuth } from './routes/auth.js';
 import { handleUsers } from './routes/users.js';
 import { handleSpaces } from './routes/spaces.js';
@@ -15,14 +17,18 @@ import { handleKanban } from './routes/kanban.js';
 import { handleForms } from './routes/forms.js';
 import { handleHabits } from './routes/habits.js';
 import { handlePush } from './routes/push.js';
+
+// Shared chat helpers
 import { listSpaces, listChannels, getBacklog } from './services/chat.js';
+
+// Socket.IO
 import { Server as IOServer } from 'socket.io';
 
 // Global safety nets
 process.on('unhandledRejection', (err) => { try { console.error('[api] Unhandled promise rejection', err); } catch {} });
 process.on('uncaughtException', (err) => { try { console.error('[api] Uncaught exception', err); } catch {} });
 
-// Initialize DB with retry so container waits for Postgres
+// Initialize DB with retries so container waits for Postgres
 {
   let attempts = 0;
   const maxAttempts = Number(process.env.DB_INIT_MAX_ATTEMPTS || 60);
@@ -38,6 +44,7 @@ process.on('uncaughtException', (err) => { try { console.error('[api] Uncaught e
   }
 }
 
+// HTTP server
 const server = http.createServer(async (req, res) => {
   try {
     // CORS
@@ -55,13 +62,13 @@ const server = http.createServer(async (req, res) => {
     if (!req.url) return json(res, 404, { message: 'Not found' });
     if (!req.url.startsWith('/api/')) return json(res, 404, { message: 'Not found' });
 
-    // body
+    // Body
     const chunks = [];
     for await (const ch of req) chunks.push(ch);
     let body = {};
     try { body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'); } catch {}
 
-    // Modular route dispatch
+    // Dispatch to feature routes
     if (req.url.startsWith('/api/auth/')) { const handled = await handleAuth(req, res, body, { io }); if (handled) return; }
     if (req.url.startsWith('/api/users/')) { const handled = await handleUsers(req, res, body, { io }); if (handled) return; }
     if (req.url.startsWith('/api/friends') || req.url.startsWith('/api/dms/')) { const handled = await handleFriends(req, res, body, { io }); if (handled) return; }
@@ -76,14 +83,14 @@ const server = http.createServer(async (req, res) => {
     // Health
     if (req.method === 'GET' && req.url === '/api/health') return json(res, 200, { status: 'ok' });
 
-    // 404
+    // Unknown
     return json(res, 404, { message: 'Not found' });
   } catch (err) {
     try { console.error('[api] Unhandled error', err); json(res, 500, { message: 'Internal error' }); } catch {}
   }
 });
 
-// Optional Firebase Admin for FCM push
+// Optional Firebase Admin for FCM push; initialize only when credentials provided
 let adminMessaging = null;
 try {
   const fb = await import('firebase-admin');
@@ -109,6 +116,7 @@ async function sendPushToUsers(userIds, payload) {
   } catch (e) { console.warn('sendPush failed', e?.message || e); }
 }
 
+// Socket.IO
 const io = new IOServer(server, {
   path: '/socket.io',
   cors: {
@@ -121,16 +129,9 @@ const io = new IOServer(server, {
   pingTimeout: Number(process.env.SIO_PING_TIMEOUT_MS || 60000),
 });
 
-// Helper queries moved to services/chat.js
-
-async function ensureMember(userId, spaceId, role = 'member') {
-  await pool.query('INSERT INTO space_members(space_id, user_id, role) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING', [spaceId, userId, role]);
-}
-
-// presence state (can track both channels and spaces by room name)
+// Presence helpers
 const roomPresence = new Map(); // room -> Set<userId>
 const typingState = new Map(); // room -> Map<userId, boolean>
-
 function presenceJoin(room, userId) {
   if (!roomPresence.has(room)) roomPresence.set(room, new Set());
   roomPresence.get(room).add(userId);
@@ -153,6 +154,7 @@ function emitGlobalPresence() {
   io.to(room).emit('presence:global', { userIds });
 }
 
+// Socket auth
 io.use(async (socket, next) => {
   const token = socket.handshake.auth && socket.handshake.auth.token;
   if (!token) return next(new Error('Missing token'));
@@ -167,6 +169,7 @@ io.use(async (socket, next) => {
   }
 });
 
+// Connection handler
 io.on('connection', async (socket) => {
   const userId = socket.data.userId;
   const { rows } = await pool.query('SELECT name, avatar_url, name_color FROM users WHERE id=$1', [userId]);
@@ -176,27 +179,22 @@ io.on('connection', async (socket) => {
   socket.data.name = displayName;
   socket.data.nameColor = nameColor;
   socket.emit('auth:accepted', { userId, name: displayName, avatarUrl });
-  // Join personal notification room
   try { socket.join(`user:${userId}`); } catch {}
 
-  // current selection (no default space: choose first if available)
   let curVoid = '';
   let curChan = '';
   const room = () => curChan;
   const spaceRoom = () => `space:${curVoid}`;
 
-  // initial lists
   const spaces = await listSpaces(userId);
   socket.emit('void:list', { voids: spaces });
   if (spaces[0]) {
     curVoid = spaces[0].id;
     socket.emit('channel:list', { voidId: curVoid, channels: await listChannels(curVoid) });
     socket.join(spaceRoom());
-    // Track space-level presence so users appear online across channels
     presenceJoin(spaceRoom(), userId);
     emitSpacePresence(spaceRoom(), curVoid);
   }
-  // Global presence (any logged-in session across all spaces)
   try { socket.join('global'); } catch {}
   presenceJoin('global', userId);
   emitGlobalPresence();
@@ -210,7 +208,6 @@ io.on('connection', async (socket) => {
     const { rows } = await pool.query('SELECT 1 FROM space_members WHERE space_id=$1 AND user_id=$2', [voidId, userId]);
     if (rows.length === 0) return;
     if (room()) { presenceLeave(room(), userId); socket.leave(room()); }
-    // Leave previous space room + presence
     if (curVoid) { presenceLeave(spaceRoom(), userId); socket.leave(spaceRoom()); }
     curVoid = voidId;
     curChan = '';
@@ -229,23 +226,21 @@ io.on('connection', async (socket) => {
 
   socket.on('channel:switch', async ({ voidId, channelId }) => {
     if (!channelId) return;
-    // Derive authoritative space from channel, ignore mismatched voidId
     const found = await pool.query('SELECT space_id FROM channels WHERE id=$1', [channelId]);
     if (found.rowCount === 0) return;
     const sid = found.rows[0].space_id;
-    // Ensure user is a member of that space
     const mem = await pool.query('SELECT 1 FROM space_members WHERE space_id=$1 AND user_id=$2', [sid, userId]);
     if (mem.rowCount === 0) return;
     if (room()) { presenceLeave(room(), userId); socket.leave(room()); }
     curVoid = sid;
-    curChan = channelId; // fully-qualified (e.g., "home:general") or legacy id
+    curChan = channelId;
     socket.join(room());
     presenceJoin(room(), userId);
     emitPresence(room());
     socket.emit('channel:backlog', { voidId: sid, channelId, messages: await getBacklog(channelId, userId) });
   });
 
-  // --- Voice rooms (WebRTC signaling) ---
+  // Voice signalling
   let curVoiceRid = '';
   socket.on('voice:join', async ({ channelId }) => {
     try {
@@ -255,30 +250,29 @@ io.on('connection', async (socket) => {
       if (found.rowCount === 0) return;
       const sid = found.rows[0].space_id;
       const ctype = String(found.rows[0].type || 'text');
-      if (ctype !== 'voice') return; // only voice channels allowed
+      if (ctype !== 'voice') return;
       const mem = await pool.query('SELECT 1 FROM space_members WHERE space_id=$1 AND user_id=$2', [sid, userId]);
       if (mem.rowCount === 0) return;
-      const room = `voice:${rid}`;
-      curVoiceRid = room;
-      socket.join(room);
-      // list existing peers in room (exclude self)
-      const set = (socket.adapter.rooms.get(room) || new Set());
+      const vroom = `voice:${rid}`;
+      curVoiceRid = vroom;
+      socket.join(vroom);
+      const set = (socket.adapter.rooms.get(vroom) || new Set());
       const peerIds = Array.from(set).filter(id => id !== socket.id);
       const peers = peerIds.map(id => {
         const s = io.sockets.sockets.get(id);
         return { peerId: id, userId: s?.data?.userId || null, name: s?.data?.name || '' };
       });
       socket.emit('voice:peers', { peers });
-      socket.to(room).emit('voice:peer-joined', { peerId: socket.id, userId, name: socket.data.name || '' });
+      socket.to(vroom).emit('voice:peer-joined', { peerId: socket.id, userId, name: socket.data.name || '' });
     } catch {}
   });
 
   socket.on('voice:leave', () => {
     try {
-      const room = curVoiceRid;
-      if (room) {
-        socket.leave(room);
-        socket.to(room).emit('voice:peer-left', { peerId: socket.id });
+      const vroom = curVoiceRid;
+      if (vroom) {
+        socket.leave(vroom);
+        socket.to(vroom).emit('voice:peer-left', { peerId: socket.id });
       }
       curVoiceRid = '';
     } catch {}
@@ -293,18 +287,10 @@ io.on('connection', async (socket) => {
     } catch {}
   });
 
-  socket.on('disconnect', () => {
-    try {
-      if (curVoiceRid) {
-        socket.to(curVoiceRid).emit('voice:peer-left', { peerId: socket.id });
-      }
-    } catch {}
-  });
-
+  // Messages
   socket.on('message:send', async ({ voidId, channelId, content, tempId, attachments }) => {
     if (!channelId) return;
-    const rid = channelId; // fully-qualified room id
-    // Ensure channel exists and user is a member of its space
+    const rid = channelId;
     const found = await pool.query('SELECT space_id FROM channels WHERE id=$1', [channelId]);
     if (found.rowCount === 0) return;
     const sid = found.rows[0].space_id;
@@ -316,8 +302,7 @@ io.on('connection', async (socket) => {
     await pool.query('INSERT INTO messages(id, channel_id, author_id, content) VALUES ($1,$2,$3,$4)', [id, channelId, userId, text]);
     if (Array.isArray(attachments)) {
       for (const a of attachments) {
-        const url = String(a?.url || '');
-        if (!url) continue;
+        const url = String(a?.url || ''); if (!url) continue;
         const name = String(a?.name || 'file').slice(0, 255);
         const rawType = String(a?.contentType || '').trim().toLowerCase();
         let ctype = rawType;
@@ -331,62 +316,39 @@ io.on('connection', async (socket) => {
     const attsRows = await pool.query('SELECT url, content_type as "contentType", name, size_bytes as size FROM message_attachments WHERE message_id=$1', [id]);
     const message = { id, content: text, createdAt: new Date().toISOString(), authorId: userId, authorName: socket.data.name, authorColor: socket.data.nameColor || null, reactions: {}, attachments: attsRows.rows };
     io.to(rid).emit('message:new', { voidId: sid, channelId, message, tempId });
-    try {
-      const notifyRows = await pool.query('SELECT user_id FROM space_members WHERE space_id=$1 AND user_id<>$2', [sid, userId]);
-      const notifyIds = [];
-      for (const r of notifyRows.rows) {
-        io.to(`user:${r.user_id}`).emit('user:notify', { voidId: sid, channelId, authorId: userId, authorName: socket.data.name, content: text, messageId: id });
-        notifyIds.push(r.user_id);
-      }
-      // Fire a best-effort push (mentions/DMs could be smarter later)
-      sendPushToUsers(notifyIds, {
-        notification: { title: `New message`, body: `${socket.data.name || 'Someone'}: ${String(text).slice(0, 80)}` },
-        data: { voidId: String(sid), channelId: String(channelId), t: 'msg' },
-      }).catch(() => {});
-    } catch {}
   });
 
-  // Mark messages as read up to a given message in a channel
   socket.on('read:up_to', async ({ channelId, lastMessageId }) => {
     const rid = String(channelId || '');
     const mid = String(lastMessageId || '');
     if (!rid || !mid) return;
-    // Validate channel and membership
     const found = await pool.query('SELECT space_id FROM channels WHERE id=$1', [rid]);
     if (found.rowCount === 0) return;
     const sid = found.rows[0].space_id;
     const mem = await pool.query('SELECT 1 FROM space_members WHERE space_id=$1 AND user_id=$2', [sid, userId]);
     if (mem.rowCount === 0) return;
-    // Insert reads for all messages up to the cutoff
     await pool.query(`
       INSERT INTO message_reads(message_id, user_id)
-      SELECT m.id, $2
-      FROM messages m
+      SELECT m.id, $2 FROM messages m
       WHERE m.channel_id=$1 AND m.created_at <= (SELECT created_at FROM messages WHERE id=$3)
       ON CONFLICT DO NOTHING
     `, [rid, userId, mid]);
-    // Broadcast a simple receipt on the cutoff message only (lightweight UI signal)
     io.to(rid).emit('message:seen', { channelId: rid, messageId: mid, userId, name: socket.data.name });
   });
 
-  // Message edit (author only)
   socket.on('message:edit', async ({ messageId, content }) => {
     const { rows } = await pool.query('SELECT channel_id, author_id FROM messages WHERE id=$1', [String(messageId)]);
-    const msg = rows[0];
-    if (!msg) return;
-    if (msg.author_id !== userId) return; // only author can edit
-    // Ensure membership
+    const msg = rows[0]; if (!msg) return;
+    if (msg.author_id !== userId) return;
     const mem = await pool.query('SELECT 1 FROM channels c JOIN space_members m ON m.space_id=c.space_id WHERE c.id=$1 AND m.user_id=$2', [msg.channel_id, userId]);
     if (mem.rowCount === 0) return;
     await pool.query('UPDATE messages SET content=$1, updated_at=now() WHERE id=$2', [String(content || ''), String(messageId)]);
     io.to(msg.channel_id).emit('message:edited', { channelId: msg.channel_id, messageId: String(messageId), content: String(content || ''), updatedAt: new Date().toISOString() });
   });
 
-  // Message delete (author only)
   socket.on('message:delete', async ({ messageId }) => {
     const { rows } = await pool.query('SELECT channel_id, author_id FROM messages WHERE id=$1', [String(messageId)]);
-    const msg = rows[0];
-    if (!msg) return;
+    const msg = rows[0]; if (!msg) return;
     if (msg.author_id !== userId) return;
     const mem = await pool.query('SELECT 1 FROM channels c JOIN space_members m ON m.space_id=c.space_id WHERE c.id=$1 AND m.user_id=$2', [msg.channel_id, userId]);
     if (mem.rowCount === 0) return;
@@ -394,72 +356,51 @@ io.on('connection', async (socket) => {
     io.to(msg.channel_id).emit('message:deleted', { channelId: msg.channel_id, messageId: String(messageId) });
   });
 
-  // Reactions: add/remove
   socket.on('reaction:add', async ({ messageId, emoji }) => {
     const mid = String(messageId);
-    const e = String(emoji || '').slice(0, 32);
-    if (!e) return;
+    const e = String(emoji || '').slice(0, 32); if (!e) return;
     const { rows } = await pool.query('SELECT channel_id FROM messages WHERE id=$1', [mid]);
-    const msg = rows[0];
-    if (!msg) return;
-    // Ensure membership
+    const msg = rows[0]; if (!msg) return;
     const mem = await pool.query('SELECT 1 FROM channels c JOIN space_members m ON m.space_id=c.space_id WHERE c.id=$1 AND m.user_id=$2', [msg.channel_id, userId]);
     if (mem.rowCount === 0) return;
     await pool.query('INSERT INTO message_reactions(message_id, user_id, reaction) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING', [mid, userId, e]);
-    // Return fresh counts
     const { rows: counts } = await pool.query('SELECT reaction, COUNT(*)::int as count FROM message_reactions WHERE message_id=$1 GROUP BY reaction', [mid]);
-    const reactions = {};
-    for (const r of counts) reactions[r.reaction] = { count: Number(r.count) };
+    const reactions = {}; for (const r of counts) reactions[r.reaction] = { count: Number(r.count) };
     io.to(msg.channel_id).emit('message:reactions', { channelId: msg.channel_id, messageId: mid, reactions });
   });
 
   socket.on('reaction:remove', async ({ messageId, emoji }) => {
     const mid = String(messageId);
-    const e = String(emoji || '').slice(0, 32);
-    if (!e) return;
+    const e = String(emoji || '').slice(0, 32); if (!e) return;
     const { rows } = await pool.query('SELECT channel_id FROM messages WHERE id=$1', [mid]);
-    const msg = rows[0];
-    if (!msg) return;
+    const msg = rows[0]; if (!msg) return;
     const mem = await pool.query('SELECT 1 FROM channels c JOIN space_members m ON m.space_id=c.space_id WHERE c.id=$1 AND m.user_id=$2', [msg.channel_id, userId]);
     if (mem.rowCount === 0) return;
     await pool.query('DELETE FROM message_reactions WHERE message_id=$1 AND user_id=$2 AND reaction=$3', [mid, userId, e]);
     const { rows: counts } = await pool.query('SELECT reaction, COUNT(*)::int as count FROM message_reactions WHERE message_id=$1 GROUP BY reaction', [mid]);
-    const reactions = {};
-    for (const r of counts) reactions[r.reaction] = { count: Number(r.count) };
+    const reactions = {}; for (const r of counts) reactions[r.reaction] = { count: Number(r.count) };
     io.to(msg.channel_id).emit('message:reactions', { channelId: msg.channel_id, messageId: mid, reactions });
   });
 
   socket.on('typing:set', async ({ voidId, channelId, isTyping }) => {
-    const rid = channelId; // fully-qualified room id
-    if (!rid) return;
+    const rid = channelId; if (!rid) return;
     if (!typingState.has(rid)) typingState.set(rid, new Map());
     typingState.get(rid).set(userId, !!isTyping);
-    // Broadcast to others in the room, exclude the sender
-    // Derive voidId for payload consistency
     const found = await pool.query('SELECT space_id FROM channels WHERE id=$1', [channelId]);
     const sid = found.rows[0]?.space_id || voidId;
-    if (isTyping) socket.to(rid).emit('typing:start', { voidId: sid, channelId, userId, name: socket.data.name });
+    if (isTyping) socket.to(rid).emit('typing:start', { voidId: sid, channelId, userId, name: socket.data.name || '' });
     else socket.to(rid).emit('typing:stop', { voidId: sid, channelId, userId });
   });
 
   socket.on('disconnect', () => {
-    presenceLeave(room(), userId);
-    emitPresence(room());
+    presenceLeave(room(), userId); emitPresence(room());
     if (curVoid) { presenceLeave(spaceRoom(), userId); emitSpacePresence(spaceRoom(), curVoid); }
-    presenceLeave('global', userId);
-    emitGlobalPresence();
+    presenceLeave('global', userId); emitGlobalPresence();
   });
 });
 
-// Port provided by config
+// Listen
 server.listen(PORT, () => {
   console.log(`[api] listening on :${PORT}`);
 });
-
-
-
-
-
-
-
 
