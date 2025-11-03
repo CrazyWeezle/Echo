@@ -36,6 +36,8 @@ apps/web/dist/
 # Hosting env files (keep examples)
 hosting/env/*.env
 !hosting/env/*.env.example
+hosting/.env
+hosting/cloudflared/credentials.json
 
 # Common secret file patterns
 *.pem

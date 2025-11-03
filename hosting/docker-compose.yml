@@ -24,8 +24,7 @@ services:
       #   SMTP_PASS=your-smtp-password
       #   FROM_EMAIL=no-reply@your-domain.com
       #   PUBLIC_WEB_URL=https://app.your-domain.com
-    ports:
-      - "5000:5000"   # you can remove this later if you want API private
+    # No host port publish; reachable via internal network and tunnel only
     depends_on:
       db:
         condition: service_healthy
@@ -46,8 +45,7 @@ services:
       args:
         VITE_API_URL: "/api"
     container_name: echo-web
-    ports:
-      - "3000:80"
+    # No host port publish; reachable via tunnel only
     env_file:
       - env/web.env
     depends_on:
