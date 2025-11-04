@@ -148,7 +148,7 @@ export default function UnifiedSettingsModal({
   useEffect(() => { if (!open || isDmSpace) return; (async()=>{ try{ const res=await api.getAuth(`/spaces/members?spaceId=${encodeURIComponent(spaceId)}`, token); setSpaceMembers(res.members||[]); }catch{} })(); }, [open, token, spaceId, isDmSpace]);
   async function removeMember(uid: string){ const ok = await askConfirm({ title:'Remove Member', message:'Remove this user from this space?', confirmText:'Remove' }); if(!ok) return; setBusy(true); setErr(''); try{ await api.deleteAuth('/spaces/members', { spaceId, userId: uid }, token); setSpaceMembers(prev=>prev.filter(x=>x.id!==uid)); } catch(e:any){ setErr(e?.message||'Failed to remove member'); } finally{ setBusy(false);} }
   const [newChan, setNewChan] = useState('');
-  const [newChanType, setNewChanType] = useState<'text'|'voice'|'announcement'|'kanban'|'form'>('text');
+  const [newChanType, setNewChanType] = useState<'text'|'voice'|'announcement'|'kanban'|'form'|'habit'|'gallery'>('text');
   async function addChannel(){ const nm=newChan.trim(); if(!nm) return; setBusy(true); setErr(''); try{ const res=await api.postAuth('/channels',{ spaceId, name:nm, type:newChanType }, token); setNewChan(''); setNewChanType('text'); onRefreshChannels(spaceId); onSwitchToChannel(res.id);} catch(e:any){ setErr(e?.message||'Failed to create channel'); } finally{ setBusy(false);} }
   async function removeChannel(cid:string){ const ok = await askConfirm({ title:'Delete Channel', message:'Delete this channel?', confirmText:'Delete' }); if(!ok) return; setBusy(true); setErr(''); try{ await api.postAuth('/channels/delete',{ spaceId, channelId: cid }, token); onRefreshChannels(spaceId);} catch(e:any){ setErr(e?.message||'Failed to delete'); } finally{ setBusy(false);} }
   // sleek input modal helper
@@ -423,6 +423,10 @@ export default function UnifiedSettingsModal({
                   <p className="mt-1 text-xs text-neutral-500">If set, members opening this space land on the selected channel.</p>
                 </div>
               )}
+              <div className="flex items-center justify-between">
+                <label className="text-sm text-neutral-300">Mute notifications for this space</label>
+                <input type="checkbox" defaultChecked={(()=>{ try { const ms = JSON.parse(localStorage.getItem('mutedSpaces')||'{}'); return !!ms[spaceId]; } catch { return false; } })()} onChange={(e)=>{ try { const ms = JSON.parse(localStorage.getItem('mutedSpaces')||'{}'); ms[spaceId] = !!e.target.checked; localStorage.setItem('mutedSpaces', JSON.stringify(ms)); (window as any).dispatchEvent(new CustomEvent('echo:mutedSpaces', { detail: ms })); } catch {} }} />
+              </div>
               <div className="flex items-center gap-2">
                 <button disabled={busy} className="px-3 py-2 rounded border border-emerald-700 bg-emerald-800/70 text-emerald-50 hover:bg-emerald-700/70" onClick={saveSpaceGeneral}>{busy?'Saving…':'Save changes'}</button>
                 <div className="ml-auto flex items-center gap-2">
@@ -452,6 +456,11 @@ export default function UnifiedSettingsModal({
                 <p className="mt-1 text-xs text-neutral-500">Either participant can update this name and image.</p>
               </div>
               <DmParticipants spaceId={spaceId} token={token} />
+
+              <div className="flex items-center justify-between">
+                <label className="text-sm text-neutral-300">Mute notifications for this DM</label>
+                <input type="checkbox" defaultChecked={(()=>{ try { const ms = JSON.parse(localStorage.getItem('mutedSpaces')||'{}'); return !!ms[spaceId]; } catch { return false; } })()} onChange={(e)=>{ try { const ms = JSON.parse(localStorage.getItem('mutedSpaces')||'{}'); ms[spaceId] = !!e.target.checked; localStorage.setItem('mutedSpaces', JSON.stringify(ms)); (window as any).dispatchEvent(new CustomEvent('echo:mutedSpaces', { detail: ms })); } catch {} }} />
+              </div>
 
               {/* DM history controls */}
               <div className="space-y-2">
@@ -503,6 +512,7 @@ export default function UnifiedSettingsModal({
                   <option value="kanban">Kanban</option>
                   <option value="form">Form</option>
                   <option value="habit">Habit Tracker</option>
+                  <option value="gallery">Photo Gallery</option>
                 </select>
                 <button disabled={busy} className="px-3 py-2 rounded border border-neutral-700 text-neutral-200 hover:bg-neutral-800/60" onClick={addChannel}>Add</button>
               </div>

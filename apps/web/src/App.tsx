@@ -36,7 +36,7 @@ type KanbanItem = { id: string; content: string; pos: number; done?: boolean };
 type KanbanList = { id: string; name: string; pos: number; items: KanbanItem[] };
 type FormQuestion = { id: string; prompt: string; kind?: string; pos: number };
 type FormState = { questions: FormQuestion[]; answers: Record<string, string>; answersByUser?: Record<string, Record<string, string>> };
-type Channel = { id: string; name: string; voidId: string; type?: 'text' | 'voice' | 'announcement' | 'kanban' | 'form' | string };
+type Channel = { id: string; name: string; voidId: string; type?: 'text' | 'voice' | 'announcement' | 'kanban' | 'form' | 'habit' | 'gallery' | string; linkedGalleryId?: string | null };
 type VoidWS = { id: string; name: string; avatarUrl?: string | null };
 
 // --- Gate component: no conditional hooks here, only simple state ---
@@ -91,7 +91,11 @@ function ChatApp({ token, user }: { token: string; user: any }) {
   // Voids / Channels
   const [voids, setVoids] = useState<VoidWS[]>([]);
   const [currentVoidId, setCurrentVoidId] = useState<string>(() => {
-    try { return localStorage.getItem('currentVoidId') || ""; } catch { return ""; }
+    try {
+      const v = localStorage.getItem('currentVoidId') || "";
+      // Avoid auto-opening a DM space on fresh load/login
+      return String(v).startsWith('dm_') ? "" : v;
+    } catch { return ""; }
   });
   const [channels, setChannels] = useState<Channel[]>([]);
   const [currentChannelId, setCurrentChannelId] = useState<string>(() => {
@@ -100,6 +104,8 @@ function ChatApp({ token, user }: { token: string; user: any }) {
   // Track current void id in a ref to avoid race in socket handlers
   const currentVoidIdRef = useRef<string>(currentVoidId);
   useEffect(() => { currentVoidIdRef.current = currentVoidId; }, [currentVoidId]);
+  // One-shot guard so we only auto-redirect away from DMs on first load
+  const initialSpaceSetRef = useRef<boolean>(false);
 
   // Messages
   const [msgsByKey, setMsgsByKey] = useState<Record<string, Msg[]>>({ ["home:general"]: [] });
@@ -492,6 +498,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
     });
   }
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const galleryFileRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     const el = inputRef.current;
     if (!el) return;
@@ -559,6 +566,25 @@ function ChatApp({ token, user }: { token: string; user: any }) {
     try { const s = localStorage.getItem('hiddenDMs'); return s ? JSON.parse(s) : []; } catch { return []; }
   });
   useEffect(() => { try { localStorage.setItem('hiddenDMs', JSON.stringify(hiddenDms)); } catch {} }, [hiddenDms]);
+  // Mute spaces/DMs: suppress notifications and prevent DM pop-ups
+  const [mutedSpaces, setMutedSpaces] = useState<Record<string, boolean>>(() => {
+    try { const s = localStorage.getItem('mutedSpaces'); return s ? JSON.parse(s) : {}; } catch { return {}; }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem('mutedSpaces', JSON.stringify(mutedSpaces));
+      // Inform service worker (for push suppression)
+      if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+        navigator.serviceWorker.controller.postMessage({ type: 'SET_MUTED_SPACES', data: mutedSpaces });
+      }
+    } catch {}
+  }, [mutedSpaces]);
+  // Listen for external mutedSpaces updates (from settings modal)
+  useEffect(() => {
+    function onMuted(e: any) { try { const ms = e?.detail || {}; if (ms && typeof ms === 'object') setMutedSpaces(ms); } catch {} }
+    (window as any).addEventListener('echo:mutedSpaces', onMuted);
+    return () => (window as any).removeEventListener('echo:mutedSpaces', onMuted);
+  }, []);
   // Dedup set for incoming notification events (by messageId)
   const notifySeenIdsRef = useRef<Set<string>>(new Set());
   // sleek input modal
@@ -871,6 +897,20 @@ function ChatApp({ token, user }: { token: string; user: any }) {
         for (const v of voids) if (!known.has(v.id)) next.push(v.id);
         return next;
       });
+      // Only on first load: if current space is empty or a DM, switch to a non-DM space
+      if (!initialSpaceSetRef.current) {
+        initialSpaceSetRef.current = true;
+        if (!currentVoidIdRef.current || String(currentVoidIdRef.current).startsWith('dm_')) {
+          const nonDm = voids.find(v => !String(v.id).startsWith('dm_'));
+          if (nonDm) {
+            setCurrentVoidId(nonDm.id);
+            socket.emit('void:switch', { voidId: nonDm.id });
+            socket.emit('channel:list', { voidId: nonDm.id });
+            setCurrentChannelId('general');
+            socket.emit('channel:switch', { voidId: nonDm.id, channelId: `${nonDm.id}:general` });
+          }
+        }
+      }
     };
     const onVoidReady = (_: any) => {};
 
@@ -1075,6 +1115,8 @@ function ChatApp({ token, user }: { token: string; user: any }) {
         while (list.length > 20) list.shift();
         return { ...old, [fid]: list };
       });
+      // Suppress notifications for muted spaces/DMs
+      if (mutedSpaces[voidId]) return;
       // Notify only once per channel until visited
       if (notifiedRef.current[fid]) return;
       setNotified(prev => ({ ...prev, [fid]: true }));
@@ -1090,8 +1132,8 @@ function ChatApp({ token, user }: { token: string; user: any }) {
             const stored = localStorage.getItem('user'); let u: any = null; try { if (stored) u = JSON.parse(stored); } catch {}
             toneUrl = u?.toneUrl || null;
           }
-          if (toneUrl) new Audio(toneUrl).play().catch(()=>{}); else {
-            const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+        if (toneUrl) new Audio(toneUrl).play().catch(()=>{}); else {
+          const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
             const o = ctx.createOscillator(); const g = ctx.createGain(); o.type='sine'; o.frequency.value=880; o.connect(g); g.connect(ctx.destination); g.gain.setValueAtTime(0.0001, ctx.currentTime); g.gain.exponentialRampToValueAtTime(0.2, ctx.currentTime + 0.01); o.start(); o.stop(ctx.currentTime + 0.15);
           }
         }
@@ -1426,6 +1468,35 @@ function ChatApp({ token, user }: { token: string; user: any }) {
     setEditText(m.content);
   }
 
+  // Add images directly to a gallery channel
+  async function addGalleryFiles(files: FileList | null) {
+    if (!files || files.length === 0) return;
+    try {
+      const token = localStorage.getItem('token') || '';
+      const atts: { url: string; contentType?: string; name?: string; size?: number }[] = [];
+      for (const f of Array.from(files)) {
+        const name = f.name || 'image.jpg';
+        const lower = name.toLowerCase();
+        const type = (f.type || '').toLowerCase();
+        const isPngJpg = type === 'image/png' || type === 'image/jpeg' || /\.(png|jpe?g)(\?.*)?$/.test(lower);
+        if (!isPngJpg) continue; // skip non-png/jpeg (e.g., gif)
+        const signType = type || (lower.endsWith('.png') ? 'image/png' : 'image/jpeg');
+        const up = await signUpload({ filename: name, contentType: signType, size: f.size }, token);
+        await fetch(up.url, { method: 'PUT', headers: up.headers, body: f });
+        atts.push({ url: up.publicUrl, contentType: signType, name, size: f.size });
+      }
+      if (atts.length === 0) return;
+      const tempId = crypto.randomUUID();
+      const kk = k(currentVoidId, currentChannelId);
+      setMsgsByKey(old => ({ ...old, [kk]: [...(old[kk] ?? []), { id: tempId, content: '', optimistic: true, attachments: atts }] }));
+      socket.emit('message:send', { voidId: currentVoidId, channelId: fq(currentVoidId, currentChannelId), content: '', tempId, attachments: atts });
+    } catch (e: any) {
+      toast(e?.message || 'Failed to add photos', 'error');
+    } finally {
+      try { if (galleryFileRef.current) galleryFileRef.current.value = ''; } catch {}
+    }
+  }
+
   function saveEdit() {
     const mid = editingId; if (!mid) return;
     const content = editText.trim();
@@ -1718,8 +1789,8 @@ function ChatApp({ token, user }: { token: string; user: any }) {
           const dms = voids.filter(v => {
             if (!isDm(v.id)) return false;
             const unreadCount = unread[`${v.id}:chat`] || 0;
-            // If DM is hidden, only show when it has unread
-            if (hiddenDms.includes(v.id)) return unreadCount > 0;
+            // If DM is hidden, only show when it has unread and is not muted
+            if (hiddenDms.includes(v.id)) return (unreadCount > 0) && !mutedSpaces[v.id];
             return true;
           });
           const ordered = [...nonDm].sort((a,b) => {
@@ -1767,6 +1838,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                 </svg>
                 </button>
               )}
+              {/* Mute toggle moved to settings */}
             </div>
           );
         }); })()}
@@ -2573,6 +2645,139 @@ function ChatApp({ token, user }: { token: string; user: any }) {
             </div>
           ) : (
           (() => {
+            if (currentChannel?.type === 'gallery') {
+              const images: { url: string; name?: string; mid: string }[] = [];
+              for (const m of msgs) {
+                for (const a of (m.attachments||[])) {
+                  const t = String(a.contentType||'').toLowerCase();
+                  const u = String(a.url||'').toLowerCase();
+                  const n = String(a.name||'').toLowerCase();
+                  const isImg = t.startsWith('image/') || /(\.png|\.jpe?g)(\?.*)?$/.test(u) || /(\.png|\.jpe?g)(\?.*)?$/.test(n);
+                  const isGif = t.includes('gif') || /(\.gif)(\?.*)?$/.test(u) || /(\.gif)(\?.*)?$/.test(n);
+                  if (isImg && !isGif) images.push({ url: a.url, name: a.name, mid: m.id });
+                }
+              }
+              // Selection state for bulk delete
+              const [selMode, setSelMode] = (function(){ try { return (window as any)._galSelMode ??= [false, (v:boolean)=>{ (window as any)._galSelMode[0]=v; }]; } catch { return [false, (_:boolean)=>{}] as any; } })();
+              const [selected, setSelected] = (function(){ try { return (window as any)._galSelected ??= [{}, (up:any)=>{ (window as any)._galSelected[0]=typeof up==='function'? up((window as any)._galSelected[0]): up; }]; } catch { return [{} as Record<string, boolean>, (_:any)=>{}] as any; } })();
+              function keyOf(im: {mid:string; url:string}){ return `${im.mid}__${encodeURIComponent(im.url)}`; }
+              const selCount = Object.values(selected as any).filter(Boolean).length;
+              return (
+                <div className="min-h-full">
+                  <div className="mb-3 flex items-center gap-2">
+                    <div className="text-neutral-300 text-sm">Link to chat:</div>
+                    <select className="bg-neutral-900 border border-neutral-700 rounded px-2 py-1 text-neutral-200" value={(function(){ const gid=fq(currentVoidId,currentChannelId); const c=channels.find(x=>x.linkedGalleryId===gid); return c? (xId=> (xId.includes(':')?xId.split(':')[1]:xId))(c.id):''; })()} onChange={async(e)=>{
+                      const val = (e.target as HTMLSelectElement).value;
+                      if (!val) return;
+                      try {
+                        const tok=localStorage.getItem('token')||'';
+                        const chatCid = `${currentVoidId}:${val}`;
+                        const galCid = fq(currentVoidId, currentChannelId);
+                        await api.postAuth('/channels/gallery-link', { spaceId: currentVoidId, chatChannelId: chatCid, galleryChannelId: galCid }, tok);
+                        // Update local channels state so the selection persists immediately
+                        setChannels(prev => prev.map(c => (c.id===chatCid || fq(currentVoidId, c.id)===chatCid) ? { ...c, linkedGalleryId: galCid } : c));
+                        toast('Linked to chat','success');
+                      } catch(e:any) { toast(e?.message||'Failed to link','error'); }
+                    }}>
+                      <option value="">Select channel...</option>
+                      {channels.filter(c => c.type !== 'gallery').map(c => (
+                        <option key={c.id} value={(c.id.includes(':')?c.id.split(':')[1]:c.id)}>{c.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <input ref={galleryFileRef} type="file" accept="image/png,image/jpeg" multiple className="hidden" onChange={(e)=> addGalleryFiles((e.target as HTMLInputElement).files)} />
+                  <div
+                    className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-3 p-1"
+                    onDragOver={(e)=>{ e.preventDefault(); }}
+                    onDrop={(e)=>{ e.preventDefault(); const files = e.dataTransfer?.files; if (files && files.length>0) addGalleryFiles(files); }}
+                  >
+                    {/* Always show an add tile */}
+                    <button
+                      type="button"
+                      className="relative block w-full pt-[100%] overflow-hidden rounded border border-neutral-800 bg-neutral-950 hover:bg-neutral-900/70 text-neutral-300"
+                      onClick={() => galleryFileRef.current?.click()}
+                      title="Add photos"
+                      aria-label="Add photos"
+                    >
+                      <span className="absolute inset-0 flex items-center justify-center">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-8 w-8">
+                          <path d="M12 5v14M5 12h14"/>
+                        </svg>
+                      </span>
+                    </button>
+                    {/* Existing images */}
+                    {images.map((im, i) => (
+                      <div key={i} className={`relative group block w-full pt-[100%] overflow-hidden rounded-lg border ${ (selected as any)[keyOf(im)] ? 'border-emerald-600 ring-1 ring-emerald-700' : 'border-neutral-800'} bg-neutral-950 shadow-sm`}>
+                        <a href={selMode ? undefined : im.url} target={selMode ? undefined : "_blank"} rel={selMode ? undefined : "noreferrer"} className="absolute inset-0">
+                          <img src={im.url} alt={im.name||'photo'} className="w-full h-full object-cover transition-transform duration-200 group-hover:scale-[1.02]" />
+                        </a>
+                        {!selMode && (
+                          <button
+                            className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity px-1.5 py-1 rounded bg-neutral-900/80 border border-neutral-700 text-neutral-300 hover:text-red-300 hover:border-red-600"
+                            title="Delete photo"
+                            aria-label="Delete photo"
+                            onClick={async (e)=>{
+                              e.preventDefault();
+                              const ok = await askConfirm({ title: 'Delete Photo', message: 'Remove this photo from gallery?', confirmText: 'Delete', cancelText: 'Cancel' });
+                              if (!ok) return;
+                              try {
+                                const tok = localStorage.getItem('token')||'';
+                                await api.postAuth('/channels/gallery-attachment-delete', { messageId: im.mid, url: im.url }, tok);
+                              } catch (e:any) {
+                                toast(e?.message||'Failed to delete','error');
+                              }
+                            }}
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M3 6h18"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+                          </button>
+                        )}
+                        {selMode && (
+                          <button
+                            className={`absolute top-1 left-1 px-1.5 py-0.5 rounded border text-xs ${ (selected as any)[keyOf(im)] ? 'bg-emerald-700/70 border-emerald-600 text-emerald-50' : 'bg-neutral-900/70 border-neutral-700 text-neutral-300'}`}
+                            onClick={(e)=>{ e.preventDefault(); (setSelected as any)((prev:Record<string,boolean>)=>({ ...prev, [keyOf(im)]: !prev[keyOf(im)] })); }}
+                            title={(selected as any)[keyOf(im)] ? 'Deselect' : 'Select'}
+                          >
+                            {(selected as any)[keyOf(im)] ? 'Selected' : 'Select'}
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                    {/* If few images, pad with add placeholders to make it feel populated */}
+                    {Array.from({ length: Math.max(0, 4 - Math.min(images.length, 4)) }).map((_, idx) => (
+                      <button
+                        key={`ph-${idx}`}
+                        type="button"
+                        className="relative block w-full pt-[100%] overflow-hidden rounded border border-neutral-800 bg-neutral-950/60 hover:bg-neutral-900/60 text-neutral-400"
+                        onClick={() => galleryFileRef.current?.click()}
+                        title="Add photos"
+                        aria-label="Add photos"
+                      >
+                        <span className="absolute inset-0 flex items-center justify-center">
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6">
+                            <path d="M12 5v14M5 12h14"/>
+                          </svg>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                  <div className="mt-3 flex items-center gap-2">
+                    {!selMode ? (
+                      <button className="px-2 py-1 rounded border border-neutral-700 text-neutral-200 hover:bg-neutral-800/60" onClick={()=>{ (setSelMode as any)(true); (setSelected as any)({}); }}>Select</button>
+                    ) : (
+                      <>
+                        <button className="px-2 py-1 rounded border border-neutral-700 text-neutral-200 hover:bg-neutral-800/60" onClick={()=>{ (setSelMode as any)(false); (setSelected as any)({}); }}>Cancel</button>
+                        <button disabled={selCount===0} className="px-2 py-1 rounded border border-red-800 text-red-300 hover:bg-red-900/30 disabled:opacity-50" onClick={async()=>{
+                          const items = Object.entries(selected as any).filter(([k,v])=>v).map(([k])=>{ const [mid, urlEnc]=k.split('__'); return { messageId: mid, url: decodeURIComponent(urlEnc) }; });
+                          if (items.length===0) return;
+                          const ok = await askConfirm({ title: 'Delete Photos', message: `Delete ${items.length} selected photo(s)?`, confirmText: 'Delete', cancelText: 'Cancel' }); if (!ok) return;
+                          try { const tok=localStorage.getItem('token')||''; await api.postAuth('/channels/gallery-attachments-delete',{ items }, tok); (setSelected as any)({}); (setSelMode as any)(false); } catch(e:any){ toast(e?.message||'Failed to delete','error'); }
+                        }}>Delete Selected ({selCount})</button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              );
+            }
             const lastIdx = msgs.length - 1;
             const cid = fq(currentVoidId, currentChannelId);
             const markId = unreadMarkerByChan[cid] || null;
@@ -2816,7 +3021,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
         </div>
 
         {/* Voice room or Input (hidden for Kanban/Form/Habit) */}
-        {currentChannel?.type !== 'kanban' && currentChannel?.type !== 'form' && currentChannel?.type !== 'habit' && (
+        {currentChannel?.type !== 'kanban' && currentChannel?.type !== 'form' && currentChannel?.type !== 'habit' && currentChannel?.type !== 'gallery' && (
           <div className="p-3 border-t border-neutral-800/60 bg-neutral-900/40 safe-bottom md:static fixed inset-x-0 bottom-4 z-20 md:mb-4 shadow-[0_-8px_16px_rgba(0,0,0,0.35)]">
           {!currentVoidId ? (
             <div className="text-center text-sm text-neutral-400">Create or join a space to start chatting.</div>
@@ -2870,7 +3075,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                 ))}
               </div>
             </div>
-          ) : currentChannel?.type === 'form' ? null : (
+          ) : (currentChannel?.type === 'form' || currentChannel?.type === 'gallery') ? null : (
             <>
       {pendingUploads.length > 0 && (
         <div className="mb-2 flex flex-wrap gap-2">
@@ -2920,15 +3125,6 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5"><path d="M12 5v14M5 12h14"/></svg>
                 </button>
-                <button
-                  type="button"
-                  className={`hidden md:inline-flex shrink-0 px-2 py-1 rounded border text-[11px] ${spoiler ? 'border-amber-600 bg-amber-800/60 text-amber-50' : 'border-neutral-800 text-neutral-300 hover:text-neutral-100 hover:bg-neutral-800/60'}`}
-                  onClick={()=> setSpoiler(v => !v)}
-                  title="Mark next message as spoiler"
-                  aria-pressed={spoiler}
-                >
-                  SP
-                </button>
                 {addOpen && (
                   <div ref={addMenuRef} className="absolute bottom-full mb-2 left-0 z-40 rounded-md border border-neutral-800 bg-neutral-900 shadow-xl p-1 flex gap-1">
                     <button
@@ -2936,14 +3132,12 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                       onClick={()=>{ setSpoiler(v=>!v); }}
                       title="Toggle spoiler"
                       aria-pressed={spoiler}
+                      aria-label="Toggle spoiler"
                     >
-                      <span className="inline-flex items-center gap-1">
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
-                          <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/>
-                          <line x1="1" y1="1" x2="23" y2="23"/>
-                        </svg>
-                        <span>Spoiler</span>
-                      </span>
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+                        <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/>
+                        <line x1="1" y1="1" x2="23" y2="23"/>
+                      </svg>
                     </button>
                     <button className="px-2 py-1 rounded hover:bg-neutral-800 text-neutral-200" onClick={()=>{ setComposerPickerOpen(true); setAddOpen(false); }} title="Emoji" aria-label="Emoji picker">
                       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
@@ -3276,7 +3470,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                     if (!String(v.id).startsWith('dm_')) return false;
                     const count = unread[`${v.id}:chat`] || 0;
                     // If hidden, only show when there are unread messages
-                    if (hiddenDms.includes(v.id)) return count > 0;
+                    if (hiddenDms.includes(v.id)) return (count > 0) && !mutedSpaces[v.id];
                     return true;
                   });
                   return dmList.map(v => {
@@ -3288,6 +3482,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                         {v.name || 'DM'}
                       </button>
                       {count>0 && <span className="min-w-5 h-5 px-1 rounded-full bg-emerald-600 text-white text-[10px] flex items-center justify-center">{count>99?'99+':count}</span>}
+                      {/* Mute moved to settings */}
                       <button title="Close DM" aria-label="Close DM" className="px-2 py-1 rounded text-neutral-400 hover:text-red-300 hover:bg-red-900/20" onClick={(e)=>{ e.stopPropagation(); setHiddenDms(prev => prev.includes(v.id) ? prev : [...prev, v.id]); }}>
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
                           <line x1="18" y1="6" x2="6" y2="18" />

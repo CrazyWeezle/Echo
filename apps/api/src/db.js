@@ -91,11 +91,13 @@ export async function initDb() {
       space_id TEXT NOT NULL REFERENCES spaces(id) ON DELETE CASCADE,
       name TEXT NOT NULL,
       type TEXT,
+      linked_gallery_id TEXT,
       created_at TIMESTAMPTZ DEFAULT now()
     );
   `);
   await pool.query(`ALTER TABLE channels ADD COLUMN IF NOT EXISTS type TEXT`);
   await pool.query(`ALTER TABLE channels ALTER COLUMN type SET DEFAULT 'text'`);
+  await pool.query(`ALTER TABLE channels ADD COLUMN IF NOT EXISTS linked_gallery_id TEXT`);
   // Preferred default channel per space
   await pool.query(`ALTER TABLE spaces ADD COLUMN IF NOT EXISTS home_channel_id TEXT`);
 

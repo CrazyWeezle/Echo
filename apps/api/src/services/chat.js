@@ -9,8 +9,8 @@ export async function listSpaces(userId) {
 }
 
 export async function listChannels(spaceId) {
-  const { rows } = await pool.query('SELECT id, name, COALESCE(type,\'text\') as type FROM channels WHERE space_id=$1 ORDER BY name', [spaceId]);
-  return rows.map(r => ({ id: r.id, name: r.name, type: r.type, voidId: spaceId, spaceId }));
+  const { rows } = await pool.query("SELECT id, name, COALESCE(type,'text') as type, linked_gallery_id FROM channels WHERE space_id=$1 ORDER BY name", [spaceId]);
+  return rows.map(r => ({ id: r.id, name: r.name, type: r.type, linkedGalleryId: r.linked_gallery_id || null, voidId: spaceId, spaceId }));
 }
 
 export async function getKanbanState(channelId) {

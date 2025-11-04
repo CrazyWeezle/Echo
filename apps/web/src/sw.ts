@@ -12,14 +12,27 @@ self.addEventListener('push', (event: any) => {
     const title = data.title || 'ECHO';
     const body = data.body || '';
     const tag = data.channelId || 'echo';
-    const options: NotificationOptions = {
-      body,
-      icon: '/brand/ECHO_logo.png',
-      badge: '/brand/ECHO_logo.png',
-      tag,
-      data,
-    };
-    event.waitUntil(self.registration.showNotification(title, options));
+    const chan: string = String(data.channelId || '');
+    const spaceId = chan.includes(':') ? chan.split(':')[0] : '';
+    event.waitUntil((async () => {
+      // Read muted spaces from in-memory and cache storage
+      let muted: Record<string, boolean> = (self as any).__mutedSpaces || {};
+      try {
+        const cache = await caches.open('echo-prefs');
+        const res = await cache.match('/__echo_muted__');
+        if (res) { const js = await res.json(); muted = js || muted; }
+      } catch {}
+      // Suppress notification when space/DM is muted
+      if (spaceId && muted && muted[spaceId]) return;
+      const options: NotificationOptions = {
+        body,
+        icon: '/brand/ECHO_logo.png',
+        badge: '/brand/ECHO_logo.png',
+        tag,
+        data,
+      };
+      await self.registration.showNotification(title, options);
+    })());
   } catch {}
 });
 
@@ -38,3 +51,14 @@ self.addEventListener('notificationclick', (event: any) => {
   );
 });
 
+// Accept muted spaces updates from the app
+self.addEventListener('message', (event: any) => {
+  try {
+    const { type, data } = event.data || {};
+    if (type === 'SET_MUTED_SPACES') {
+      (self as any).__mutedSpaces = data || {};
+      caches.open('echo-prefs').then(cache => cache.put('/__echo_muted__', new Response(JSON.stringify((self as any).__mutedSpaces))))
+        .catch(()=>{});
+    }
+  } catch {}
+});

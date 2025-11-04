@@ -335,9 +335,11 @@ io.on('connection', async (socket) => {
   socket.on('message:send', async ({ voidId, spaceId, channelId, content, tempId, attachments, replyToId, spoiler }) => {
     if (!channelId) return;
     const rid = channelId;
-    const found = await pool.query('SELECT space_id FROM channels WHERE id=$1', [channelId]);
+    const found = await pool.query('SELECT space_id, COALESCE(type,\'text\') as type, linked_gallery_id FROM channels WHERE id=$1', [channelId]);
     if (found.rowCount === 0) return;
     const sid = found.rows[0].space_id;
+    const chanType = String(found.rows[0].type || 'text');
+    const linkedGalleryId = found.rows[0].linked_gallery_id || null;
     const mem = await pool.query('SELECT 1 FROM space_members WHERE space_id=$1 AND user_id=$2', [sid, userId]);
     if (mem.rowCount === 0) return;
     const id = randomUUID();
@@ -374,6 +376,31 @@ io.on('connection', async (socket) => {
     }
     const message = { id, content: text, spoiler: !!spoiler, createdAt: new Date().toISOString(), authorId: userId, authorName: socket.data.name, authorColor: socket.data.nameColor || null, reactions: {}, attachments: attsRows.rows, replyTo: replyToObj };
     io.to(rid).emit('message:new', { voidId: sid, spaceId: sid, channelId, message, tempId });
+
+    // Auto-copy image attachments to linked gallery (if configured), filtering to PNG/JPEG only
+    try {
+      if (linkedGalleryId && Array.isArray(attsRows.rows) && attsRows.rows.length > 0 && chanType !== 'gallery') {
+        const imgs = attsRows.rows.filter(a => {
+          const t = String(a.contentType || '').toLowerCase();
+          const u = String(a.url || '').toLowerCase();
+          const n = String(a.name || '').toLowerCase();
+          const isImg = t.startsWith('image/') || /(\.png|jpe?g)(\?.*)?$/.test(u) || /(\.png|jpe?g)(\?.*)?$/.test(n);
+          const isGif = t.includes('gif') || /(\.gif)(\?.*)?$/.test(u) || /(\.gif)(\?.*)?$/.test(n);
+          return isImg && !isGif;
+        });
+        if (imgs.length > 0) {
+          const gid = String(linkedGalleryId);
+          const galleryMsgId = randomUUID();
+          await pool.query('INSERT INTO messages(id, channel_id, author_id, content) VALUES ($1,$2,$3,$4)', [galleryMsgId, gid, userId, '']);
+          for (const a of imgs) {
+            await pool.query('INSERT INTO message_attachments(id, message_id, url, content_type, name, size_bytes) VALUES ($1,$2,$3,$4,$5,$6)', [randomUUID(), galleryMsgId, a.url, a.contentType || 'image/jpeg', a.name || 'image', a.size || 0]);
+          }
+          const galAtts = await pool.query('SELECT url, content_type as "contentType", name, size_bytes as size FROM message_attachments WHERE message_id=$1', [galleryMsgId]);
+          const galleryMessage = { id: galleryMsgId, content: '', createdAt: new Date().toISOString(), authorId: userId, authorName: socket.data.name, authorColor: socket.data.nameColor || null, reactions: {}, attachments: galAtts.rows, replyTo: null };
+          io.to(gid).emit('message:new', { voidId: sid, spaceId: sid, channelId: gid, message: galleryMessage });
+        }
+      }
+    } catch {}
     // Emit lightweight notify events to each member's personal room so
     // clients can update unread counts and play sounds when the channel
     // isn't currently focused. Clients de-dup and ignore self notifications.
@@ -389,11 +416,11 @@ io.on('connection', async (socket) => {
         if (targetId !== userId && !online.has(targetId)) targets.push(targetId);
       }
       if (targets.length > 0) {
-        const title = String(sid).startsWith('dm_') ? `DM from ${displayName}` : `#${channelId.split(':')[1] || 'channel'}`;
-        await sendWebPushToUsers(targets, { title, body: text.slice(0, 120), channelId });
-      }
-    } catch {}
-  });
+            const title = String(sid).startsWith('dm_') ? `DM from ${displayName}` : `#${channelId.split(':')[1] || 'channel'}`;
+            await sendWebPushToUsers(targets, { title, body: text.slice(0, 120), channelId });
+          }
+        } catch {}
+      });
 
   // Mark messages read up to a cutoff
   socket.on('read:up_to', async ({ channelId, lastMessageId }) => {
