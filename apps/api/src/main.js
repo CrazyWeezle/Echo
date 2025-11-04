@@ -332,7 +332,7 @@ io.on('connection', async (socket) => {
   });
 
   // Send a message (with optional attachments)
-  socket.on('message:send', async ({ voidId, spaceId, channelId, content, tempId, attachments, replyToId }) => {
+  socket.on('message:send', async ({ voidId, spaceId, channelId, content, tempId, attachments, replyToId, spoiler }) => {
     if (!channelId) return;
     const rid = channelId;
     const found = await pool.query('SELECT space_id FROM channels WHERE id=$1', [channelId]);
@@ -350,7 +350,7 @@ io.on('connection', async (socket) => {
         if (!rows[0] || rows[0].channel_id !== channelId) replyTo = null;
       } catch { replyTo = null; }
     }
-    await pool.query('INSERT INTO messages(id, channel_id, author_id, content, reply_to) VALUES ($1,$2,$3,$4,$5)', [id, channelId, userId, text, replyTo]);
+    await pool.query('INSERT INTO messages(id, channel_id, author_id, content, is_spoiler, reply_to) VALUES ($1,$2,$3,$4,$5,$6)', [id, channelId, userId, text, !!spoiler, replyTo]);
     if (Array.isArray(attachments)) {
       for (const a of attachments) {
         const url = String(a?.url || ''); if (!url) continue;
@@ -372,7 +372,7 @@ io.on('connection', async (socket) => {
         const r = rows[0]; if (r) replyToObj = { id: r.id, authorId: r.author_id, authorName: r.author_name, authorColor: r.author_color, content: r.content };
       } catch {}
     }
-    const message = { id, content: text, createdAt: new Date().toISOString(), authorId: userId, authorName: socket.data.name, authorColor: socket.data.nameColor || null, reactions: {}, attachments: attsRows.rows, replyTo: replyToObj };
+    const message = { id, content: text, spoiler: !!spoiler, createdAt: new Date().toISOString(), authorId: userId, authorName: socket.data.name, authorColor: socket.data.nameColor || null, reactions: {}, attachments: attsRows.rows, replyTo: replyToObj };
     io.to(rid).emit('message:new', { voidId: sid, spaceId: sid, channelId, message, tempId });
     // Emit lightweight notify events to each member's personal room so
     // clients can update unread counts and play sounds when the channel

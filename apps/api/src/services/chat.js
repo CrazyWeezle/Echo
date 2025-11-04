@@ -35,7 +35,7 @@ export async function getFormQuestions(channelId) {
 export async function getBacklog(channelId, userId, limit = 50) {
   // Fetch the most recent messages first, then return them in chronological order
   const { rows } = await pool.query(
-    `SELECT m.id, m.content, m.created_at, m.updated_at, m.author_id, m.reply_to, u.name as author_name, u.name_color as author_color
+    `SELECT m.id, m.content, m.is_spoiler, m.created_at, m.updated_at, m.author_id, m.reply_to, u.name as author_name, u.name_color as author_color
      FROM messages m
      JOIN users u ON u.id = m.author_id
      WHERE m.channel_id = $1
@@ -101,6 +101,7 @@ export async function getBacklog(channelId, userId, limit = 50) {
   return ordered.map(r => ({
     id: r.id,
     content: r.content,
+    spoiler: !!r.is_spoiler,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
     authorId: r.author_id,

@@ -27,6 +27,7 @@ type Msg = {
   authorColor?: string | null;
   reactions?: Record<string, { count: number; mine?: boolean }>;
   attachments?: { url: string; contentType?: string; name?: string; size?: number }[];
+  spoiler?: boolean;
   seenBy?: string[]; // display names (legacy)
   seenByIds?: string[]; // user ids for avatars
   replyTo?: { id: string; authorId?: string; authorName?: string; authorColor?: string | null; content?: string } | null;
@@ -110,6 +111,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
   // typing + presence
   const [typers, setTypers] = useState<Record<string, string>>({});
   const typingTimers = useRef(new Map<string, number>());
+  const lastTypingTextRef = useRef<string>('');
   const [roomUserIds, setRoomUserIds] = useState<string[]>([]);
   const [spaceUserIds, setSpaceUserIds] = useState<string[]>([]);
   const [globalUserIds, setGlobalUserIds] = useState<string[]>([]);
@@ -308,6 +310,8 @@ function ChatApp({ token, user }: { token: string; user: any }) {
   const [text, setText] = useState("");
   const currentChannel = channels.find((c) => c.id === currentChannelId);
   const [pendingUploads, setPendingUploads] = useState<{ url: string; contentType?: string; name?: string; size?: number }[]>([]);
+  const [spoiler, setSpoiler] = useState<boolean>(false);
+  const [revealedSpoilers, setRevealedSpoilers] = useState<Record<string, boolean>>({});
   const [kanbanByChan, setKanbanByChan] = useState<Record<string, KanbanList[]>>({});
   // Track per-list toggle for showing all completed items
   const [showAllCompleted, setShowAllCompleted] = useState<Record<string, boolean>>({});
@@ -1006,9 +1010,10 @@ function ChatApp({ token, user }: { token: string; user: any }) {
 
     const onTypingStart = ({ voidId: v, channelId: ch, userId, name }: { voidId: string; channelId: string; userId: string, name?: string }) => {
       if (v !== currentVoidId || ch !== currentChannelId) return;
-      setTypers((t) => ({ ...t, [userId]: name || userId }));
+      setTypers((t) => (t[userId] ? t : { ...t, [userId]: name || userId }));
       const prev = typingTimers.current.get(userId);
       if (prev) clearTimeout(prev);
+      // Auto-expire a typing indicator if no further events arrive
       const tid = window.setTimeout(() => {
         setTypers((t) => { const n = { ...t }; delete n[userId]; return n; });
         typingTimers.current.delete(userId);
@@ -1019,8 +1024,12 @@ function ChatApp({ token, user }: { token: string; user: any }) {
       if (v !== currentVoidId || ch !== currentChannelId) return;
       const prev = typingTimers.current.get(userId);
       if (prev) clearTimeout(prev);
-      typingTimers.current.delete(userId);
-      setTypers((t) => { const n = { ...t }; delete n[userId]; return n; });
+      // Gracefully hide after a short delay to prevent flicker from rapid start/stop
+      const tid = window.setTimeout(() => {
+        setTypers((t) => { const n = { ...t }; delete n[userId]; return n; });
+        typingTimers.current.delete(userId);
+      }, 1200);
+      typingTimers.current.set(userId, tid);
     };
 
     const onPresenceRoom = ({ room, userIds }: { room: string; userIds: string[] }) => {
@@ -1295,10 +1304,10 @@ function ChatApp({ token, user }: { token: string; user: any }) {
     const kk = k(currentVoidId, currentChannelId);
     setMsgsByKey((old) => {
       const list = old[kk] ?? [];
-      return { ...old, [kk]: [...list, { id: tempId, content, optimistic: true, attachments: pendingUploads, replyTo: replyTo ? { id: replyTo.id, authorId: replyTo.authorId, authorName: replyTo.authorName, authorColor: replyTo.authorColor ?? null, content: replyTo.content } : null }] };
+      return { ...old, [kk]: [...list, { id: tempId, content, optimistic: true, attachments: pendingUploads, spoiler: !!spoiler, replyTo: replyTo ? { id: replyTo.id, authorId: replyTo.authorId, authorName: replyTo.authorName, authorColor: replyTo.authorColor ?? null, content: replyTo.content } : null }] };
     });
-    socket.emit("message:send", { voidId: currentVoidId, channelId: fq(currentVoidId, currentChannelId), content, tempId, attachments: pendingUploads, replyToId: replyTo?.id });
-    setText(""); setPendingUploads([]); setReplyTo(null); sendTypingFalse();
+    socket.emit("message:send", { voidId: currentVoidId, channelId: fq(currentVoidId, currentChannelId), content, tempId, attachments: pendingUploads, replyToId: replyTo?.id, spoiler: !!spoiler });
+    setText(""); setPendingUploads([]); setReplyTo(null); setSpoiler(false); sendTypingFalse();
   }
 
   // Quick reaction bar: take last used emojis with sensible fallbacks
@@ -1412,6 +1421,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
 
   function startEdit(m: Msg) {
     if (!isMine(m)) return;
+    try { setPickerFor(null); } catch {}
     setEditingId(m.id);
     setEditText(m.content);
   }
@@ -1431,6 +1441,9 @@ function ChatApp({ token, user }: { token: string; user: any }) {
       copy[idx] = { ...copy[idx], content, optimistic: true };
       return { ...old, [kk]: copy };
     });
+    // Close editor immediately after saving; server event will clear optimistic flag
+    setEditingId(null);
+    setEditText("");
   }
 
   function cancelEdit() {
@@ -2578,6 +2591,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
               }
               parts.push((
             <div key={m.id} className={`group relative px-3 py-2 rounded border ${m.optimistic ? 'border-emerald-800/60' : 'border-neutral-800/60'} bg-neutral-900/70`}>
+              {editingId !== m.id && (
               <div className="pointer-events-auto hidden group-hover:flex group-focus-within:flex items-center gap-1 absolute top-1 right-1 z-40 rounded-full border border-neutral-800 bg-neutral-900/95 px-1.5 py-1 shadow-lg">
                 {getQuickEmojis().map(e => (
                   <button key={e} className="px-1.5 py-0.5 rounded hover:bg-neutral-800 text-base" onClick={() => toggleReaction(m, e)} title={`React ${e}`}>{e}</button>
@@ -2602,7 +2616,8 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                   </button>
                 )}
               </div>
-              {pickerFor === m.id && (
+              )}
+              {editingId !== m.id && pickerFor === m.id && (
                 <div ref={reactionMenuRef} className="absolute top-8 right-1 z-50 p-2 rounded-md border border-neutral-700 bg-neutral-900 shadow-lg flex flex-wrap gap-1">
                   {REACTION_EMOJIS.map(e => (
                     <button
@@ -2646,24 +2661,34 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                   </div>
                 )}
               </div>
-              {m.attachments && m.attachments.length > 0 && (
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {m.attachments.map((a, i) => (
-                    <div key={i} className="border border-neutral-800 rounded overflow-hidden bg-neutral-950 max-w-full">
-                      {a.contentType?.startsWith('image/') ? (
-                        <a href={a.url} target="_blank" rel="noreferrer" className="block max-w-full">
-                          <img src={a.url} alt={a.name || 'image'} className="max-h-32 max-w-full object-cover" />
-                        </a>
-                      ) : (
-                        <a href={a.url} target="_blank" rel="noreferrer" className="px-2 py-1 inline-flex items-center gap-2 text-sm text-emerald-300 hover:underline">
-                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M21.44 11.05l-8.49 8.49a5 5 0 0 1-7.07-7.07l8.49-8.49a3.5 3.5 0 0 1 4.95 4.95l-8.49 8.49a2 2 0 1 1-2.83-2.83l8.49-8.49"/></svg>
-                          <span>{a.name || 'file'}</span>
-                        </a>
-                      )}
+              {m.attachments && m.attachments.length > 0 && (() => {
+                const hidden = !!m.spoiler && !revealedSpoilers[m.id];
+                return (
+                  <div className="mt-2 relative">
+                    <div className="flex flex-wrap gap-2 select-none">
+                      {m.attachments.map((a, i) => (
+                        <div key={i} className="relative border border-neutral-800 rounded overflow-hidden bg-neutral-950 max-w-full">
+                          {a.contentType?.startsWith('image/') ? (
+                            <a href={hidden ? undefined : a.url} target={hidden ? undefined : "_blank"} rel={hidden ? undefined : "noreferrer"} className="block max-w-full">
+                              <img src={a.url} alt={a.name || 'image'} className={`max-h-32 max-w-full object-cover ${hidden ? 'blur-sm brightness-50' : ''}`} />
+                            </a>
+                          ) : (
+                            <a href={hidden ? undefined : a.url} target={hidden ? undefined : "_blank"} rel={hidden ? undefined : "noreferrer"} className="px-2 py-1 inline-flex items-center gap-2 text-sm text-emerald-300 hover:underline">
+                              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M21.44 11.05l-8.49 8.49a5 5 0 0 1-7.07-7.07l8.49-8.49a3.5 3.5 0 0 1 4.95 4.95l-8.49 8.49a2 2 0 1 1-2.83-2.83l8.49-8.49"/></svg>
+                              <span>{a.name || 'file'}</span>
+                            </a>
+                          )}
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
-              )}
+                    {hidden && (
+                      <button className="absolute inset-0 flex items-center justify-center bg-neutral-950/70 text-neutral-200 text-sm font-medium" onClick={() => setRevealedSpoilers(prev => ({ ...prev, [m.id]: true }))}>
+                        Spoiler — tap to reveal
+                      </button>
+                    )}
+                  </div>
+                );
+              })()}
               {m.replyTo && (
                 <div className="mt-2 text-xs text-neutral-300 border border-neutral-800 bg-neutral-900/60 rounded p-2">
                   <div className="text-neutral-400 mb-1">Replying to <span className="text-emerald-300">{m.replyTo.authorName || 'User'}</span></div>
@@ -2674,10 +2699,22 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                 {editingId === m.id ? (
                   <textarea value={editText} onChange={e => setEditText(e.target.value)} className="w-full p-2 rounded bg-neutral-950 border border-neutral-800" rows={2} />
                 ) : (
-                  <>
-                    {renderWithItalics(m.content)}
-                    {m.optimistic ? ' ...' : ''}
-                  </>
+                  (() => {
+                    const hidden = !!m.spoiler && !revealedSpoilers[m.id];
+                    if (hidden) {
+                      return (
+                        <button className="w-full text-left px-2 py-2 rounded border border-neutral-800 bg-neutral-950/70 text-neutral-300" onClick={() => setRevealedSpoilers(prev => ({ ...prev, [m.id]: true }))}>
+                          Spoiler — click to reveal
+                        </button>
+                      );
+                    }
+                    return (
+                      <>
+                        {renderWithItalics(m.content)}
+                        {m.optimistic ? ' ...' : ''}
+                      </>
+                    );
+                  })()
                 )}
               </div>
               <div className="mt-1 text-[10px] text-neutral-500 flex items-center justify-between">
@@ -2751,14 +2788,22 @@ function ChatApp({ token, user }: { token: string; user: any }) {
           <div className="sticky bottom-16 md:static py-1 h-6">
             {(() => {
               if (!currentVoidId) return null;
+              // Use last non-empty text so we can fade it out smoothly
               const names = Object.values(typers);
-              if (names.length === 0) return null;
-              const base = names.length === 1
-                ? `${names[0]} is typing`
-                : `${names.slice(0,2).join(', ')}${names.length>2 ? ' +' + (names.length-2) : ''} are typing`;
+              const hasNames = names.length > 0;
+              const base = hasNames
+                ? (names.length === 1
+                    ? `${names[0]} is typing`
+                    : `${names.slice(0,2).join(', ')}${names.length>2 ? ' +' + (names.length-2) : ''} are typing`)
+                : '';
+              if (hasNames) lastTypingTextRef.current = base;
+              const text = hasNames ? base : lastTypingTextRef.current;
               return (
-                <span className="inline-flex items-center gap-2">
-                  <span>{base}</span>
+                <span
+                  className={`inline-flex items-center gap-2 transition-opacity duration-200 ease-out ${hasNames ? 'opacity-100' : 'opacity-0'}`}
+                  aria-live="polite" aria-atomic="true"
+                >
+                  <span>{text}</span>
                   <span className="typing-dots" aria-hidden="true">
                     <span className="typing-dot"></span>
                     <span className="typing-dot"></span>
@@ -2875,8 +2920,31 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5"><path d="M12 5v14M5 12h14"/></svg>
                 </button>
+                <button
+                  type="button"
+                  className={`hidden md:inline-flex shrink-0 px-2 py-1 rounded border text-[11px] ${spoiler ? 'border-amber-600 bg-amber-800/60 text-amber-50' : 'border-neutral-800 text-neutral-300 hover:text-neutral-100 hover:bg-neutral-800/60'}`}
+                  onClick={()=> setSpoiler(v => !v)}
+                  title="Mark next message as spoiler"
+                  aria-pressed={spoiler}
+                >
+                  SP
+                </button>
                 {addOpen && (
                   <div ref={addMenuRef} className="absolute bottom-full mb-2 left-0 z-40 rounded-md border border-neutral-800 bg-neutral-900 shadow-xl p-1 flex gap-1">
+                    <button
+                      className={`px-2 py-1 rounded ${spoiler ? 'bg-amber-800/40 text-amber-100' : 'hover:bg-neutral-800 text-neutral-200'}`}
+                      onClick={()=>{ setSpoiler(v=>!v); }}
+                      title="Toggle spoiler"
+                      aria-pressed={spoiler}
+                    >
+                      <span className="inline-flex items-center gap-1">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+                          <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/>
+                          <line x1="1" y1="1" x2="23" y2="23"/>
+                        </svg>
+                        <span>Spoiler</span>
+                      </span>
+                    </button>
                     <button className="px-2 py-1 rounded hover:bg-neutral-800 text-neutral-200" onClick={()=>{ setComposerPickerOpen(true); setAddOpen(false); }} title="Emoji" aria-label="Emoji picker">
                       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
                         <circle cx="12" cy="12" r="9"/>
@@ -2900,7 +2968,12 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                     <div className="truncate">
                       Replying to <span style={{ color: (replyTo as any)?.authorColor || '#34d399' }}>{replyTo.authorName || 'User'}</span>: <span className="text-neutral-400">{(replyTo.content || '').slice(0, 80)}</span>
                     </div>
-                    <button className="ml-2 text-neutral-400 hover:text-neutral-200" onClick={()=>setReplyTo(null)} aria-label="Cancel reply">?</button>
+                    <button className="ml-2 text-neutral-400 hover:text-neutral-200" onClick={()=>setReplyTo(null)} aria-label="Cancel reply" title="Cancel reply">
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+                        <line x1="18" y1="6" x2="6" y2="18" />
+                        <line x1="6" y1="6" x2="18" y2="18" />
+                      </svg>
+                    </button>
                   </div>
                 )}
                 <textarea
@@ -3086,7 +3159,12 @@ function ChatApp({ token, user }: { token: string; user: any }) {
           <div className="absolute inset-y-0 left-0 w-4/5 max-w-xs bg-neutral-950 border-r border-neutral-800 shadow-xl flex flex-col py-3">
             <div className="px-3 flex items-center justify-between mb-2">
               <div className="text-neutral-300 font-semibold">Spaces</div>
-              <button className="text-neutral-400" onClick={()=>setVoidSheetOpen(false)}>?</button>
+              <button className="text-neutral-400 hover:text-neutral-200" onClick={()=>setVoidSheetOpen(false)} aria-label="Close" title="Close">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
             </div>
             <div className="px-3">
               <button
@@ -3170,7 +3248,12 @@ function ChatApp({ token, user }: { token: string; user: any }) {
           >
             <div className="h-12 flex items-center justify-between px-3 border-b border-neutral-800">
               <div className="font-semibold text-emerald-300">Channels</div>
-              <button className="text-neutral-400" onClick={()=>setChanSheetOpen(false)}>?</button>
+              <button className="text-neutral-400 hover:text-neutral-200" onClick={()=>setChanSheetOpen(false)} aria-label="Close" title="Close">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
             </div>
             <div className="p-2">
               {!String(currentVoidId).startsWith('dm_') && (
@@ -3188,7 +3271,15 @@ function ChatApp({ token, user }: { token: string; user: any }) {
               {/* DMs with close control */}
               <div className="mt-3 px-1 text-neutral-400 text-xs">Direct Messages</div>
               <ul className="mt-1 space-y-1">
-                {voids.filter(v=>String(v.id).startsWith('dm_')).map(v => {
+                {(() => {
+                  const dmList = voids.filter(v => {
+                    if (!String(v.id).startsWith('dm_')) return false;
+                    const count = unread[`${v.id}:chat`] || 0;
+                    // If hidden, only show when there are unread messages
+                    if (hiddenDms.includes(v.id)) return count > 0;
+                    return true;
+                  });
+                  return dmList.map(v => {
                   const count = unread[`${v.id}:chat`] || 0;
                   const active = currentVoidId === v.id;
                   return (
@@ -3197,7 +3288,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                         {v.name || 'DM'}
                       </button>
                       {count>0 && <span className="min-w-5 h-5 px-1 rounded-full bg-emerald-600 text-white text-[10px] flex items-center justify-center">{count>99?'99+':count}</span>}
-                      <button title="Close DM" aria-label="Close DM" className="px-2 py-1 rounded text-neutral-400 hover:text-red-300 hover:bg-red-900/20" onClick={()=> setHiddenDms(prev => prev.includes(v.id) ? prev : [...prev, v.id])}>
+                      <button title="Close DM" aria-label="Close DM" className="px-2 py-1 rounded text-neutral-400 hover:text-red-300 hover:bg-red-900/20" onClick={(e)=>{ e.stopPropagation(); setHiddenDms(prev => prev.includes(v.id) ? prev : [...prev, v.id]); }}>
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
                           <line x1="18" y1="6" x2="6" y2="18" />
                           <line x1="6" y1="6" x2="18" y2="18" />
@@ -3205,7 +3296,8 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                       </button>
                     </li>
                   );
-                })}
+                  });
+                })()}
               </ul>
             </div>
           </div>
@@ -3234,7 +3326,12 @@ function ChatApp({ token, user }: { token: string; user: any }) {
           >
             <div className="h-12 flex items-center justify-between px-3 border-b border-neutral-800">
               <div className="font-semibold text-emerald-300">People</div>
-              <button className="text-neutral-400" onClick={()=>setUsersSheetOpen(false)}>?</button>
+              <button className="text-neutral-400 hover:text-neutral-200" onClick={()=>setUsersSheetOpen(false)} aria-label="Close" title="Close">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
             </div>
             <div className="p-2 space-y-1 overflow-auto">
               {members.map(m => {

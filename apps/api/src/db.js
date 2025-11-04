@@ -180,6 +180,7 @@ export async function initDb() {
       channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
       author_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       content TEXT NOT NULL,
+      is_spoiler BOOLEAN DEFAULT FALSE,
       reply_to UUID REFERENCES messages(id) ON DELETE SET NULL,
       created_at TIMESTAMPTZ DEFAULT now(),
       updated_at TIMESTAMPTZ
@@ -207,6 +208,7 @@ export async function initDb() {
     );
   `);
   await pool.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ`);
+  await pool.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS is_spoiler BOOLEAN DEFAULT FALSE`);
 
   // Reactions per message
   await pool.query(`
