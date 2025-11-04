@@ -10,7 +10,7 @@ async function ensureMember(userId, spaceId, role = 'member') {
 
 async function listSpaces(userId) {
   const { rows } = await pool.query(
-    'SELECT s.id, s.name, s.avatar_url as "avatarUrl" FROM spaces s JOIN space_members m ON m.space_id=s.id WHERE m.user_id=$1 ORDER BY s.name',
+    'SELECT s.id, s.name, s.avatar_url as "avatarUrl", s.home_channel_id as "homeChannelId" FROM spaces s JOIN space_members m ON m.space_id=s.id WHERE m.user_id=$1 ORDER BY s.name',
     [userId]
   );
   return rows;
@@ -62,9 +62,25 @@ export async function handleSpaces(req, res, body, ctx) {
     const { name, id } = body || {};
     const nm = String(name || '').trim();
     if (!nm) return json(res, 400, { message: 'name required' }), true;
-    const sid = id ? slugify(id) : slugify(nm);
-    try { await pool.query('INSERT INTO spaces(id, name) VALUES ($1,$2)', [sid, nm]); }
-    catch { return json(res, 400, { message: 'space id taken' }), true; }
+    // Allow duplicate names by ensuring the space id is unique even when
+    // generated from the name. If a conflict occurs, append a short suffix.
+    let sid = id ? slugify(id) : slugify(nm);
+    const maxAttempts = 5;
+    let ok = false; let attempt = 0; let lastErr = null;
+    while (!ok && attempt < maxAttempts) {
+      try {
+        await pool.query('INSERT INTO spaces(id, name) VALUES ($1,$2)', [sid, nm]);
+        ok = true;
+      } catch (e) {
+        lastErr = e;
+        // Conflict on primary key id — try a new suffix only when id was generated
+        if (id) break; // custom id chosen by caller; surface conflict
+        const rand = randomUUID().replace(/-/g, '').slice(0, 6);
+        sid = `${slugify(nm)}-${rand}`;
+        attempt++;
+      }
+    }
+    if (!ok) return json(res, 400, { message: 'space id taken' }), true;
     let userId = null;
     const auth = req.headers['authorization'] || '';
     if (auth.startsWith('Bearer ')) { try { const p = jwt.verify(auth.slice(7), JWT_SECRET); userId = p.sub; } catch {} }
@@ -80,7 +96,7 @@ export async function handleSpaces(req, res, body, ctx) {
     const auth = req.headers['authorization'] || '';
     if (auth.startsWith('Bearer ')) { try { const p = jwt.verify(auth.slice(7), JWT_SECRET); userId = p.sub; } catch {} }
     if (!userId) return json(res, 401, { message: 'Unauthorized' }), true;
-    const { spaceId, name, avatarUrl } = body || {};
+    const { spaceId, name, avatarUrl, homeChannelId } = body || {};
     const sid = String(spaceId || '').trim();
     if (!sid) return json(res, 400, { message: 'spaceId required' }), true;
     const isDm = sid.startsWith('dm_');
@@ -90,10 +106,19 @@ export async function handleSpaces(req, res, body, ctx) {
       const fields = []; const values = [];
       if (typeof avatarUrl === 'string' || avatarUrl === null) { fields.push('avatar_url'); values.push(avatarUrl); }
       if (typeof name === 'string') { fields.push('name'); values.push(String(name)); }
+      if (typeof homeChannelId === 'string' || homeChannelId === null) {
+        let hcid = homeChannelId;
+        if (hcid && !String(hcid).includes(':')) hcid = `${sid}:${hcid}`;
+        if (hcid) {
+          const okHC = await pool.query('SELECT 1 FROM channels WHERE id=$1 AND space_id=$2', [hcid, sid]);
+          if (okHC.rowCount === 0) return json(res, 400, { message: 'homeChannelId must be a channel in this space' }), true;
+        }
+        fields.push('home_channel_id'); values.push(hcid || null);
+      }
       if (fields.length === 0) return json(res, 400, { message: 'No changes' }), true;
       const sets = fields.map((f, i) => `${f}=$${i+1}`).join(', ');
       await pool.query(`UPDATE spaces SET ${sets} WHERE id=$${fields.length+1}`, [...values, sid]);
-      const { rows } = await pool.query('SELECT id, name, avatar_url as "avatarUrl" FROM spaces WHERE id=$1', [sid]);
+      const { rows } = await pool.query('SELECT id, name, avatar_url as "avatarUrl", home_channel_id as "homeChannelId" FROM spaces WHERE id=$1', [sid]);
       return json(res, 200, rows[0] || { id: sid, name, avatarUrl }), true;
     } else {
       const { rows: roles } = await pool.query('SELECT role FROM space_members WHERE space_id=$1 AND user_id=$2', [sid, userId]);
@@ -101,10 +126,19 @@ export async function handleSpaces(req, res, body, ctx) {
       const fields = []; const values = [];
       if (typeof name === 'string') { fields.push('name'); values.push(String(name)); }
       if (typeof avatarUrl === 'string' || avatarUrl === null) { fields.push('avatar_url'); values.push(avatarUrl); }
+      if (typeof homeChannelId === 'string' || homeChannelId === null) {
+        let hcid = homeChannelId;
+        if (hcid && !String(hcid).includes(':')) hcid = `${sid}:${hcid}`;
+        if (hcid) {
+          const okHC = await pool.query('SELECT 1 FROM channels WHERE id=$1 AND space_id=$2', [hcid, sid]);
+          if (okHC.rowCount === 0) return json(res, 400, { message: 'homeChannelId must be a channel in this space' }), true;
+        }
+        fields.push('home_channel_id'); values.push(hcid || null);
+      }
       if (fields.length === 0) return json(res, 400, { message: 'No changes' }), true;
       const sets = fields.map((f, i) => `${f}=$${i+1}`).join(', ');
       await pool.query(`UPDATE spaces SET ${sets} WHERE id=$${fields.length+1}`, [...values, sid]);
-      const { rows } = await pool.query('SELECT id, name, avatar_url as "avatarUrl" FROM spaces WHERE id=$1', [sid]);
+      const { rows } = await pool.query('SELECT id, name, avatar_url as "avatarUrl", home_channel_id as "homeChannelId" FROM spaces WHERE id=$1', [sid]);
       return json(res, 200, rows[0] || { id: sid, name, avatarUrl }), true;
     }
   }
@@ -189,4 +223,3 @@ export async function handleSpaces(req, res, body, ctx) {
 
   return false;
 }
-

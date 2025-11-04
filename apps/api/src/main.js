@@ -324,6 +324,17 @@ io.on('connection', async (socket) => {
     const attsRows = await pool.query('SELECT url, content_type as "contentType", name, size_bytes as size FROM message_attachments WHERE message_id=$1', [id]);
     const message = { id, content: text, createdAt: new Date().toISOString(), authorId: userId, authorName: socket.data.name, authorColor: socket.data.nameColor || null, reactions: {}, attachments: attsRows.rows };
     io.to(rid).emit('message:new', { voidId: sid, channelId, message, tempId });
+    // Emit lightweight notify events to each member's personal room so
+    // clients can update unread counts and play sounds when the channel
+    // isn't currently focused. Clients de-dup and ignore self notifications.
+    try {
+      const { rows: members } = await pool.query('SELECT user_id FROM space_members WHERE space_id=$1', [sid]);
+      for (const m of members) {
+        const targetId = m.user_id;
+        const payload = { voidId: sid, channelId, authorId: userId, authorName: displayName, content: text, messageId: id };
+        io.to(`user:${targetId}`).emit('user:notify', payload);
+      }
+    } catch {}
   });
 
   // Mark messages read up to a cutoff

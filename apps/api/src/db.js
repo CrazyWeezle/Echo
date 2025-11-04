@@ -96,6 +96,8 @@ export async function initDb() {
   `);
   await pool.query(`ALTER TABLE channels ADD COLUMN IF NOT EXISTS type TEXT`);
   await pool.query(`ALTER TABLE channels ALTER COLUMN type SET DEFAULT 'text'`);
+  // Preferred default channel per space
+  await pool.query(`ALTER TABLE spaces ADD COLUMN IF NOT EXISTS home_channel_id TEXT`);
 
   // Kanban tables
   await pool.query(`
@@ -253,4 +255,3 @@ export async function initDb() {
                     VALUES ('home:general','home','general')
                     ON CONFLICT (id) DO NOTHING`);
 }
-

@@ -1,4 +1,4 @@
-﻿// apps/web/src/App.tsx
+// apps/web/src/App.tsx
 import { useEffect, useRef, useState } from "react";
 import Login from "./pages/Login"; // match actual filename case for Linux builds
 import { socket, connectSocket, disconnectSocket, getLocalUser, setLocalUser } from "./lib/socket";
@@ -95,7 +95,14 @@ function ChatApp({ token, user }: { token: string; user: any }) {
   const [globalUserIds, setGlobalUserIds] = useState<string[]>([]);
   const [members, setMembers] = useState<{ id: string; name: string; username?: string; avatarUrl?: string | null; status?: string; nameColor?: string | null; role?: string }[]>([]);
   const [unread, setUnread] = useState<Record<string, number>>({});
-  const [notified, setNotified] = useState<Record<string, boolean>>({});
+  // Throttle notifications: one per channel until user visits it.
+  // Persist across reloads so you don't get spam after refresh.
+  const [notified, setNotified] = useState<Record<string, boolean>>(() => {
+    try { const raw = localStorage.getItem('notifiedChannels'); return raw ? JSON.parse(raw) : {}; } catch { return {}; }
+  });
+  useEffect(() => { try { localStorage.setItem('notifiedChannels', JSON.stringify(notified)); } catch {} }, [notified]);
+  const notifiedRef = useRef<Record<string, boolean>>({});
+  useEffect(() => { notifiedRef.current = notified; }, [notified]);
 
   // sheets (mobile)
   const [voidSheetOpen, setVoidSheetOpen] = useState(false);
@@ -282,6 +289,8 @@ function ChatApp({ token, user }: { token: string; user: any }) {
   const currentChannel = channels.find((c) => c.id === currentChannelId);
   const [pendingUploads, setPendingUploads] = useState<{ url: string; contentType?: string; name?: string; size?: number }[]>([]);
   const [kanbanByChan, setKanbanByChan] = useState<Record<string, KanbanList[]>>({});
+  // Track per-list toggle for showing all completed items
+  const [showAllCompleted, setShowAllCompleted] = useState<Record<string, boolean>>({});
   const [listDrag, setListDrag] = useState<{ dragId?: string; overId?: string; pos?: 'before' | 'after' }>({});
   const [itemDrag, setItemDrag] = useState<{ dragId?: string; overId?: string; pos?: 'before' | 'after'; listId?: string }>({});
   const [formByChan, setFormByChan] = useState<Record<string, FormState>>({});
@@ -398,28 +407,28 @@ function ChatApp({ token, user }: { token: string; user: any }) {
   const [composerPickerOpen, setComposerPickerOpen] = useState(false);
   const EMOJI_CATEGORIES: Record<string, string[]> = {
     'Smileys': [
-      '😀','😃','😄','😁','😆','😅','😂','🤣','😊','🙂','😉','😍','😘','😗','😙','😚','😋','😛','😜','🤪','🤨','🫠','🤗','🤔','🤤','🙄','😏','😣','😥','😮','🤐','😯','😪','😫','🥱','😴','🤒','🤕','🤢','🤮','🤧','🥵','🥶','🥴','😵','🤯','🤠','🤡'
+      '??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??'
     ],
     'People': [
-      '👍','👎','👏','🙌','🫶','🙏','💪','👋','🤝','🤞','✌️','🤟','👌','✋','🖐️','🖖','👆','👇','👉','👈','🖕','✍️','💅','🤳','🧠','🫀','🫁','🦷'
+      '??','??','??','??','??','??','??','??','??','??','??','??','??','?','???','??','??','??','??','??','??','??','??','??','??','??','??','??'
     ],
     'Animals': [
-      '🐶','🐱','🐭','🐹','🐰','🦊','🐻','🐼','🐨','🐯','🦁','🐮','🐷','🐸','🐵','🐥','🐦','🦆','🦉','🦄','🐝','🪲','🦋','🐞'
+      '??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??'
     ],
     'Food': [
-      '🍏','🍎','🍐','🍊','🍋','🍌','🍉','🍇','🍓','🫐','🍒','🍑','🍍','🥝','🥥','🥑','🍅','🍆','🥕','🌽','🍞','🧀','🍕','🍔','🍟','🌭','🥪','🍣','🍰','🍪','🍩','🍿'
+      '??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??'
     ],
     'Activities': [
-      '⚽','🏀','🏈','⚾','🎾','🏐','🏉','🥏','🎱','🏓','🏸','🥅','🎯','🎳','🛼','⛸️','🥊','🥋','🎮','🎲','🎻','🎹','🥁','🎤','🎧'
+      '?','??','??','?','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??'
     ],
     'Travel': [
-      '🚗','🚕','🚙','🚌','🚎','🏎️','🚓','🚑','🚒','🚐','✈️','🛫','🛬','🚀','🛰️','🚁','⛵','🛥️','🚤','🚢','🚉','🚄','🚅','🚂','🗺️','🗽','🗻','🏖️'
+      '??','??','??','??','??','???','??','??','??','??','??','??','??','??','???','??','?','???','??','??','??','??','??','??','???','??','??','???'
     ],
     'Objects': [
-      '⌚','📱','💻','⌨️','🖥️','🖨️','🖱️','💾','📷','📸','🎥','🔦','🕯️','💡','🔌','🔋','🔧','🔨','⚙️','🪛','🧰','📦','📎','✂️','🧻','🪟','🪑'
+      '?','??','??','??','???','???','???','??','??','??','??','??','???','??','??','??','??','??','??','??','??','??','??','??','??','??','??'
     ],
     'Symbols': [
-      '❤️','🧡','💛','💚','💙','💜','🖤','🤍','🤎','💔','❣️','💕','💞','💓','💗','💖','💘','💝','💟','✨','⭐','🔥','💧','❄️','☀️','☔','☂️','⚡','✅','❌','⚠️','❗','❓'
+      '??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','?','?','??','??','??','??','?','??','?','?','?','??','?','?'
     ],
   };
   function loadRecentEmojis(): string[] {
@@ -967,7 +976,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
         return { ...old, [fid]: list };
       });
       // Notify only once per channel until visited
-      if (notified[fid]) return;
+      if (notifiedRef.current[fid]) return;
       setNotified(prev => ({ ...prev, [fid]: true }));
       try {
         const soundEnabled = (localStorage.getItem('soundEnabled') || '1') === '1';
@@ -1113,11 +1122,19 @@ function ChatApp({ token, user }: { token: string; user: any }) {
     };
   }, [currentVoidId, currentChannelId, token]);
 
-  // auto-scroll on new messages
+  // Auto-scroll behavior per channel type
+  // - text-like channels: scroll to bottom (newest)
+  // - kanban: scroll to top (boards start at top)
   useEffect(() => {
     const el = listRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [msgs.length, currentVoidId, currentChannelId]);
+    if (!el) return;
+    const meta = channels.find(c => c.id === currentChannelId);
+    if (meta && meta.type === 'kanban') {
+      el.scrollTop = 0; // show top of board
+    } else {
+      el.scrollTop = el.scrollHeight; // show latest messages
+    }
+  }, [msgs.length, currentVoidId, currentChannelId, channels]);
 
   // Autoscroll favorites widgets to show most recent content
   useEffect(() => {
@@ -1497,8 +1514,11 @@ function ChatApp({ token, user }: { token: string; user: any }) {
       setCurrentChannelId('chat');
       socket.emit("channel:switch", { voidId: id, channelId: `${id}:chat` });
     } else {
-      setCurrentChannelId("general");
-      socket.emit("channel:switch", { voidId: id, channelId: fq(id, "general") });
+      const v = voids.find(vv => vv.id === id) as any;
+      const home = v?.homeChannelId as string | undefined;
+      const short = home && home.includes(':') ? home.split(':')[1] : (home || 'general');
+      setCurrentChannelId(short);
+      socket.emit("channel:switch", { voidId: id, channelId: fq(id, short) });
     }
     setTypers({}); setRoomUserIds([]);
   }
@@ -1592,7 +1612,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                   title="Hide DM from spaces"
                   onClick={(e)=>{ e.stopPropagation(); setHiddenDms(prev => prev.includes(v.id) ? prev : prev.concat(v.id)); }}
                   aria-label="Hide DM"
-                >×</button>
+                >�</button>
               )}
             </div>
           );
@@ -1657,7 +1677,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                 </div>
                 <div className="min-w-0">
                   <div className="truncate text-neutral-200 text-sm" style={m.nameColor ? { color: String(m.nameColor) } : undefined}>{m.name || m.username}</div>
-                  <div className="text-[10px] text-neutral-400">{label}{m.role ? ` • ${m.role}` : ''}</div>
+                  <div className="text-[10px] text-neutral-400">{label}{m.role ? ` � ${m.role}` : ''}</div>
                 </div>
                 </button>
               </div>
@@ -1926,7 +1946,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                             </div>
                             <div ref={(el)=>{ favScrollRefs.current[fid] = el; }} className="min-h-[72px] max-h-48 overflow-auto space-y-2 text-[12px]">
                               {lists === undefined ? (
-                                <div className="text-neutral-500">Loading lists…</div>
+                                <div className="text-neutral-500">Loading lists�</div>
                               ) : (!list && (lists?.length || 0) === 0) ? (
                                 <div className="text-neutral-500 flex items-center justify-between gap-2">
                                   <span>Open this kanban once to load lists.</span>
@@ -1994,7 +2014,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                             </div>
                             <div ref={(el)=>{ favScrollRefs.current[fid] = el; }} className="min-h-[88px] max-h-48 overflow-auto space-y-1 text-[12px]">
                               {items.length === 0 ? (
-                                <div className="text-neutral-500">Loading recent messages…</div>
+                                <div className="text-neutral-500">Loading recent messages�</div>
                               ) : (
                                 items.map(it => (
                                   <div key={it.id} className="px-2 py-1 rounded border border-neutral-800 bg-neutral-950/50">
@@ -2204,7 +2224,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                         </button>
                       </div>
                       <div className="flex items-center gap-1">
-                        <button className="text-xs text-neutral-300 hover:text-emerald-300" title="Add Card" onClick={async()=>{ const txt=await askInput({ title:'New Card', label:'Text', placeholder:'Do the thing…' }); if(!txt) return; try{ const tok=localStorage.getItem('token')||''; await api.postAuth('/kanban/items',{ listId:list.id, content: txt }, tok);}catch(e:any){ toast(e?.message||'Failed to add','error'); } }}>+ Add</button>
+                        <button className="text-xs text-neutral-300 hover:text-emerald-300" title="Add Card" onClick={async()=>{ const txt=await askInput({ title:'New Card', label:'Text', placeholder:'Do the thing�' }); if(!txt) return; try{ const tok=localStorage.getItem('token')||''; await api.postAuth('/kanban/items',{ listId:list.id, content: txt }, tok);}catch(e:any){ toast(e?.message||'Failed to add','error'); } }}>+ Add</button>
                         <button className="text-xs text-neutral-400 hover:text-neutral-200" title="Rename" onClick={async()=>{ const nm=await askInput({ title:'Rename List', initialValue:list.name, label:'List name' }); if(!nm||nm===list.name) return; try{ const tok=localStorage.getItem('token')||''; await api.patchAuth('/kanban/lists',{ listId:list.id, name:nm }, tok);}catch(e:any){ toast(e?.message||'Failed to rename','error'); } }}>
                           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 1 1 3 3L7 19l-4 1 1-4 12.5-12.5Z"/></svg>
                         </button>
@@ -2272,7 +2292,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                               <div className="mt-3 pt-2 border-t border-neutral-800">
                                 <div className="text-xs text-neutral-500 mb-1">Completed</div>
                                 <div className="space-y-2">
-                                  {dones.map((it) => (
+                                  {(showAllCompleted[list.id] ? dones : dones.slice(0,3)).map((it) => (
                                     <div key={it.id} className="p-2 rounded border border-neutral-800 bg-neutral-950/40">
                                       <div className="flex items-start gap-2">
                                         <input type="checkbox" className="accent-emerald-500" checked={true} onChange={async(e)=>{ try{ const tok=localStorage.getItem('token')||''; await api.patchAuth('/kanban/items',{ itemId: it.id, done: e.target.checked }, tok);}catch{}}} />
@@ -2288,13 +2308,18 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                                       </div>
                                     </div>
                                   ))}
+                                  {dones.length > 3 && (
+                                    <button className="mt-2 w-full text-xs text-neutral-400 hover:text-neutral-200" onClick={() => setShowAllCompleted(prev => ({ ...prev, [list.id]: !prev[list.id] }))}>
+                                      {showAllCompleted[list.id] ? 'Show less' : `View more (${dones.length - 3} more)`}
+                                    </button>
+                                  )}
                                 </div>
                               </div>
                             )}
                           </>
                         );
                       })()}
-                      <button className="w-full text-left px-2 py-1 rounded border border-neutral-800 text-neutral-300 hover:bg-neutral-800/60" onClick={async()=>{ const txt=await askInput({ title:'New Card', label:'Text', placeholder:'Do the thing…' }); if(!txt) return; try{ const tok=localStorage.getItem('token')||''; await api.postAuth('/kanban/items',{ listId:list.id, content: txt }, tok);}catch(e:any){ toast(e?.message||'Failed to add','error'); } }}>+ Add card</button>
+                      <button className="w-full text-left px-2 py-1 rounded border border-neutral-800 text-neutral-300 hover:bg-neutral-800/60" onClick={async()=>{ const txt=await askInput({ title:'New Card', label:'Text', placeholder:'Do the thing�' }); if(!txt) return; try{ const tok=localStorage.getItem('token')||''; await api.postAuth('/kanban/items',{ listId:list.id, content: txt }, tok);}catch(e:any){ toast(e?.message||'Failed to add','error'); } }}>+ Add card</button>
                     </div>
                   </div>
                 ))}
@@ -2447,7 +2472,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                 ) : (
                   <>
                     {renderWithItalics(m.content)}
-                    {m.optimistic ? ' …' : ''}
+                    {m.optimistic ? ' �' : ''}
                   </>
                 )}
               </div>
@@ -2784,6 +2809,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
         spaceId={currentVoidId}
         spaceName={voids.find(v=>v.id===currentVoidId)?.name}
         spaceAvatarUrl={voids.find(v=>v.id===currentVoidId)?.avatarUrl || null}
+        spaceHomeChannelId={(voids.find(v=>v.id===currentVoidId) as any)?.homeChannelId || null}
         channels={channels}
         open={settingsOpen}
         onClose={()=>setSettingsOpen(false)}
@@ -3016,11 +3042,6 @@ function ChatApp({ token, user }: { token: string; user: any }) {
     </div>
   );
 }
-
-
-
-
-
 
 
 

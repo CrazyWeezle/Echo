@@ -2,7 +2,7 @@ import { pool } from '../db.js';
 
 export async function listSpaces(userId) {
   const { rows } = await pool.query(
-    'SELECT s.id, s.name, s.avatar_url as "avatarUrl" FROM spaces s JOIN space_members m ON m.space_id=s.id WHERE m.user_id=$1 ORDER BY s.name',
+    'SELECT s.id, s.name, s.avatar_url as "avatarUrl", s.home_channel_id as "homeChannelId" FROM spaces s JOIN space_members m ON m.space_id=s.id WHERE m.user_id=$1 ORDER BY s.name',
     [userId]
   );
   return rows;
@@ -80,4 +80,3 @@ export async function getBacklog(channelId, userId, limit = 50) {
     seenByIds: readsMap.get(r.id) || [],
   }));
 }
-

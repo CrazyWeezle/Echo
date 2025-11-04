@@ -10,6 +10,7 @@ export default function UnifiedSettingsModal({
   spaceId,
   spaceName,
   spaceAvatarUrl,
+  spaceHomeChannelId,
   channels,
   open,
   onClose,
@@ -24,6 +25,7 @@ export default function UnifiedSettingsModal({
   spaceId: string;
   spaceName?: string;
   spaceAvatarUrl?: string | null;
+  spaceHomeChannelId?: string | null;
   channels: Channel[];
   open: boolean;
   onClose: () => void;
@@ -126,10 +128,11 @@ export default function UnifiedSettingsModal({
   // Space
   const [sName, setSName] = useState(spaceName||'');
   const [sAvatarUrl, setSAvatarUrl] = useState<string|null>(spaceAvatarUrl||null);
+  const [sHome, setSHome] = useState<string>(spaceHomeChannelId || '');
   const [busy, setBusy] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   useEffect(()=>{ if(open){ setSName(spaceName||''); setSAvatarUrl(spaceAvatarUrl||null); setErr(''); } },[open, spaceName, spaceAvatarUrl]);
-  async function saveSpaceGeneral(){ setBusy(true); setErr(''); try{ await api.patchAuth('/spaces',{ spaceId, name:sName, avatarUrl:sAvatarUrl }, token); onRefreshSpaces(); } catch(e:any){ setErr(e?.message||'Failed to save'); } finally{ setBusy(false);} }
+  async function saveSpaceGeneral(){ setBusy(true); setErr(''); try{ const homeChannelId = sHome || null; await api.patchAuth('/spaces',{ spaceId, name:sName, avatarUrl:sAvatarUrl, homeChannelId }, token); onRefreshSpaces(); } catch(e:any){ setErr(e?.message||'Failed to save'); } finally{ setBusy(false);} }
   async function pickSpaceImage(files: FileList|null){ if(!files||files.length===0) return; const f=files[0]; try{ const up=await signUpload({ filename:f.name, contentType:f.type||'application/octet-stream', size:f.size }, token); await fetch(up.url,{method:'PUT', headers:up.headers, body:f}); setSAvatarUrl(up.publicUrl);} catch(e:any){ setErr(e?.message||'Upload failed'); } finally{ if(fileRef.current) fileRef.current.value=''; } }
   async function deleteSpace(){ const ok = await askConfirm({ title:'Delete Space', message:'Delete this space?', confirmText:'Delete' }); if(!ok) return; setBusy(true); setErr(''); try{ await api.deleteAuth('/spaces',{ spaceId }, token); onSpaceDeleted(); onRefreshSpaces(); onClose(); } catch(e:any){ setErr(e?.message||'Failed to delete'); } finally{ setBusy(false);} }
   async function leaveSpace(){ const ok = await askConfirm({ title:'Leave Space', message:'Leave this space?', confirmText:'Leave' }); if(!ok) return; setBusy(true); setErr(''); try{ await api.postAuth('/spaces/leave',{ spaceId }, token); onSpaceDeleted(); onRefreshSpaces(); onClose(); } catch(e:any){ setErr(e?.message||'Failed to leave'); } finally{ setBusy(false);} }
@@ -185,34 +188,34 @@ export default function UnifiedSettingsModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="absolute inset-0 bg-black/50" onClick={onClose} />
-      <div className="relative w-[calc(100%-1rem)] sm:w-full max-w-3xl max-h-[90vh] rounded-xl border border-neutral-800 bg-neutral-900 p-0 pt-10 pr-10 shadow-xl flex overflow-hidden">
+      <div className="relative w-[calc(100%-1rem)] sm:w-full max-w-3xl max-h-[90vh] rounded-2xl bg-neutral-900/80 backdrop-blur-md ring-1 ring-emerald-900/40 shadow-2xl flex overflow-hidden">
         <button aria-label="Close" title="Close" className="absolute top-2 right-2 text-neutral-400 hover:text-neutral-200 px-2 py-1" onClick={onClose}>✕</button>
-        <div className="w-48 border-r border-neutral-800 p-2 flex flex-col min-h-0 overflow-auto">
-          <div className="text-sm text-neutral-400 px-2 pb-2">Settings</div>
-          <button className={`w-full text-left px-2 py-1 rounded ${tab==='profile'?'bg-neutral-800 text-emerald-300':'text-neutral-300 hover:bg-neutral-800/60'}`} onClick={()=>setTab('profile')}>Profile</button>
-          <button className={`w-full text-left px-2 py-1 rounded ${tab==='notifications'?'bg-neutral-800 text-emerald-300':'text-neutral-300 hover:bg-neutral-800/60'}`} onClick={()=>setTab('notifications')}>Notifications</button>
-          <button className={`w-full text-left px-2 py-1 rounded ${tab==='personalization'?'bg-neutral-800 text-emerald-300':'text-neutral-300 hover:bg-neutral-800/60'}`} onClick={()=>setTab('personalization')}>Personalization</button>
-          <button className={`w-full text-left px-2 py-1 rounded ${tab==='security'?'bg-neutral-800 text-emerald-300':'text-neutral-300 hover:bg-neutral-800/60'}`} onClick={()=>setTab('security')}>Security</button>
-          <div className="text-sm text-neutral-500 px-2 pt-3 pb-1">Space</div>
+        <div className="w-56 border-r border-neutral-800 p-3 flex flex-col min-h-0 overflow-auto bg-gradient-to-b from-neutral-900/60 to-neutral-900/30 gap-1">
+          <div className="text-xs uppercase tracking-wide text-neutral-400 px-1 pb-1">Settings</div>
+          <button className={`w-full text-left px-3 py-2 rounded-md transition-colors ${tab==='profile'?'bg-emerald-900/30 text-emerald-200 ring-1 ring-emerald-800':'text-neutral-300 hover:bg-neutral-800/60'}`} onClick={()=>setTab('profile')}>Profile</button>
+          <button className={`w-full text-left px-3 py-2 rounded-md transition-colors ${tab==='notifications'?'bg-emerald-900/30 text-emerald-200 ring-1 ring-emerald-800':'text-neutral-300 hover:bg-neutral-800/60'}`} onClick={()=>setTab('notifications')}>Notifications</button>
+          <button className={`w-full text-left px-3 py-2 rounded-md transition-colors ${tab==='personalization'?'bg-emerald-900/30 text-emerald-200 ring-1 ring-emerald-800':'text-neutral-300 hover:bg-neutral-800/60'}`} onClick={()=>setTab('personalization')}>Personalization</button>
+          <button className={`w-full text-left px-3 py-2 rounded-md transition-colors ${tab==='security'?'bg-emerald-900/30 text-emerald-200 ring-1 ring-emerald-800':'text-neutral-300 hover:bg-neutral-800/60'}`} onClick={()=>setTab('security')}>Security</button>
+          <div className="text-xs uppercase tracking-wide text-neutral-500 px-1 pt-3 pb-1">Space</div>
           {String(spaceId).startsWith('dm_') ? (
-            <button className={`w-full text-left px-2 py-1 rounded ${tab==='dm-info'?'bg-neutral-800 text-emerald-300':'text-neutral-300 hover:bg-neutral-800/60'}`} onClick={()=>setTab('dm-info')}>
+            <button className={`w-full text-left px-3 py-2 rounded-md transition-colors ${tab==='dm-info'?'bg-emerald-900/30 text-emerald-200 ring-1 ring-emerald-800':'text-neutral-300 hover:bg-neutral-800/60'}`} onClick={()=>setTab('dm-info')}>
               DM Info
             </button>
           ) : (
-            <button className={`w-full text-left px-2 py-1 rounded ${tab==='space-general'?'bg-neutral-800 text-emerald-300':'text-neutral-300 hover:bg-neutral-800/60'}`} onClick={()=>setTab('space-general')}>
+            <button className={`w-full text-left px-3 py-2 rounded-md transition-colors ${tab==='space-general'?'bg-emerald-900/30 text-emerald-200 ring-1 ring-emerald-800':'text-neutral-300 hover:bg-neutral-800/60'}`} onClick={()=>setTab('space-general')}>
               {spaceName || 'General'}
             </button>
           )}
           {!String(spaceId).startsWith('dm_') && (
             <>
-              <button className={`w-full text left px-2 py-1 rounded ${tab==='space-channels'?'bg-neutral-800 text-emerald-300':'text-neutral-300 hover:bg-neutral-800/60'}`} onClick={()=>setTab('space-channels')}>Channels</button>
-              <button className={`w-full text left px-2 py-1 rounded ${tab==='space-members'?'bg-neutral-800 text-emerald-300':'text-neutral-300 hover:bg-neutral-800/60'}`} onClick={()=>setTab('space-members')}>Members</button>
-              <button className={`w-full text-left px-2 py-1 rounded ${tab==='space-invites'?'bg-neutral-800 text-emerald-300':'text-neutral-300 hover:bg-neutral-800/60'}`} onClick={()=>setTab('space-invites')}>Invites</button>
+              <button className={`w-full text left px-3 py-2 rounded-md transition-colors ${tab==='space-channels'?'bg-emerald-900/30 text-emerald-200 ring-1 ring-emerald-800':'text-neutral-300 hover:bg-neutral-800/60'}`} onClick={()=>setTab('space-channels')}>Channels</button>
+              <button className={`w-full text left px-3 py-2 rounded-md transition-colors ${tab==='space-members'?'bg-emerald-900/30 text-emerald-200 ring-1 ring-emerald-800':'text-neutral-300 hover:bg-neutral-800/60'}`} onClick={()=>setTab('space-members')}>Members</button>
+              <button className={`w-full text-left px-3 py-2 rounded-md transition-colors ${tab==='space-invites'?'bg-emerald-900/30 text-emerald-200 ring-1 ring-emerald-800':'text-neutral-300 hover:bg-neutral-800/60'}`} onClick={()=>setTab('space-invites')}>Invites</button>
             </>
           )}
           <div className="mt-auto pt-2 border-t border-neutral-800"></div>
         </div>
-        <div className="flex-1 p-4 space-y-4 overflow-auto min-h-0">
+        <div className="flex-1 p-6 space-y-5 overflow-auto min-h-0">
           {err && <div className="text-sm text-red-400">{err}</div>}
 
           {tab==='personalization' && (
@@ -372,6 +375,18 @@ export default function UnifiedSettingsModal({
                   <p className="mt-1 text-xs text-neutral-500">Direct Messages use a shared name; only the DM image can be changed.</p>
                 )}
               </div>
+              {!String(spaceId).startsWith('dm_') && (
+                <div>
+                  <label className="block text-sm text-neutral-400 mb-1">Home channel</label>
+                  <select value={sHome} onChange={(e)=>setSHome(e.target.value)} className="w-full p-2.5 rounded-md bg-neutral-900 text-neutral-100 border border-neutral-800 focus:outline-none focus:ring-2 focus:ring-emerald-600/60">
+                    <option value="">(none — remember last opened)</option>
+                    {channels.map(c => (
+                      <option key={c.id} value={c.id}>#{c.name || c.id}</option>
+                    ))}
+                  </select>
+                  <p className="mt-1 text-xs text-neutral-500">If set, members opening this space land on the selected channel.</p>
+                </div>
+              )}
               <div className="flex items-center gap-2">
                 <button disabled={busy} className="px-3 py-2 rounded border border-emerald-700 bg-emerald-800/70 text-emerald-50 hover:bg-emerald-700/70" onClick={saveSpaceGeneral}>{busy?'Saving…':'Save changes'}</button>
                 <div className="ml-auto flex items-center gap-2">
@@ -593,5 +608,3 @@ function ThemeSelector() {
     </div>
   );
 }
-
-
