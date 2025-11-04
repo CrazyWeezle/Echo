@@ -34,7 +34,7 @@ export async function handleChannels(req, res, body, ctx) {
     const cid = `${sid}:${base}`;
     try { await pool.query('INSERT INTO channels(id, space_id, name, type) VALUES ($1,$2,$3,$4)', [cid, sid, nm, ctype]); }
     catch { return json(res, 400, { message: 'channel id taken' }), true; }
-    try { io?.to(`space:${sid}`).emit('channel:list', { voidId: sid, channels: await listChannels(sid) }); } catch {}
+    try { io?.to(`space:${sid}`).emit('channel:list', { voidId: sid, spaceId: sid, channels: await listChannels(sid) }); } catch {}
     return json(res, 200, { id: cid, name: nm, spaceId: sid, type: ctype }), true;
   }
 
@@ -54,8 +54,8 @@ export async function handleChannels(req, res, body, ctx) {
     const { rows } = await pool.query('SELECT 1 FROM channels WHERE id=$1 AND space_id=$2', [cid, sid]);
     if (rows.length === 0) return json(res, 404, { message: 'channel not found' }), true;
     await pool.query('DELETE FROM channels WHERE id=$1', [cid]);
-    try { io?.to(cid).emit('channel:deleted', { voidId: sid, channelId: cid }); } catch {}
-    try { io?.to(`space:${sid}`).emit('channel:list', { voidId: sid, channels: await listChannels(sid) }); } catch {}
+    try { io?.to(cid).emit('channel:deleted', { voidId: sid, spaceId: sid, channelId: cid }); } catch {}
+    try { io?.to(`space:${sid}`).emit('channel:list', { voidId: sid, spaceId: sid, channels: await listChannels(sid) }); } catch {}
     return json(res, 200, { ok: true }), true;
   }
 
@@ -76,7 +76,7 @@ export async function handleChannels(req, res, body, ctx) {
     const check = await pool.query('SELECT 1 FROM channels WHERE id=$1 AND space_id=$2', [cid, sid]);
     if (check.rowCount === 0) return json(res, 404, { message: 'channel not found' }), true;
     await pool.query('UPDATE channels SET name=$1 WHERE id=$2', [nm, cid]);
-    try { io?.to(`space:${sid}`).emit('channel:list', { voidId: sid, channels: await listChannels(sid) }); } catch {}
+    try { io?.to(`space:${sid}`).emit('channel:list', { voidId: sid, spaceId: sid, channels: await listChannels(sid) }); } catch {}
     return json(res, 200, { id: cid, name: nm, spaceId: sid }), true;
   }
 
@@ -105,7 +105,7 @@ export async function handleChannels(req, res, body, ctx) {
     try {
       // Push fresh backlog to room so both clients refresh view
       const msgs = await (await import('../services/chat.js')).getBacklog(chatId, userId, 100);
-      io?.to(chatId).emit('channel:backlog', { voidId: sid, channelId: chatId, messages: msgs });
+      io?.to(chatId).emit('channel:backlog', { voidId: sid, spaceId: sid, channelId: chatId, messages: msgs });
     } catch {}
     return json(res, 200, { ok: true }), true;
   }

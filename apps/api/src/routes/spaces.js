@@ -53,7 +53,11 @@ export async function handleSpaces(req, res, body, ctx) {
     if (theirRole[0].role === 'owner') return json(res, 403, { message: 'Cannot remove an owner' }), true;
     await pool.query('DELETE FROM space_members WHERE space_id=$1 AND user_id=$2', [sid, targetId]);
     try { io?.to(`space:${sid}`).emit('spaces:members:changed', { spaceId: sid, userId: targetId, action: 'removed' }); } catch {}
-    try { const spaces = await listSpaces(targetId); io?.to(`user:${targetId}`).emit('void:list', { voids: spaces }); } catch {}
+    try {
+      const spaces = await listSpaces(targetId);
+      io?.to(`user:${targetId}`).emit('void:list', { voids: spaces });
+      io?.to(`user:${targetId}`).emit('space:list', { spaces });
+    } catch {}
     return json(res, 200, { ok: true }), true;
   }
 

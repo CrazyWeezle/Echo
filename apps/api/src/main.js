@@ -200,12 +200,13 @@ io.on('connection', async (socket) => {
   const room = () => curChan;
   const spaceRoom = () => `space:${curVoid}`;
 
-  // Bootstrap: list spaces and channels
+  // Bootstrap: list spaces and channels (emit legacy and new names)
   const spaces = await listSpaces(userId);
   socket.emit('void:list', { voids: spaces });
+  try { socket.emit('space:list', { spaces }); } catch {}
   if (spaces[0]) {
     curVoid = spaces[0].id;
-    socket.emit('channel:list', { voidId: curVoid, channels: await listChannels(curVoid) });
+    socket.emit('channel:list', { voidId: curVoid, spaceId: curVoid, channels: await listChannels(curVoid) });
     socket.join(spaceRoom());
     presenceJoin(spaceRoom(), userId);
     emitSpacePresence(spaceRoom(), curVoid);
@@ -215,7 +216,14 @@ io.on('connection', async (socket) => {
   emitGlobalPresence();
 
   socket.on('void:list', async () => {
-    socket.emit('void:list', { voids: await listSpaces(userId) });
+    const list = await listSpaces(userId);
+    socket.emit('void:list', { voids: list });
+    try { socket.emit('space:list', { spaces: list }); } catch {}
+  });
+  socket.on('space:list', async () => {
+    const list = await listSpaces(userId);
+    socket.emit('space:list', { spaces: list });
+    try { socket.emit('void:list', { voids: list }); } catch {}
   });
 
   // Switch current space
@@ -230,19 +238,37 @@ io.on('connection', async (socket) => {
     socket.join(spaceRoom());
     presenceJoin(spaceRoom(), userId);
     emitSpacePresence(spaceRoom(), curVoid);
-    socket.emit('channel:list', { voidId, channels: await listChannels(voidId) });
+    const ch = await listChannels(voidId);
+    socket.emit('channel:list', { voidId, spaceId: voidId, channels: ch });
+  });
+  socket.on('space:switch', async ({ spaceId }) => {
+    const sid = String(spaceId || '');
+    if (!sid) return;
+    const { rows } = await pool.query('SELECT 1 FROM space_members WHERE space_id=$1 AND user_id=$2', [sid, userId]);
+    if (rows.length === 0) return;
+    if (room()) { presenceLeave(room(), userId); socket.leave(room()); }
+    if (curVoid) { presenceLeave(spaceRoom(), userId); socket.leave(spaceRoom()); }
+    curVoid = sid;
+    curChan = '';
+    socket.join(spaceRoom());
+    presenceJoin(spaceRoom(), userId);
+    emitSpacePresence(spaceRoom(), curVoid);
+    const ch = await listChannels(sid);
+    socket.emit('channel:list', { voidId: sid, spaceId: sid, channels: ch });
   });
 
   // List channels for a space
-  socket.on('channel:list', async ({ voidId }) => {
-    if (!voidId) return;
-    const { rows } = await pool.query('SELECT 1 FROM space_members WHERE space_id=$1 AND user_id=$2', [voidId, userId]);
+  socket.on('channel:list', async ({ voidId, spaceId }) => {
+    const sid = String(spaceId || voidId || '');
+    if (!sid) return;
+    const { rows } = await pool.query('SELECT 1 FROM space_members WHERE space_id=$1 AND user_id=$2', [sid, userId]);
     if (rows.length === 0) return;
-    socket.emit('channel:list', { voidId, channels: await listChannels(voidId) });
+    const ch = await listChannels(sid);
+    socket.emit('channel:list', { voidId: sid, spaceId: sid, channels: ch });
   });
 
   // Enter a channel and send its backlog
-  socket.on('channel:switch', async ({ voidId, channelId }) => {
+  socket.on('channel:switch', async ({ voidId, spaceId, channelId }) => {
     if (!channelId) return;
     const found = await pool.query('SELECT space_id FROM channels WHERE id=$1', [channelId]);
     if (found.rowCount === 0) return;
@@ -255,7 +281,7 @@ io.on('connection', async (socket) => {
     socket.join(room());
     presenceJoin(room(), userId);
     emitPresence(room());
-    socket.emit('channel:backlog', { voidId: sid, channelId, messages: await getBacklog(channelId, userId) });
+    socket.emit('channel:backlog', { voidId: sid, spaceId: sid, channelId, messages: await getBacklog(channelId, userId) });
   });
 
   // Simple voice signalling (room membership + peer relays)
@@ -306,7 +332,7 @@ io.on('connection', async (socket) => {
   });
 
   // Send a message (with optional attachments)
-  socket.on('message:send', async ({ voidId, channelId, content, tempId, attachments }) => {
+  socket.on('message:send', async ({ voidId, spaceId, channelId, content, tempId, attachments, replyToId }) => {
     if (!channelId) return;
     const rid = channelId;
     const found = await pool.query('SELECT space_id FROM channels WHERE id=$1', [channelId]);
@@ -317,7 +343,14 @@ io.on('connection', async (socket) => {
     const id = randomUUID();
     const text = String(content || '');
     if (!text && (!attachments || attachments.length === 0)) return;
-    await pool.query('INSERT INTO messages(id, channel_id, author_id, content) VALUES ($1,$2,$3,$4)', [id, channelId, userId, text]);
+    let replyTo = String(replyToId || '').trim() || null;
+    if (replyTo) {
+      try {
+        const { rows } = await pool.query('SELECT channel_id FROM messages WHERE id=$1', [replyTo]);
+        if (!rows[0] || rows[0].channel_id !== channelId) replyTo = null;
+      } catch { replyTo = null; }
+    }
+    await pool.query('INSERT INTO messages(id, channel_id, author_id, content, reply_to) VALUES ($1,$2,$3,$4,$5)', [id, channelId, userId, text, replyTo]);
     if (Array.isArray(attachments)) {
       for (const a of attachments) {
         const url = String(a?.url || ''); if (!url) continue;
@@ -332,8 +365,15 @@ io.on('connection', async (socket) => {
       }
     }
     const attsRows = await pool.query('SELECT url, content_type as "contentType", name, size_bytes as size FROM message_attachments WHERE message_id=$1', [id]);
-    const message = { id, content: text, createdAt: new Date().toISOString(), authorId: userId, authorName: socket.data.name, authorColor: socket.data.nameColor || null, reactions: {}, attachments: attsRows.rows };
-    io.to(rid).emit('message:new', { voidId: sid, channelId, message, tempId });
+    let replyToObj = null;
+    if (replyTo) {
+      try {
+        const { rows } = await pool.query('SELECT m.id, m.content, m.author_id, u.name as author_name, u.name_color as author_color FROM messages m JOIN users u ON u.id=m.author_id WHERE m.id=$1', [replyTo]);
+        const r = rows[0]; if (r) replyToObj = { id: r.id, authorId: r.author_id, authorName: r.author_name, authorColor: r.author_color, content: r.content };
+      } catch {}
+    }
+    const message = { id, content: text, createdAt: new Date().toISOString(), authorId: userId, authorName: socket.data.name, authorColor: socket.data.nameColor || null, reactions: {}, attachments: attsRows.rows, replyTo: replyToObj };
+    io.to(rid).emit('message:new', { voidId: sid, spaceId: sid, channelId, message, tempId });
     // Emit lightweight notify events to each member's personal room so
     // clients can update unread counts and play sounds when the channel
     // isn't currently focused. Clients de-dup and ignore self notifications.
@@ -344,7 +384,7 @@ io.on('connection', async (socket) => {
       const targets = [];
       for (const m of members) {
         const targetId = m.user_id;
-        const payload = { voidId: sid, channelId, authorId: userId, authorName: displayName, content: text, messageId: id };
+        const payload = { voidId: sid, spaceId: sid, channelId, authorId: userId, authorName: displayName, content: text, messageId: id };
         io.to(`user:${targetId}`).emit('user:notify', payload);
         if (targetId !== userId && !online.has(targetId)) targets.push(targetId);
       }
@@ -425,14 +465,18 @@ io.on('connection', async (socket) => {
   });
 
   // Typing indicators (start/stop)
-  socket.on('typing:set', async ({ voidId, channelId, isTyping }) => {
+  socket.on('typing:set', async ({ voidId, spaceId, channelId, isTyping }) => {
     const rid = channelId; if (!rid) return;
     if (!typingState.has(rid)) typingState.set(rid, new Map());
-    typingState.get(rid).set(userId, !!isTyping);
+    const roomMap = typingState.get(rid);
+    const prev = !!roomMap.get(userId);
+    const next = !!isTyping;
+    if (prev === next) return; // no transition, suppress duplicate events
+    roomMap.set(userId, next);
     const found = await pool.query('SELECT space_id FROM channels WHERE id=$1', [channelId]);
-    const sid = found.rows[0]?.space_id || voidId;
-    if (isTyping) socket.to(rid).emit('typing:start', { voidId: sid, channelId, userId, name: socket.data.name || '' });
-    else socket.to(rid).emit('typing:stop', { voidId: sid, channelId, userId });
+    const sid = found.rows[0]?.space_id || spaceId || voidId;
+    if (next) socket.to(rid).emit('typing:start', { voidId: sid, spaceId: sid, channelId, userId, name: socket.data.name || '' });
+    else socket.to(rid).emit('typing:stop', { voidId: sid, spaceId: sid, channelId, userId });
   });
 
   // Cleanup on disconnect

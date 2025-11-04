@@ -185,7 +185,7 @@ export async function handleFriends(req, res, body, ctx) {
     } else {
       await pool.query('DELETE FROM messages WHERE channel_id=$1', [chatId]);
     }
-    try { io?.to(chatId).emit('channel:backlog', { voidId: sid, channelId: chatId, messages: [] }); } catch {}
+    try { io?.to(chatId).emit('channel:backlog', { voidId: sid, spaceId: sid, channelId: chatId, messages: [] }); } catch {}
     return json(res, 200, { ok: true }), true;
   }
 

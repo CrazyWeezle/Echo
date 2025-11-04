@@ -180,10 +180,13 @@ export async function initDb() {
       channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
       author_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       content TEXT NOT NULL,
+      reply_to UUID REFERENCES messages(id) ON DELETE SET NULL,
       created_at TIMESTAMPTZ DEFAULT now(),
       updated_at TIMESTAMPTZ
     );
   `);
+  // Ensure reply_to exists on existing deployments
+  await pool.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS reply_to UUID REFERENCES messages(id) ON DELETE SET NULL`);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS message_attachments (
       id UUID PRIMARY KEY,

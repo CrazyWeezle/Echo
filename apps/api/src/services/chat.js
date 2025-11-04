@@ -10,7 +10,7 @@ export async function listSpaces(userId) {
 
 export async function listChannels(spaceId) {
   const { rows } = await pool.query('SELECT id, name, COALESCE(type,\'text\') as type FROM channels WHERE space_id=$1 ORDER BY name', [spaceId]);
-  return rows.map(r => ({ id: r.id, name: r.name, type: r.type, voidId: spaceId }));
+  return rows.map(r => ({ id: r.id, name: r.name, type: r.type, voidId: spaceId, spaceId }));
 }
 
 export async function getKanbanState(channelId) {
@@ -33,12 +33,13 @@ export async function getFormQuestions(channelId) {
 }
 
 export async function getBacklog(channelId, userId, limit = 50) {
+  // Fetch the most recent messages first, then return them in chronological order
   const { rows } = await pool.query(
-    `SELECT m.id, m.content, m.created_at, m.updated_at, m.author_id, u.name as author_name, u.name_color as author_color
+    `SELECT m.id, m.content, m.created_at, m.updated_at, m.author_id, m.reply_to, u.name as author_name, u.name_color as author_color
      FROM messages m
      JOIN users u ON u.id = m.author_id
      WHERE m.channel_id = $1
-     ORDER BY m.created_at ASC
+     ORDER BY m.created_at DESC
      LIMIT $2`,
     [channelId, limit]
   );
@@ -58,6 +59,8 @@ export async function getBacklog(channelId, userId, limit = 50) {
     }
   }
   const readsMap = new Map();
+  // Map for reply previews
+  const replyMap = new Map();
   if (ids.length > 0) {
     const { rows: reads } = await pool.query(
       `SELECT message_id, user_id FROM message_reads WHERE message_id = ANY($1::uuid[])`,
@@ -68,7 +71,34 @@ export async function getBacklog(channelId, userId, limit = 50) {
       readsMap.get(r.message_id).push(r.user_id);
     }
   }
-  return rows.map(r => ({
+  // Load attachments for all messages
+  const attsMap = new Map();
+  if (ids.length > 0) {
+    const { rows: atts } = await pool.query(
+      `SELECT message_id, url, content_type as "contentType", name, size_bytes as size
+       FROM message_attachments
+       WHERE message_id = ANY($1::uuid[])`,
+      [ids]
+    );
+    for (const a of atts) {
+      if (!attsMap.has(a.message_id)) attsMap.set(a.message_id, []);
+      attsMap.get(a.message_id).push({ url: a.url, contentType: a.contentType, name: a.name, size: a.size });
+    }
+  }
+  // Load reply previews
+  const replyIds = rows.map(r => r.reply_to).filter(Boolean);
+  if (replyIds.length > 0) {
+    const { rows: rpre } = await pool.query(
+      `SELECT m.id, m.content, m.author_id, u.name as author_name, u.name_color as author_color
+       FROM messages m JOIN users u ON u.id=m.author_id
+       WHERE m.id = ANY($1::uuid[])`,
+      [replyIds]
+    );
+    for (const r of rpre) replyMap.set(r.id, { id: r.id, authorId: r.author_id, authorName: r.author_name, authorColor: r.author_color, content: r.content });
+  }
+
+  const ordered = rows.slice().reverse();
+  return ordered.map(r => ({
     id: r.id,
     content: r.content,
     createdAt: r.created_at,
@@ -78,5 +108,7 @@ export async function getBacklog(channelId, userId, limit = 50) {
     authorColor: r.author_color,
     reactions: reactionMap.get(r.id) || {},
     seenByIds: readsMap.get(r.id) || [],
+    replyTo: r.reply_to ? replyMap.get(r.reply_to) || null : null,
+    attachments: attsMap.get(r.id) || [],
   }));
 }
