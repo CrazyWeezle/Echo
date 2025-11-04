@@ -1,15 +1,16 @@
 ﻿// apps/web/src/App.tsx
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, Suspense, lazy } from "react";
 import Login from "./pages/Login"; // match actual filename case for Linux builds
 import { socket, connectSocket, disconnectSocket, getLocalUser, setLocalUser } from "./lib/socket";
 import { debounce } from "./lib/debounce";
 import { signUpload, api } from "./lib/api";
 import { initPush } from "./lib/push";
+import { registerWebPush } from "./lib/webpush";
 import FriendsModal from "./components/FriendsModal";
 import MemberProfileModal from "./components/MemberProfileModal";
 import InputModal from "./components/InputModal";
-import GifPicker from "./components/GifPicker";
-import EmojiPanel from "./components/EmojiPanel";
+const GifPicker = lazy(() => import("./components/GifPicker"));
+const EmojiPanel = lazy(() => import("./components/EmojiPanel"));
 import UnifiedSettingsModal from "./components/UnifiedSettingsModal";
 import ToastHost from "./components/ToastHost";
 import ConfirmHost from "./components/ConfirmHost";
@@ -66,7 +67,24 @@ function ChatApp({ token, user }: { token: string; user: any }) {
   useEffect(() => {
     if (!token) return;
     initPush(token).catch(() => {});
+    // Register Web Push (PWA) on supported Android browsers
+    registerWebPush(token).catch(() => {});
   }, [token]);
+
+  // Optional: handle postMessage from SW to open channels (basic example)
+  useEffect(() => {
+    function onMsg(e: MessageEvent) {
+      try {
+        if (e.data && e.data.type === 'OPEN_CHANNEL' && e.data.data?.channelId) {
+          const rid = String(e.data.data.channelId);
+          const [voidId, short] = rid.split(':');
+          if (voidId && short) { setCurrentVoidId(voidId); setCurrentChannelId(short); }
+        }
+      } catch {}
+    }
+    if (navigator.serviceWorker) navigator.serviceWorker.addEventListener('message', onMsg as any);
+    return () => { if (navigator.serviceWorker) navigator.serviceWorker.removeEventListener('message', onMsg as any); };
+  }, []);
 
   // Voids / Channels
   const [voids, setVoids] = useState<VoidWS[]>([]);
@@ -450,6 +468,9 @@ function ChatApp({ token, user }: { token: string; user: any }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [viewUserId, setViewUserId] = useState<string | null>(null);
   const [gifOpen, setGifOpen] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
+  const [showJump, setShowJump] = useState(false);
+  const [unreadMarkerByChan, setUnreadMarkerByChan] = useState<Record<string, string | null>>({});
   const [friendIds, setFriendIds] = useState<Record<string, boolean>>({});
   const [friendRingEnabled, setFriendRingEnabled] = useState<boolean>(() => {
     try {
@@ -849,6 +870,17 @@ function ChatApp({ token, user }: { token: string; user: any }) {
       if (voidId === currentVoidId && channelId === fq(currentVoidId, currentChannelId) && document.visibilityState === 'visible') {
         socket.emit('read:up_to', { channelId: fq(voidId, channelId), lastMessageId: message.id });
       }
+      // If user is scrolled up, remember first unseen message id for divider
+      if (voidId === currentVoidId && channelId === currentChannelId) {
+        const el = listRef.current;
+        if (el) {
+          const nearBottom = (el.scrollHeight - el.scrollTop - el.clientHeight) < 40;
+          if (!nearBottom) {
+            const cid = fq(voidId, channelId);
+            setUnreadMarkerByChan(prev => prev[cid] ? prev : ({ ...prev, [cid]: message.id }));
+          }
+        }
+      }
     };
 
     const onSeen = ({ channelId, messageId, userId, name }: { channelId: string; messageId: string; userId: string; name?: string }) => {
@@ -922,7 +954,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
       const tid = window.setTimeout(() => {
         setTypers((t) => { const n = { ...t }; delete n[userId]; return n; });
         typingTimers.current.delete(userId);
-      }, 4000);
+      }, 8000);
       typingTimers.current.set(userId, tid);
     };
     const onTypingStop = ({ voidId: v, channelId: ch, userId }: { voidId: string; channelId: string; userId: string }) => {
@@ -1136,6 +1168,23 @@ function ChatApp({ token, user }: { token: string; user: any }) {
       el.scrollTop = el.scrollHeight; // show latest messages
     }
   }, [msgs.length, currentVoidId, currentChannelId, channels]);
+
+  // Mobile UX: show "Jump to present" when scrolled up; clear unread divider when near bottom
+  useEffect(() => {
+    const el = listRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      const nearBottom = (el.scrollHeight - el.scrollTop - el.clientHeight) < 40;
+      setShowJump(!nearBottom);
+      if (nearBottom) {
+        const cid = fq(currentVoidId, currentChannelId);
+        setUnreadMarkerByChan(prev => ({ ...prev, [cid]: null }));
+      }
+    };
+    el.addEventListener('scroll', onScroll, { passive: true } as any);
+    onScroll();
+    return () => el.removeEventListener('scroll', onScroll);
+  }, [currentVoidId, currentChannelId]);
 
   // Autoscroll favorites widgets to show most recent content
   useEffect(() => {
@@ -2422,10 +2471,22 @@ function ChatApp({ token, user }: { token: string; user: any }) {
           ) : (
           (() => {
             const lastIdx = msgs.length - 1;
-            return msgs.map((m, idx) => {
+            const cid = fq(currentVoidId, currentChannelId);
+            const markId = unreadMarkerByChan[cid] || null;
+            return msgs.flatMap((m, idx) => {
               const byIds = Array.isArray(m.seenByIds) ? m.seenByIds : [];
               const showSeen = idx === lastIdx && byIds.length > 0;
-              return (
+              const parts: any[] = [];
+              if (markId && m.id === markId) {
+                parts.push(
+                  <div key={`divider-${m.id}`} className="sticky top-0 z-10 my-2 flex items-center gap-2 text-[11px] text-emerald-300">
+                    <div className="flex-1 h-px bg-emerald-800/60" />
+                    <span>New</span>
+                    <div className="flex-1 h-px bg-emerald-800/60" />
+                  </div>
+                );
+              }
+              parts.push((
             <div key={m.id} className={`group relative px-3 py-2 rounded border ${m.optimistic ? 'border-emerald-800/60' : 'border-neutral-800/60'} bg-neutral-900/70`}>
               {/* Removed hover "Message" action on messages */}
               <div className="flex items-center justify-between text-xs text-neutral-400">
@@ -2596,33 +2657,38 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                 </div>
               )}
             </div>
-          );});})()
+          ));
+              return parts;
+            });
+          })()
           )}
           {currentVoidId && currentChannel?.type !== 'kanban' && currentChannel?.type !== 'form' && currentChannel?.type !== 'habit' && msgs.length === 0 && (
             <div className="text-neutral-500 text-sm">No messages yet</div>
           )}
         </div>
 
-        {/* Typing + presence */}
-        <div className="px-4 py-1 text-xs text-teal-300 h-6 mb-3 md:mb-2">
-          {(() => {
-            if (!currentVoidId) return null;
-            const names = Object.values(typers);
-            if (names.length === 0) return null;
-            const base = names.length === 1
-              ? `${names[0]} is typing`
-              : `${names.slice(0,2).join(', ')}${names.length>2 ? ' +' + (names.length-2) : ''} are typing`;
-            return (
-              <span className="inline-flex items-center gap-2">
-                <span>{base}</span>
-                <span className="typing-dots" aria-hidden="true">
-                  <span className="typing-dot"></span>
-                  <span className="typing-dot"></span>
-                  <span className="typing-dot"></span>
+        {/* Typing + presence (sticky above composer on mobile) */}
+        <div className="px-4 text-xs text-teal-300 md:mb-2">
+          <div className="sticky bottom-16 md:static py-1 h-6">
+            {(() => {
+              if (!currentVoidId) return null;
+              const names = Object.values(typers);
+              if (names.length === 0) return null;
+              const base = names.length === 1
+                ? `${names[0]} is typing`
+                : `${names.slice(0,2).join(', ')}${names.length>2 ? ' +' + (names.length-2) : ''} are typing`;
+              return (
+                <span className="inline-flex items-center gap-2">
+                  <span>{base}</span>
+                  <span className="typing-dots" aria-hidden="true">
+                    <span className="typing-dot"></span>
+                    <span className="typing-dot"></span>
+                    <span className="typing-dot"></span>
+                  </span>
                 </span>
-              </span>
-            );
-          })()}
+              );
+            })()}
+          </div>
         </div>
 
         {/* Voice room or Input (hidden for Kanban/Form/Habit) */}
@@ -2699,41 +2765,39 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M21.44 11.05l-8.49 8.49a5 5 0 0 1-7.07-7.07l8.49-8.49a3.5 3.5 0 0 1 4.95 4.95l-8.49 8.49a2 2 0 1 1-2.83-2.83l8.49-8.49"/></svg>
                 )}
                 <span className="text-sm text-neutral-300">{a.name}</span>
+                <button aria-label="Remove attachment" className="ml-1 px-1.5 py-0.5 rounded bg-neutral-900/70 border border-neutral-700 text-neutral-300 hover:text-red-300 hover:border-red-500" onClick={() => setPendingUploads(prev => prev.filter((_, idx) => idx !== i))}>×</button>
               </div>
             );
           })}
         </div>
       )}
-              <div className="flex items-center gap-1 md:gap-2 w-full max-w-full overflow-hidden">
+              <div className="flex items-center gap-1 md:gap-2 w-full max-w-full overflow-hidden relative">
                 <button
                   type="button"
-                  className="shrink-0 px-2 py-1 rounded border border-neutral-800 text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/60"
-                  title="Emoji"
-                  onClick={() => setComposerPickerOpen(v => !v)}
+                  className="shrink-0 px-3 py-2 rounded border border-neutral-800 text-neutral-300 hover:text-neutral-100 hover:bg-neutral-800/60"
+                  title="Add"
+                  aria-label="Add"
+                  onClick={() => setAddOpen(v => !v)}
                 >
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
-                    <circle cx="12" cy="12" r="9"/>
-                    <path d="M8 14s1.5 2 4 2 4-2 4-2"/>
-                    <path d="M9 9h.01M15 9h.01"/>
-                  </svg>
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5"><path d="M12 5v14M5 12h14"/></svg>
                 </button>
-              <label className="shrink-0 px-2 py-1 rounded border border-neutral-800 text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/60 cursor-pointer" title="Attach file">
-                <input type="file" multiple className="hidden" onChange={(e) => onFilesSelected(e.target.files)} />
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
-                  <path d="M21.44 11.05l-8.49 8.49a5 5 0 0 1-7.07-7.07l8.49-8.49a3.5 3.5 0 0 1 4.95 4.95l-8.49 8.49a2 2 0 1 1-2.83-2.83l8.49-8.49"/>
-                </svg>
-              </label>
-              <button
-                type="button"
-                className="shrink-0 px-2 py-1 rounded border border-neutral-800 text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/60"
-                title="GIF"
-                onClick={() => setGifOpen(true)}
-              >
-                GIF
-              </button>
+                {addOpen && (
+                  <div className="absolute bottom-full mb-2 left-0 z-40 rounded-md border border-neutral-800 bg-neutral-900 shadow-xl p-1 flex gap-1">
+                    <button className="px-2 py-1 rounded hover:bg-neutral-800 text-neutral-200" onClick={()=>{ setComposerPickerOpen(true); setAddOpen(false); }} title="Emoji">🙂</button>
+                    <button className="px-2 py-1 rounded hover:bg-neutral-800 text-neutral-200" onClick={()=>{ setGifOpen(true); setAddOpen(false); }} title="GIF">GIF</button>
+                    <label className="px-2 py-1 rounded hover:bg-neutral-800 text-neutral-200 cursor-pointer" title="File">
+                      <input type="file" multiple className="hidden" onChange={(e)=>{ onFilesSelected(e.target.files); setAddOpen(false); }} />
+                      File
+                    </label>
+                    <label className="px-2 py-1 rounded hover:bg-neutral-800 text-neutral-200 cursor-pointer" title="Camera">
+                      <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e)=>{ onFilesSelected(e.target.files); setAddOpen(false); }} />
+                      Camera
+                    </label>
+                  </div>
+                )}
                 <input
                   ref={inputRef}
-                  className="min-w-0 flex-1 px-3 py-2 rounded bg-neutral-900 text-neutral-100 placeholder-neutral-500 outline-none focus:ring-2 focus:ring-emerald-600/60 border border-neutral-800/60"
+                  className="min-w-0 flex-1 px-3 py-3 text-base rounded bg-neutral-900 text-neutral-100 placeholder-neutral-500 outline-none focus:ring-2 focus:ring-emerald-600/60 border border-neutral-800/60"
                   placeholder={`Message #${currentChannel?.name ?? 'general'}`}
                   value={text}
                   onChange={(e) => onInputChange(e.target.value)}
@@ -2742,12 +2806,14 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                   autoComplete="off"
                   autoCorrect="off"
                   autoCapitalize="sentences"
-                  spellCheck={true}
+                  spellCheck={false}
+                  type="text"
                   inputMode="text"
                   name="chat-message"
                   data-lpignore="true"
                   data-1p-ignore
                   data-bw-ignore
+                  data-form-type="other"
                 />
                 <button
                   className="shrink-0 px-2 md:px-3 py-2 rounded border border-emerald-700 bg-emerald-800/70 hover:bg-emerald-700/70 text-emerald-50 flex items-center justify-center"
@@ -2763,10 +2829,12 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                 </button>
               </div>
               {composerPickerOpen && (
-                <EmojiPanel
-                  onClose={() => setComposerPickerOpen(false)}
-                  onSelect={(native: string) => { addRecentEmoji(native); insertEmojiAtCaret(native); }}
-                />
+                <Suspense>
+                  <EmojiPanel
+                    onClose={() => setComposerPickerOpen(false)}
+                    onSelect={(native: string) => { addRecentEmoji(native); insertEmojiAtCaret(native); }}
+                  />
+                </Suspense>
               )}
             </>
           )}
@@ -2868,7 +2936,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
         }}
       />
 
-      <InputModal
+  <InputModal
         open={inputOpen}
         title={inputCfg.title}
         label={inputCfg.label}
@@ -2878,15 +2946,31 @@ function ChatApp({ token, user }: { token: string; user: any }) {
         okText={inputCfg.okText}
         onSubmit={(v)=> closeInput(v || '')}
         onCancel={()=> closeInput(null)}
-      />
-      <GifPicker
-        open={gifOpen}
-        onClose={() => setGifOpen(false)}
-        onPick={async (g) => {
-          // Import GIF into our storage to avoid external CSP/CORS issues
-          await addRemoteAsUpload(g.url, 'gif.gif');
-        }}
-      />
+  />
+  {showJump && (
+    <button
+      aria-label="Jump to present"
+      className="md:hidden fixed bottom-20 right-4 z-40 px-3 py-2 rounded-full bg-emerald-700 text-white shadow-lg border border-emerald-600"
+      onClick={() => {
+        const el = listRef.current; if (!el) return; el.scrollTop = el.scrollHeight; setShowJump(false);
+        const cid = fq(currentVoidId, currentChannelId); setUnreadMarkerByChan(prev => ({ ...prev, [cid]: null }));
+      }}
+    >
+      Jump to present
+    </button>
+  )}
+      <Suspense>
+        <GifPicker
+          open={gifOpen}
+          onClose={() => setGifOpen(false)}
+          onPick={async (g) => {
+            // Import GIF into our storage to avoid external CSP/CORS issues
+            await addRemoteAsUpload(g.url, 'gif.gif');
+          }}
+        />
+      </Suspense>
+
+      {/* BottomNav removed per request */}
 
       {/* Mobile: Spaces sheet */}
       {voidSheetOpen && (
@@ -2911,7 +2995,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
               </button>
             </div>
             <div className="mt-3 flex-1 overflow-auto px-2 space-y-2">
-              {voids.map(v => (
+              {voids.filter(v=>!String(v.id).startsWith('dm_')).map(v => (
                 <div key={v.id} className="flex items-center justify-between gap-2">
                   <button onClick={() => { switchVoid(v.id); setVoidSheetOpen(false); }}
                           className={`flex-1 px-3 py-2 rounded-md text-left border ${v.id===currentVoidId?'border-emerald-700 bg-emerald-900/30 text-emerald-200':'border-neutral-800 bg-neutral-900 text-neutral-300'}`}
@@ -2994,7 +3078,23 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                   </li>
                 ))}
               </ul>
-              {/* DM list removed from channel sheet to keep DMs separate */}
+              {/* DMs with close control */}
+              <div className="mt-3 px-1 text-neutral-400 text-xs">Direct Messages</div>
+              <ul className="mt-1 space-y-1">
+                {voids.filter(v=>String(v.id).startsWith('dm_')).map(v => {
+                  const count = unread[`${v.id}:chat`] || 0;
+                  const active = currentVoidId === v.id;
+                  return (
+                    <li key={v.id} className="flex items-center gap-2">
+                      <button className={`flex-1 text-left px-3 py-2 rounded-md transition-colors ${active?'bg-emerald-900/30 text-emerald-200 border border-emerald-800/40':'hover:bg-neutral-800/70 text-neutral-300'}`} onClick={()=>{ switchVoid(v.id); switchChannel('chat'); setChanSheetOpen(false); }}>
+                        {v.name || 'DM'}
+                      </button>
+                      {count>0 && <span className="min-w-5 h-5 px-1 rounded-full bg-emerald-600 text-white text-[10px] flex items-center justify-center">{count>99?'99+':count}</span>}
+                      <button title="Close DM" aria-label="Close DM" className="px-2 py-1 rounded text-neutral-400 hover:text-red-300 hover:bg-red-900/20" onClick={()=> setHiddenDms(prev => prev.includes(v.id) ? prev : [...prev, v.id])}>×</button>
+                    </li>
+                  );
+                })}
+              </ul>
             </div>
           </div>
         </div>

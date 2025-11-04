@@ -13,6 +13,8 @@ ENV VITE_API_HTTP_URL=$VITE_API_URL
 # Pass via docker-compose build arg; value is baked at build time
 ARG VITE_GIPHY_KEY
 ENV VITE_GIPHY_KEY=$VITE_GIPHY_KEY
+ARG VITE_VAPID_PUBLIC_KEY
+ENV VITE_VAPID_PUBLIC_KEY=$VITE_VAPID_PUBLIC_KEY
 
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
 COPY apps/web/package.json apps/web/package.json

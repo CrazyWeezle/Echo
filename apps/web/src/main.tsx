@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client';
 import './index.css';
 import App from './App';
 import { ErrorBoundary } from './ErrorBoundary';
+// PWA SW registration is auto-injected by vite-plugin-pwa
 
 // Keep --vh CSS variable in sync with actual viewport height on mobile
 function setViewportUnit() {
@@ -27,4 +28,3 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     </ErrorBoundary>
   </React.StrictMode>
 );
-

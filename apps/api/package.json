@@ -15,6 +15,7 @@
     "socket.io": "^4.8.1",
     "nodemailer": "^6.9.14",
     "@aws-sdk/client-s3": "^3.701.0",
-    "@aws-sdk/s3-request-presigner": "^3.701.0"
+    "@aws-sdk/s3-request-presigner": "^3.701.0",
+    "web-push": "^3.6.7"
   }
 }

@@ -247,6 +247,18 @@ export async function initDb() {
   `);
   await pool.query(`CREATE INDEX IF NOT EXISTS push_devices_user_idx ON push_devices(user_id)`);
 
+  // Web Push subscriptions (VAPID)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS web_push_subscriptions (
+      endpoint TEXT PRIMARY KEY,
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      p256dh TEXT NOT NULL,
+      auth TEXT NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT now()
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS web_push_user_idx ON web_push_subscriptions(user_id)`);
+
   // Ensure default space/channel exist
   await pool.query(`INSERT INTO spaces (id, name)
                     VALUES ('home','Home')

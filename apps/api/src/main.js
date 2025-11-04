@@ -19,7 +19,7 @@ import { handleFiles } from './routes/files.js';
 import { handleKanban } from './routes/kanban.js';
 import { handleForms } from './routes/forms.js';
 import { handleHabits } from './routes/habits.js';
-import { handlePush } from './routes/push.js';
+import { handlePush, sendWebPushToUsers } from './routes/push.js';
 
 import { listSpaces, listChannels, getBacklog } from './services/chat.js';
 
@@ -47,6 +47,16 @@ process.on('uncaughtException', (err) => { try { console.error('[api] Uncaught e
 }
 
 // --- HTTP server + router ------------------------------------------------------
+function userIdFromAuth(req) {
+  try {
+    const h = req.headers['authorization'] || '';
+    const tok = h.startsWith('Bearer ') ? h.slice(7) : '';
+    if (!tok) return null;
+    const payload = jwt.verify(tok, JWT_SECRET);
+    return payload && payload.sub ? String(payload.sub) : null;
+  } catch { return null; }
+}
+
 const server = http.createServer(async (req, res) => {
   try {
     // CORS
@@ -81,7 +91,7 @@ const server = http.createServer(async (req, res) => {
     if (req.url.startsWith('/api/kanban')) { const handled = await handleKanban(req, res, body, { io }); if (handled) return; }
     if (req.url.startsWith('/api/forms')) { const handled = await handleForms(req, res, body, { io }); if (handled) return; }
     if (req.url.startsWith('/api/habits')) { const handled = await handleHabits(req, res, body, { io }); if (handled) return; }
-    if (req.url.startsWith('/api/push')) { const handled = await handlePush(req, res, body, { io }); if (handled) return; }
+    if (req.url.startsWith('/api/push')) { const handled = await handlePush(req, res, body, { userId: userIdFromAuth(req) }); if (handled) return; }
 
     // Health check for container/platform readiness
     if (req.method === 'GET' && req.url === '/api/health') return json(res, 200, { status: 'ok' });
@@ -329,10 +339,18 @@ io.on('connection', async (socket) => {
     // isn't currently focused. Clients de-dup and ignore self notifications.
     try {
       const { rows: members } = await pool.query('SELECT user_id FROM space_members WHERE space_id=$1', [sid]);
+      const set = io.sockets.adapter.rooms.get(rid) || new Set();
+      const online = new Set(Array.from(set).map(s => io.sockets.sockets.get(s)?.data?.userId).filter(Boolean));
+      const targets = [];
       for (const m of members) {
         const targetId = m.user_id;
         const payload = { voidId: sid, channelId, authorId: userId, authorName: displayName, content: text, messageId: id };
         io.to(`user:${targetId}`).emit('user:notify', payload);
+        if (targetId !== userId && !online.has(targetId)) targets.push(targetId);
+      }
+      if (targets.length > 0) {
+        const title = String(sid).startsWith('dm_') ? `DM from ${displayName}` : `#${channelId.split(':')[1] || 'channel'}`;
+        await sendWebPushToUsers(targets, { title, body: text.slice(0, 120), channelId });
       }
     } catch {}
   });
