@@ -80,6 +80,36 @@ export async function handleChannels(req, res, body, ctx) {
     return json(res, 200, { id: cid, name: nm, spaceId: sid }), true;
   }
 
+  // POST /api/dms/clear — clear history in a DM (chat channel only)
+  if (req.method === 'POST' && req.url === '/api/dms/clear') {
+    let userId = null;
+    const auth = req.headers['authorization'] || '';
+    if (auth.startsWith('Bearer ')) { try { const p = jwt.verify(auth.slice(7), JWT_SECRET); userId = p.sub; } catch {} }
+    if (!userId) return json(res, 401, { message: 'Unauthorized' }), true;
+    const { spaceId, days } = body || {};
+    const sid = String(spaceId || '').trim();
+    if (!sid || !sid.startsWith('dm_')) return json(res, 400, { message: 'spaceId must be a DM' }), true;
+    // Ensure requester is a member of this DM
+    const mem = await pool.query('SELECT 1 FROM space_members WHERE space_id=$1 AND user_id=$2', [sid, userId]);
+    if (mem.rowCount === 0) return json(res, 403, { message: 'Forbidden' }), true;
+    // Resolve chat channel and delete all messages (+ cascades)
+    const chatId = `${sid}:chat`;
+    if (days && Number(days) > 0) {
+      // Delete messages in the last N days
+      const n = Math.max(1, Math.min(3650, Number(days)));
+      await pool.query('DELETE FROM messages WHERE channel_id=$1 AND created_at >= (now() - ($2 ||\' days\')::interval)', [chatId, String(n)]);
+    } else {
+      // Delete all
+      await pool.query('DELETE FROM messages WHERE channel_id=$1', [chatId]);
+    }
+    try {
+      // Push fresh backlog to room so both clients refresh view
+      const msgs = await (await import('../services/chat.js')).getBacklog(chatId, userId, 100);
+      io?.to(chatId).emit('channel:backlog', { voidId: sid, channelId: chatId, messages: msgs });
+    } catch {}
+    return json(res, 200, { ok: true }), true;
+  }
+
   // GET /api/channels/preview?channelId=...&limit=5
   if (req.method === 'GET' && req.url.startsWith('/api/channels/preview')) {
     let userId = null;

@@ -13,7 +13,9 @@
     "@capacitor/core": "^7.4.4",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
-    "socket.io-client": "^4.8.1"
+    "socket.io-client": "^4.8.1",
+    "@emoji-mart/data": "^1.1.0",
+    "@emoji-mart/react": "^1.1.1"
   },
   "devDependencies": {
     "@capacitor/android": "^7.4.4",

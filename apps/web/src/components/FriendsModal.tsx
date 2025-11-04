@@ -5,7 +5,7 @@ type Friend = { id: string; username?: string; name?: string; avatarUrl?: string
 type IncomingReq = { id: string; fromUserId: string; fromUsername?: string; fromName?: string; fromAvatarUrl?: string | null; fromStatus?: string; createdAt?: string };
 type OutgoingReq = { id: string; toUserId: string; toUsername?: string; toName?: string; toAvatarUrl?: string | null; toStatus?: string; createdAt?: string };
 
-export default function FriendsModal({ token, open, onClose, onStartDm }: { token: string; open: boolean; onClose: () => void; onStartDm: (userId: string) => void }) {
+export default function FriendsModal({ token, open, onClose, onStartDm, onlineIds }: { token: string; open: boolean; onClose: () => void; onStartDm: (userId: string) => void; onlineIds?: string[] }) {
   const [tab, setTab] = useState<'friends' | 'requests' | 'add'>('friends');
   const [friends, setFriends] = useState<Friend[]>([]);
   const [incoming, setIncoming] = useState<IncomingReq[]>([]);
@@ -77,7 +77,20 @@ export default function FriendsModal({ token, open, onClose, onStartDm }: { toke
         {tab === 'friends' && (
           <div className="max-h-[60vh] overflow-auto divide-y divide-neutral-800">
             {loading && friends.length===0 ? <div className="p-3 text-neutral-400">Loading…</div> : null}
-            {friends.map(f => (
+            {friends.map(f => {
+              const isOnline = !!(onlineIds && onlineIds.includes(f.id));
+              const st = String(f.status || '').toLowerCase();
+              let label = 'Offline';
+              let dot = 'bg-neutral-600';
+              if (isOnline) {
+                if (st === 'dnd') { label = 'Do Not Disturb'; dot = 'bg-red-500'; }
+                else if (st === 'idle') { label = 'Idle'; dot = 'bg-amber-500'; }
+                else { label = 'Online'; dot = 'bg-emerald-500'; }
+              } else {
+                // treat invisible as offline
+                label = 'Offline'; dot = 'bg-neutral-600';
+              }
+              return (
               <div key={f.id} className="flex items-center justify-between p-2">
                 <div className="flex items-center gap-3 min-w-0">
                   <div className="h-8 w-8 rounded-full overflow-hidden bg-neutral-800 border border-neutral-700 flex items-center justify-center">
@@ -85,7 +98,10 @@ export default function FriendsModal({ token, open, onClose, onStartDm }: { toke
                   </div>
                   <div className="min-w-0">
                     <div className="truncate" style={f.nameColor?{color:f.nameColor}:undefined}>{f.name || f.username}</div>
-                    <div className="text-xs text-neutral-500">{f.status || ''}</div>
+                    <div className="flex items-center gap-1 text-xs text-neutral-500">
+                      <span className={`inline-block h-2 w-2 rounded-full ${dot}`}></span>
+                      <span>{label}</span>
+                    </div>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
@@ -93,7 +109,7 @@ export default function FriendsModal({ token, open, onClose, onStartDm }: { toke
                   <button className="px-2 py-1 text-sm rounded border border-neutral-700 text-neutral-300 hover:bg-neutral-800/40" onClick={()=>removeFriend(f.id)}>Remove</button>
                 </div>
               </div>
-            ))}
+            )})}
             {friends.length===0 && !loading && <div className="p-3 text-neutral-500">No friends yet.</div>}
           </div>
         )}
@@ -147,4 +163,3 @@ export default function FriendsModal({ token, open, onClose, onStartDm }: { toke
     </div>
   );
 }
-

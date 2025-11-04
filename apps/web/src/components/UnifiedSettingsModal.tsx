@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+﻿import React, { useEffect, useRef, useState } from 'react';
 import { api, signUpload } from '../lib/api';
 import { askConfirm, toast } from '../lib/ui';
 import ChangePassword from './ChangePassword';
@@ -243,7 +243,7 @@ export default function UnifiedSettingsModal({
                   </div>
                 </div>
                 <div className="mt-3">
-                  <button disabled={loading} className="px-3 py-2 rounded border border-emerald-700 bg-emerald-800/70 text-emerald-50 hover:bg-emerald-700/70" onClick={savePersonalization}>{loading?'Saving…':'Save personalization'}</button>
+                  <button disabled={loading} className="px-3 py-2 rounded border border-emerald-700 bg-emerald-800/70 text-emerald-50 hover:bg-emerald-700/70" onClick={savePersonalization}>{loading?'Savingâ€¦':'Save personalization'}</button>
                 </div>
               </div>
             </div>
@@ -303,7 +303,7 @@ export default function UnifiedSettingsModal({
                 </select>
               </div>
               <div className="flex items-center gap-2">
-                <button disabled={loading} className="px-3 py-2 rounded border border-emerald-700 bg-emerald-800/70 text-emerald-50 hover:bg-emerald-700/70" onClick={saveProfile}>{loading?'Saving…':'Save changes'}</button>
+                <button disabled={loading} className="px-3 py-2 rounded border border-emerald-700 bg-emerald-800/70 text-emerald-50 hover:bg-emerald-700/70" onClick={saveProfile}>{loading?'Savingâ€¦':'Save changes'}</button>
               </div>
             </div>
           )}
@@ -326,7 +326,7 @@ export default function UnifiedSettingsModal({
                 <button className="px-2 py-1 rounded border border-neutral-700 text-neutral-200 hover:bg-neutral-800/60" onClick={async()=>{ try{ const url=toneUrl||''; if(url){ const a=new Audio(url); await a.play(); } else { const ctx=new (window.AudioContext||(window as any).webkitAudioContext)(); const o=ctx.createOscillator(); const g=ctx.createGain(); o.type='sine'; o.frequency.value=880; o.connect(g); g.connect(ctx.destination); g.gain.setValueAtTime(0.0001, ctx.currentTime); g.gain.exponentialRampToValueAtTime(0.2, ctx.currentTime+0.01); o.start(); o.stop(ctx.currentTime+0.15);} } catch{} }}>Test</button>
               </div>
               <div className="flex items-center gap-2">
-                <button disabled={loading} className="px-3 py-2 rounded border border-emerald-700 bg-emerald-800/70 text-emerald-50 hover:bg-emerald-700/70" onClick={saveNotifications}>{loading?'Saving…':'Save'}</button>
+                <button disabled={loading} className="px-3 py-2 rounded border border-emerald-700 bg-emerald-800/70 text-emerald-50 hover:bg-emerald-700/70" onClick={saveNotifications}>{loading?'Savingâ€¦':'Save'}</button>
               </div>
             </div>
           )}
@@ -379,7 +379,7 @@ export default function UnifiedSettingsModal({
                 <div>
                   <label className="block text-sm text-neutral-400 mb-1">Home channel</label>
                   <select value={sHome} onChange={(e)=>setSHome(e.target.value)} className="w-full p-2.5 rounded-md bg-neutral-900 text-neutral-100 border border-neutral-800 focus:outline-none focus:ring-2 focus:ring-emerald-600/60">
-                    <option value="">(none — remember last opened)</option>
+                    <option value="">(none â€” remember last opened)</option>
                     {channels.map(c => (
                       <option key={c.id} value={c.id}>#{c.name || c.id}</option>
                     ))}
@@ -388,7 +388,7 @@ export default function UnifiedSettingsModal({
                 </div>
               )}
               <div className="flex items-center gap-2">
-                <button disabled={busy} className="px-3 py-2 rounded border border-emerald-700 bg-emerald-800/70 text-emerald-50 hover:bg-emerald-700/70" onClick={saveSpaceGeneral}>{busy?'Saving…':'Save changes'}</button>
+                <button disabled={busy} className="px-3 py-2 rounded border border-emerald-700 bg-emerald-800/70 text-emerald-50 hover:bg-emerald-700/70" onClick={saveSpaceGeneral}>{busy?'Savingâ€¦':'Save changes'}</button>
                 <div className="ml-auto flex items-center gap-2">
                   <button disabled={busy} className="px-3 py-2 rounded border border-neutral-700 text-neutral-200 hover:bg-neutral-800/60" onClick={leaveSpace}>Leave space</button>
                   <button disabled={busy} className="px-3 py-2 rounded border border-red-800 text-red-300 hover:bg-red-900/30" onClick={deleteSpace}>Delete space</button>
@@ -416,8 +416,38 @@ export default function UnifiedSettingsModal({
                 <p className="mt-1 text-xs text-neutral-500">Either participant can update this name and image.</p>
               </div>
               <DmParticipants spaceId={spaceId} token={token} />
+
+              {/* DM history controls */}
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <button className="px-3 py-2 rounded border border-red-800 text-red-300 hover:bg-red-900/30" onClick={async()=>{
+                    const ok = await askConfirm({ title:'Clear History', message:'Delete ALL messages in this DM for both participants?', confirmText:'Clear all' });
+                    if (!ok) return;
+                    setBusy(true); setErr('');
+                    try { await api.postAuth('/dms/clear', { spaceId }, token); onSwitchToChannel(`${spaceId}:chat`); }
+                    catch(e:any){ setErr(e?.message||'Failed to clear'); }
+                    finally { setBusy(false); }
+                  }}>Clear all</button>
+                  <p className="text-xs text-neutral-500">Removes all previous messages in this DM.</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="text-sm text-neutral-400">Clear last</label>
+                  <input id="dmClearDays" type="number" min="1" max="3650" defaultValue={7} className="w-20 p-1 rounded bg-neutral-900 text-neutral-100 border border-neutral-700" />
+                  <span className="text-sm text-neutral-400">days</span>
+                  <button className="px-3 py-2 rounded border border-red-800 text-red-300 hover:bg-red-900/30" onClick={async()=>{
+                    const el = document.getElementById('dmClearDays') as HTMLInputElement | null;
+                    const n = el ? Math.max(1, Math.min(3650, parseInt(el.value||'7',10))) : 7;
+                    const ok = await askConfirm({ title:'Clear Recent Messages', message:`Delete messages from the last ${n} day(s) in this DM?`, confirmText:'Clear recent' });
+                    if (!ok) return;
+                    setBusy(true); setErr('');
+                    try { await api.postAuth('/dms/clear', { spaceId, days: n }, token); onSwitchToChannel(`${spaceId}:chat`); }
+                    catch(e:any){ setErr(e?.message||'Failed to clear'); }
+                    finally { setBusy(false); }
+                  }}>Clear last N days</button>
+                </div>
+              </div>
               <div className="flex items-center gap-2">
-                <button disabled={busy} className="px-3 py-2 rounded border border-emerald-700 bg-emerald-800/70 text-emerald-50 hover:bg-emerald-700/70" onClick={saveSpaceGeneral}>{busy?'Saving…':'Save changes'}</button>
+                <button disabled={busy} className="px-3 py-2 rounded border border-emerald-700 bg-emerald-800/70 text-emerald-50 hover:bg-emerald-700/70" onClick={saveSpaceGeneral}>{busy?'Savingâ€¦':'Save changes'}</button>
                 <div className="ml-auto flex items-center gap-2">
                   <button disabled={busy} className="px-3 py-2 rounded border border-neutral-700 text-neutral-200 hover:bg-neutral-800/60" onClick={leaveSpace}>Leave DM</button>
                 </div>
@@ -445,7 +475,7 @@ export default function UnifiedSettingsModal({
                   <li key={c.id} className="flex items-center justify-between px-3 py-2 gap-2">
                     <div className="truncate flex items-center gap-2">
                       <span className="opacity-70 text-sm">
-                        {c.type==='voice' ? '🔊' : c.type==='announcement' ? '📢' : c.type==='kanban' ? '🗂️' : c.type==='form' ? '📝' : '#'}
+                        {c.type==='voice' ? 'ðŸ”Š' : c.type==='announcement' ? 'ðŸ“¢' : c.type==='kanban' ? 'ðŸ—‚ï¸' : c.type==='form' ? 'ðŸ“' : '#'}
                       </span>
                       <span> {c.name}</span>
                     </div>
@@ -519,6 +549,17 @@ export default function UnifiedSettingsModal({
                   <input className="w-full p-2.5 rounded-md bg-neutral-900 text-neutral-100 border border-neutral-800" placeholder="Enter invite code" value={joinCode} onChange={e=>setJoinCode(e.target.value)} />
                 </div>
                 <button disabled={busy} className="px-3 py-2 rounded border border-neutral-700 text-neutral-200 hover:bg-neutral-800/60" onClick={acceptInvite}>Join</button>
+              </div>
+              <div className="flex items-center gap-2">
+                <button className="px-3 py-2 rounded border border-red-800 text-red-300 hover:bg-red-900/30" onClick={async()=>{
+                  const ok = await askConfirm({ title:'Clear History', message:'Delete all messages in this DM for both participants?', confirmText:'Clear' });
+                  if (!ok) return;
+                  setBusy(true); setErr('');
+                  try { await api.postAuth('/dms/clear', { spaceId }, token); onSwitchToChannel(`${spaceId}:chat`); }
+                  catch(e:any){ setErr(e?.message||'Failed to clear'); }
+                  finally { setBusy(false); }
+                }}>Clear history</button>
+                <p className="text-xs text-neutral-500">This deletes all previous messages in this DM.</p>
               </div>
             </div>
           )}
@@ -608,3 +649,4 @@ function ThemeSelector() {
     </div>
   );
 }
+

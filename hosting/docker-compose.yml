@@ -44,6 +44,8 @@ services:
       dockerfile: hosting/Dockerfile.web
       args:
         VITE_API_URL: "/api"
+        # Optional: GIF search key for web build (read by Vite)
+        VITE_GIPHY_KEY: ${VITE_GIPHY_KEY}
     container_name: echo-web
     # No host port publish; reachable via tunnel only
     env_file:

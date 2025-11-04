@@ -1,4 +1,4 @@
-// apps/web/src/App.tsx
+ï»¿// apps/web/src/App.tsx
 import { useEffect, useRef, useState } from "react";
 import Login from "./pages/Login"; // match actual filename case for Linux builds
 import { socket, connectSocket, disconnectSocket, getLocalUser, setLocalUser } from "./lib/socket";
@@ -9,6 +9,7 @@ import FriendsModal from "./components/FriendsModal";
 import MemberProfileModal from "./components/MemberProfileModal";
 import InputModal from "./components/InputModal";
 import GifPicker from "./components/GifPicker";
+import EmojiPanel from "./components/EmojiPanel";
 import UnifiedSettingsModal from "./components/UnifiedSettingsModal";
 import ToastHost from "./components/ToastHost";
 import ConfirmHost from "./components/ConfirmHost";
@@ -1466,7 +1467,12 @@ function ChatApp({ token, user }: { token: string; user: any }) {
     if (!ts) return '';
     try {
       const d = new Date(ts);
-      return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      // Include date + time for clarity in DMs and channels
+      // Example: Jan 05, 3:42 PM
+      return d.toLocaleString([], {
+        year: 'numeric', month: 'short', day: '2-digit',
+        hour: '2-digit', minute: '2-digit'
+      } as Intl.DateTimeFormatOptions);
     } catch { return ''; }
   }
 
@@ -1612,7 +1618,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                   title="Hide DM from spaces"
                   onClick={(e)=>{ e.stopPropagation(); setHiddenDms(prev => prev.includes(v.id) ? prev : prev.concat(v.id)); }}
                   aria-label="Hide DM"
-                >×</button>
+                >Ã—</button>
               )}
             </div>
           );
@@ -1677,7 +1683,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                 </div>
                 <div className="min-w-0">
                   <div className="truncate text-neutral-200 text-sm" style={m.nameColor ? { color: String(m.nameColor) } : undefined}>{m.name || m.username}</div>
-                  <div className="text-[10px] text-neutral-400">{label}{m.role ? ` • ${m.role}` : ''}</div>
+                  <div className="text-[10px] text-neutral-400">{label}{m.role ? ` â€¢ ${m.role}` : ''}</div>
                 </div>
                 </button>
               </div>
@@ -1946,7 +1952,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                             </div>
                             <div ref={(el)=>{ favScrollRefs.current[fid] = el; }} className="min-h-[72px] max-h-48 overflow-auto space-y-2 text-[12px]">
                               {lists === undefined ? (
-                                <div className="text-neutral-500">Loading lists…</div>
+                                <div className="text-neutral-500">Loading listsâ€¦</div>
                               ) : (!list && (lists?.length || 0) === 0) ? (
                                 <div className="text-neutral-500 flex items-center justify-between gap-2">
                                   <span>Open this kanban once to load lists.</span>
@@ -2014,7 +2020,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                             </div>
                             <div ref={(el)=>{ favScrollRefs.current[fid] = el; }} className="min-h-[88px] max-h-48 overflow-auto space-y-1 text-[12px]">
                               {items.length === 0 ? (
-                                <div className="text-neutral-500">Loading recent messages…</div>
+                                <div className="text-neutral-500">Loading recent messagesâ€¦</div>
                               ) : (
                                 items.map(it => (
                                   <div key={it.id} className="px-2 py-1 rounded border border-neutral-800 bg-neutral-950/50">
@@ -2076,17 +2082,37 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                 const st = habitByChan[fid];
                 const defs = st?.defs || [];
                 const mine = st?.my || {};
+                // Day window selector: 7, 14, 30 (default 14)
+                const wRef: any = (window as any);
+                if (typeof wRef.dailyRange !== 'number') { wRef.dailyRange = 14; }
+                if (typeof wRef.setDailyRange !== 'function') {
+                  wRef.setDailyRange = (n: number) => { wRef.dailyRange = (n===7||n===14||n===30) ? n : 14; };
+                }
                 const today = new Date();
                 const days: string[] = [];
-                for (let i=13;i>=0;i--) { const d=new Date(); d.setDate(today.getDate()-i); days.push(d.toISOString().slice(0,10)); }
+                const fmt = (d: Date) => {
+                  const y = d.getFullYear();
+                  const m = String(d.getMonth()+1).padStart(2,'0');
+                  const dd = String(d.getDate()).padStart(2,'0');
+                  return `${y}-${m}-${dd}`; // local date (YYYY-MM-DD)
+                };
+                for (let i=(wRef.dailyRange||14)-1; i>=0; i--) { const d=new Date(); d.setDate(today.getDate()-i); days.push(fmt(d)); }
                 return (
                   <div className="space-y-4">
                     <div className="flex items-center justify-between">
-                      <div className="text-emerald-300 font-semibold">Habit Tracker</div>
+                      <div className="text-emerald-300 font-semibold">Daily Tracker</div>
+                      <div className="flex items-center gap-2 text-xs text-neutral-400">
+                        <span>Range</span>
+                        <select className="bg-neutral-900 border border-neutral-700 rounded px-2 py-1 text-neutral-200" onChange={(e)=>{ try { const v=parseInt((e.target as HTMLSelectElement).value,10); (window as any).setDailyRange?.(v); } catch{} }}>
+                          <option value="7">7 days</option>
+                          <option value="14" selected>14 days</option>
+                          <option value="30">30 days</option>
+                        </select>
+                      </div>
                       <button className="px-2 py-1 rounded border border-neutral-700 text-neutral-200 hover:bg-neutral-800/60" onClick={async()=>{
-                        const nm = await askInput({ title:'New Habit', label:'Habit name', placeholder:'Drink water' });
+                        const nm = await askInput({ title:'New Task', label:'Task name', placeholder:'Drink water' });
                         if (!nm) return; try{ const tok=localStorage.getItem('token')||''; await api.postAuth('/habits/defs',{ channelId: fid, name: nm }, tok);}catch(e:any){ toast(e?.message||'Failed to add','error'); }
-                      }}>+ Add Habit</button>
+                      }}>+ Add Task</button>
                     </div>
                     <div className="rounded border border-neutral-800 bg-neutral-900/50 p-2">
                       <div className="text-sm text-neutral-300 mb-1">Leaderboard (last 7 days)</div>
@@ -2102,14 +2128,23 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                         return (
                           <div key={d.id} className="px-2 py-1 rounded border border-neutral-700 bg-neutral-900/40 flex items-center gap-2">
                             <label className="flex items-center gap-1">
-                              <input type="checkbox" checked={opted} onChange={async(e)=>{ try{ const tok=localStorage.getItem('token')||''; if(e.target.checked) await api.postAuth('/habits/opt',{ defId:d.id, isPublic: pub }, tok); else await api.deleteAuth('/habits/opt',{ defId:d.id }, tok);}catch{}}} />
+                              <input type="checkbox" checked={opted} onChange={async(e)=>{ try{ const tok=localStorage.getItem('token')||''; if(e.target.checked) await api.postAuth('/habits/opt',{ habitId:d.id, isPublic: pub }, tok); else await api.deleteAuth('/habits/opt',{ habitId:d.id }, tok);}catch{}}} />
                               <span className="text-neutral-200 text-sm">{d.name}</span>
                             </label>
                             {opted && (
                               <label className="flex items-center gap-1 text-xs text-neutral-400">
-                                <input type="checkbox" checked={pub} onChange={async(e)=>{ try{ const tok=localStorage.getItem('token')||''; await api.postAuth('/habits/opt',{ defId:d.id, isPublic: e.target.checked }, tok);}catch{}}} /> Public
+                                <input type="checkbox" checked={pub} onChange={async(e)=>{ try{ const tok=localStorage.getItem('token')||''; await api.postAuth('/habits/opt',{ habitId:d.id, isPublic: e.target.checked }, tok);}catch{}}} /> Public
                               </label>
                             )}
+                            {/* Remove task (available to space owners; currently always visible) */}
+                            <button className="ml-1 px-2 py-0.5 rounded border border-red-800 text-red-300 hover:bg-red-900/30 text-xs" title="Remove task" onClick={async()=>{
+                              const ok = await askConfirm({ title:'Remove Task', message:`Remove task "${d.name}" for this channel?`, confirmText:'Remove' });
+                              if (!ok) return;
+                              try {
+                                const tok = localStorage.getItem('token') || '';
+                                await api.deleteAuth('/habits/defs', { habitId: d.id }, tok);
+                              } catch (e) { toast((e as any)?.message || 'Failed to remove', 'error'); }
+                            }}>Ã—</button>
                           </div>
                         );
                       })}
@@ -2131,7 +2166,9 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                                 const done = !!mine[d.id].days?.includes(dy);
                                 return (
                                   <td key={dy} className="px-2 py-1 text-center">
-                                    <input type="checkbox" className="accent-emerald-500" checked={done} onChange={async(e)=>{ try{ const tok=localStorage.getItem('token')||''; await api.postAuth('/habits/entry',{ defId: d.id, day: dy, done: e.target.checked }, tok);}catch{}}} />
+                                    <input type="checkbox" className="accent-emerald-500" checked={done} onChange={async(e)=>{ try{ const tok=localStorage.getItem('token')||''; const tid = habitByChan[fid]?.my?.[d.id]?.trackerId || ''; await api.postAuth('/habits/entry',{ trackerId: tid, defId: d.id, day: dy, done: e.target.checked }, tok); // optimistic update
+                                      setHabitByChan(old=>{ const st=old[fid]; if(!st) return old; const my={ ...(st.my||{}) }; const cur={ trackerId: tid || my[d.id]?.trackerId, public: !!(my[d.id]?.public), days: [ ...(my[d.id]?.days||[]) ] }; const idx=cur.days.indexOf(dy); if(e.target.checked){ if(idx===-1) cur.days.push(dy);} else { if(idx!==-1) cur.days.splice(idx,1);} my[d.id]=cur; return { ...old, [fid]: { ...st, my } }; });
+                                    }catch{}}} />
                                   </td>
                                 );
                               })}
@@ -2224,7 +2261,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                         </button>
                       </div>
                       <div className="flex items-center gap-1">
-                        <button className="text-xs text-neutral-300 hover:text-emerald-300" title="Add Card" onClick={async()=>{ const txt=await askInput({ title:'New Card', label:'Text', placeholder:'Do the thing…' }); if(!txt) return; try{ const tok=localStorage.getItem('token')||''; await api.postAuth('/kanban/items',{ listId:list.id, content: txt }, tok);}catch(e:any){ toast(e?.message||'Failed to add','error'); } }}>+ Add</button>
+                        <button className="text-xs text-neutral-300 hover:text-emerald-300" title="Add Card" onClick={async()=>{ const txt=await askInput({ title:'New Card', label:'Text', placeholder:'Do the thingâ€¦' }); if(!txt) return; try{ const tok=localStorage.getItem('token')||''; await api.postAuth('/kanban/items',{ listId:list.id, content: txt }, tok);}catch(e:any){ toast(e?.message||'Failed to add','error'); } }}>+ Add</button>
                         <button className="text-xs text-neutral-400 hover:text-neutral-200" title="Rename" onClick={async()=>{ const nm=await askInput({ title:'Rename List', initialValue:list.name, label:'List name' }); if(!nm||nm===list.name) return; try{ const tok=localStorage.getItem('token')||''; await api.patchAuth('/kanban/lists',{ listId:list.id, name:nm }, tok);}catch(e:any){ toast(e?.message||'Failed to rename','error'); } }}>
                           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 1 1 3 3L7 19l-4 1 1-4 12.5-12.5Z"/></svg>
                         </button>
@@ -2319,7 +2356,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                           </>
                         );
                       })()}
-                      <button className="w-full text-left px-2 py-1 rounded border border-neutral-800 text-neutral-300 hover:bg-neutral-800/60" onClick={async()=>{ const txt=await askInput({ title:'New Card', label:'Text', placeholder:'Do the thing…' }); if(!txt) return; try{ const tok=localStorage.getItem('token')||''; await api.postAuth('/kanban/items',{ listId:list.id, content: txt }, tok);}catch(e:any){ toast(e?.message||'Failed to add','error'); } }}>+ Add card</button>
+                      <button className="w-full text-left px-2 py-1 rounded border border-neutral-800 text-neutral-300 hover:bg-neutral-800/60" onClick={async()=>{ const txt=await askInput({ title:'New Card', label:'Text', placeholder:'Do the thingâ€¦' }); if(!txt) return; try{ const tok=localStorage.getItem('token')||''; await api.postAuth('/kanban/items',{ listId:list.id, content: txt }, tok);}catch(e:any){ toast(e?.message||'Failed to add','error'); } }}>+ Add card</button>
                     </div>
                   </div>
                 ))}
@@ -2472,7 +2509,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                 ) : (
                   <>
                     {renderWithItalics(m.content)}
-                    {m.optimistic ? ' …' : ''}
+                    {m.optimistic ? ' â€¦' : ''}
                   </>
                 )}
               </div>
@@ -2726,30 +2763,10 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                 </button>
               </div>
               {composerPickerOpen && (
-                <div className="mt-2 p-2 rounded-md border border-neutral-800 bg-neutral-900 shadow-xl w-full max-w-[560px]">
-                  {/* Tabs */}
-                  <div className="flex items-center gap-1 overflow-auto pb-1">
-                    {(recentEmojis.length>0 ? ['Recent'] : []).concat(Object.keys(EMOJI_CATEGORIES)).map(cat => (
-                      <button
-                        key={cat}
-                        className={`px-2 py-1 rounded border text-xs ${emojiTab===cat ? 'border-emerald-700 bg-emerald-900/30 text-emerald-200' : 'border-neutral-800 text-neutral-300 hover:bg-neutral-800/60'}`}
-                        onClick={()=>setEmojiTab(cat)}
-                      >{cat}</button>
-                    ))}
-                    <div className="ml-auto text-[11px] text-neutral-500 px-1">Tap to insert</div>
-                  </div>
-                  {/* Grid */}
-                  <div className="mt-2 max-h-60 overflow-auto">
-                    <div className="grid grid-cols-10 gap-1">
-                      {(() => {
-                        const list = emojiTab==='Recent' ? recentEmojis : (EMOJI_CATEGORIES[emojiTab]||[]);
-                        return list.map(em => (
-                          <button key={em} className="text-2xl leading-none p-1 rounded hover:bg-neutral-800" onClick={() => onComposerEmojiClick(em)}>{em}</button>
-                        ));
-                      })()}
-                    </div>
-                  </div>
-                </div>
+                <EmojiPanel
+                  onClose={() => setComposerPickerOpen(false)}
+                  onSelect={(native: string) => { addRecentEmoji(native); insertEmojiAtCaret(native); }}
+                />
               )}
             </>
           )}
@@ -2762,6 +2779,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
       <FriendsModal
         token={localStorage.getItem('token') || ''}
         open={friendsOpen}
+        onlineIds={globalUserIds}
         onClose={()=>setFriendsOpen(false)}
         onStartDm={async (uid) => {
           try {
@@ -3042,6 +3060,10 @@ function ChatApp({ token, user }: { token: string; user: any }) {
     </div>
   );
 }
+
+
+
+
 
 
 

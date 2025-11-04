@@ -6,16 +6,41 @@ import { json } from '../utils.js';
 
 async function getHabitState(channelId, viewerId) {
   const defs = (await pool.query('SELECT id, name, pos FROM habit_defs WHERE channel_id=$1 ORDER BY pos ASC, created_at ASC', [channelId])).rows;
-  const { rows: myT } = await pool.query('SELECT t.id, t.habit_id, t.is_public FROM habit_trackers t WHERE t.habit_id = ANY($1::uuid[]) AND t.user_id=$2', [defs.map(d=>d.id), viewerId]);
+  const defIds = defs.map(d => d.id);
+  const { rows: myT } = defIds.length > 0
+    ? await pool.query('SELECT t.id, t.habit_id, t.is_public FROM habit_trackers t WHERE t.habit_id = ANY($1::uuid[]) AND t.user_id=$2', [defIds, viewerId])
+    : { rows: [] };
   const trackerIds = myT.map(r=>r.id);
   const since = new Date(); since.setDate(since.getDate()-30);
-  const { rows: entries } = trackerIds.length>0 ? await pool.query('SELECT tracker_id, day FROM habit_entries WHERE tracker_id = ANY($1::uuid[]) AND day >= $2 AND done=true', [trackerIds, since]) : { rows: [] };
-  const my = {}; for (const t of myT) my[t.habit_id] = { public: t.is_public, days: [] };
-  for (const e of entries) { for (const t of myT) { if (e.tracker_id === t.id) { my[t.habit_id].days.push(String(e.day)); break; } } }
-  return { defs: defs.map(d=>({ id: d.id, name: d.name, pos: d.pos })), my };
+  const { rows: entries } = trackerIds.length>0
+    ? await pool.query('SELECT tracker_id, day FROM habit_entries WHERE tracker_id = ANY($1::uuid[]) AND day >= $2 AND done=true', [trackerIds, since])
+    : { rows: [] };
+  const my = {};
+  for (const t of myT) my[t.habit_id] = { trackerId: t.id, public: t.is_public, days: [] };
+  for (const e of entries) {
+    for (const t of myT) { if (e.tracker_id === t.id) { my[t.habit_id].days.push(String(e.day)); break; } }
+  }
+  // Optional: leaderboard for last 7 days among public trackers in this channel
+  let leaderboard = [];
+  try {
+    const seven = new Date(); seven.setDate(seven.getDate()-7);
+    const { rows: lb } = defIds.length>0 ? await pool.query(
+      `SELECT ht.user_id as "userId", COALESCE(u.name,'User') as name, COUNT(he.id)::int as count
+       FROM habit_entries he
+       JOIN habit_trackers ht ON ht.id = he.tracker_id AND ht.is_public = true
+       LEFT JOIN users u ON u.id = ht.user_id
+       WHERE ht.habit_id = ANY($1::uuid[]) AND he.day >= $2 AND he.done = true
+       GROUP BY ht.user_id, u.name
+       ORDER BY count DESC, name ASC
+       LIMIT 10`,
+      [defIds, seven]
+    ) : { rows: [] };
+    leaderboard = lb || [];
+  } catch {}
+  return { defs: defs.map(d=>({ id: d.id, name: d.name, pos: d.pos })), my, leaderboard };
 }
 
-export async function handleHabits(req, res, body) {
+export async function handleHabits(req, res, body, ctx) {
   if (req.method === 'GET' && req.url.startsWith('/api/habits')) {
     let userId = null;
     const a = req.headers['authorization'] || '';
@@ -43,6 +68,7 @@ export async function handleHabits(req, res, body) {
     const nm = String(name || '').trim();
     if (!cid || !nm) return json(res, 400, { message: 'channelId and name required' }), true;
     await pool.query('INSERT INTO habit_defs(id, channel_id, name, pos) VALUES ($1, $2, $3, COALESCE((SELECT MAX(pos)+1 FROM habit_defs WHERE channel_id=$2),0))', [randomUUID(), cid, nm]);
+    try { const io = ctx?.io; if (io) io.to(`user:${userId}`).emit('habit:state', { channelId: cid, ...(await getHabitState(cid, userId)) }); } catch {}
     return json(res, 200, { ok: true }), true;
   }
 
@@ -52,6 +78,10 @@ export async function handleHabits(req, res, body) {
     if (!hid) return json(res, 400, { message: 'habitId required' }), true;
     if (typeof name === 'string') await pool.query('UPDATE habit_defs SET name=$1 WHERE id=$2', [String(name), hid]);
     if (typeof pos === 'number') await pool.query('UPDATE habit_defs SET pos=$1 WHERE id=$2', [Number(pos), hid]);
+    try {
+      const { rows } = await pool.query('SELECT channel_id FROM habit_defs WHERE id=$1', [hid]);
+      const cid = rows[0]?.channel_id; if (cid) { const io = ctx?.io; if (io) io.to(`user:${userId}`).emit('habit:state', { channelId: cid, ...(await getHabitState(cid, userId)) }); }
+    } catch {}
     return json(res, 200, { ok: true }), true;
   }
 
@@ -59,7 +89,10 @@ export async function handleHabits(req, res, body) {
     const { habitId } = body || {};
     const hid = String(habitId || '').trim();
     if (!hid) return json(res, 400, { message: 'habitId required' }), true;
+    const { rows } = await pool.query('SELECT channel_id FROM habit_defs WHERE id=$1', [hid]);
+    const cid = rows[0]?.channel_id;
     await pool.query('DELETE FROM habit_defs WHERE id=$1', [hid]);
+    try { if (cid) { const io = ctx?.io; if (io) io.to(`user:${userId}`).emit('habit:state', { channelId: cid, ...(await getHabitState(cid, userId)) }); } } catch {}
     return json(res, 200, { ok: true }), true;
   }
 
@@ -68,11 +101,12 @@ export async function handleHabits(req, res, body) {
     const a = req.headers['authorization'] || '';
     if (a.startsWith('Bearer ')) { try { const p = jwt.verify(a.slice(7), JWT_SECRET); userId = p.sub; } catch {} }
     if (!userId) return json(res, 401, { message: 'Unauthorized' }), true;
-    const { habitId, isPublic } = body || {};
-    const hid = String(habitId || '').trim();
+    const { habitId, defId, isPublic } = body || {};
+    const hid = String(habitId || defId || '').trim();
     const pub = typeof isPublic === 'boolean' ? !!isPublic : true;
     if (!hid) return json(res, 400, { message: 'habitId required' }), true;
     await pool.query('INSERT INTO habit_trackers(id, habit_id, user_id, is_public) VALUES ($1, $2, $3, $4) ON CONFLICT (habit_id, user_id) DO UPDATE SET is_public=EXCLUDED.is_public', [randomUUID(), hid, userId, pub]);
+    try { const { rows } = await pool.query('SELECT channel_id FROM habit_defs WHERE id=$1', [hid]); const cid = rows[0]?.channel_id; if (cid) { const io = ctx?.io; if (io) io.to(`user:${userId}`).emit('habit:state', { channelId: cid, ...(await getHabitState(cid, userId)) }); } } catch {}
     return json(res, 200, { ok: true }), true;
   }
 
@@ -81,10 +115,11 @@ export async function handleHabits(req, res, body) {
     const a = req.headers['authorization'] || '';
     if (a.startsWith('Bearer ')) { try { const p = jwt.verify(a.slice(7), JWT_SECRET); userId = p.sub; } catch {} }
     if (!userId) return json(res, 401, { message: 'Unauthorized' }), true;
-    const { habitId } = body || {};
-    const hid = String(habitId || '').trim();
+    const { habitId, defId } = body || {};
+    const hid = String(habitId || defId || '').trim();
     if (!hid) return json(res, 400, { message: 'habitId required' }), true;
     await pool.query('DELETE FROM habit_trackers WHERE habit_id=$1 AND user_id=$2', [hid, userId]);
+    try { const { rows } = await pool.query('SELECT channel_id FROM habit_defs WHERE id=$1', [hid]); const cid = rows[0]?.channel_id; if (cid) { const io = ctx?.io; if (io) io.to(`user:${userId}`).emit('habit:state', { channelId: cid, ...(await getHabitState(cid, userId)) }); } } catch {}
     return json(res, 200, { ok: true }), true;
   }
 
@@ -93,12 +128,27 @@ export async function handleHabits(req, res, body) {
     const a = req.headers['authorization'] || '';
     if (a.startsWith('Bearer ')) { try { const p = jwt.verify(a.slice(7), JWT_SECRET); userId = p.sub; } catch {} }
     if (!userId) return json(res, 401, { message: 'Unauthorized' }), true;
-    const { trackerId, day, done } = body || {};
-    const tid = String(trackerId || '').trim();
-    if (!tid) return json(res, 400, { message: 'trackerId required' }), true;
+    const { trackerId, defId } = body || {};
+    let tid = String(trackerId || '').trim();
+    if (!tid) {
+      // If trackerId not provided, accept defId and resolve/create a tracker for this user
+      const hid = String(defId || '').trim();
+      if (!hid) return json(res, 400, { message: 'trackerId or defId required' }), true;
+      // Ensure tracker exists
+      const ins = await pool.query('INSERT INTO habit_trackers(id, habit_id, user_id, is_public) VALUES ($1,$2,$3,$4) ON CONFLICT (habit_id, user_id) DO NOTHING RETURNING id', [randomUUID(), hid, userId, true]);
+      if (ins.rowCount > 0) tid = ins.rows[0].id; else {
+        const q = await pool.query('SELECT id FROM habit_trackers WHERE habit_id=$1 AND user_id=$2', [hid, userId]);
+        tid = q.rows[0]?.id || '';
+      }
+      if (!tid) return json(res, 400, { message: 'tracker not found' }), true;
+    }
     if (typeof done === 'boolean') {
       await pool.query('INSERT INTO habit_entries(id, tracker_id, day, done) VALUES ($1, $2, $3, $4) ON CONFLICT (tracker_id, day) DO UPDATE SET done=EXCLUDED.done', [randomUUID(), tid, day, !!done]);
     }
+    try {
+      const { rows } = await pool.query('SELECT d.channel_id FROM habit_trackers t JOIN habit_defs d ON d.id=t.habit_id WHERE t.id=$1', [tid]);
+      const cid = rows[0]?.channel_id; if (cid) { const io = ctx?.io; if (io) io.to(`user:${userId}`).emit('habit:state', { channelId: cid, ...(await getHabitState(cid, userId)) }); }
+    } catch {}
     return json(res, 200, { ok: true }), true;
   }
 

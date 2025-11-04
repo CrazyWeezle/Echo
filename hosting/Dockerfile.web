@@ -3,11 +3,16 @@ FROM node:20-alpine AS builder
 WORKDIR /repo
 RUN corepack enable && corepack prepare pnpm@10.19.0 --activate
 
-# Build arg for Vite (default to /api)
+# Build args for Vite
 ARG VITE_API_URL=/api
 ENV VITE_API_URL=$VITE_API_URL
 # (optional: keep backward compat with older var name)
 ENV VITE_API_HTTP_URL=$VITE_API_URL
+
+# Optional: GIF provider API key for GifPicker
+# Pass via docker-compose build arg; value is baked at build time
+ARG VITE_GIPHY_KEY
+ENV VITE_GIPHY_KEY=$VITE_GIPHY_KEY
 
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
 COPY apps/web/package.json apps/web/package.json
