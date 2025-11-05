@@ -133,3 +133,45 @@ body {
   --scrollbar-thumb: rgba(168,85,247,0.60);
   --scrollbar-thumb-hover: rgba(168,85,247,0.80);
 }
+
+/* Additional themes */
+[data-theme="rose"] {
+  --brand-bg-start: #2f0b19; /* deep rose */
+  --brand-bg-end: #200812;   /* darker rose */
+  --brand-emerald: #f43f5e;  /* rose accents */
+  --brand-teal: #fb7185;
+  --scrollbar-thumb: rgba(244,63,94,0.60);
+  --scrollbar-thumb-hover: rgba(244,63,94,0.80);
+}
+[data-theme="amber"] {
+  --brand-bg-start: #2f220b; /* deep amber */
+  --brand-bg-end: #1f1606;   /* darker amber */
+  --brand-emerald: #f59e0b;  /* amber accents */
+  --brand-teal: #fbbf24;
+  --scrollbar-thumb: rgba(245,158,11,0.60);
+  --scrollbar-thumb-hover: rgba(245,158,11,0.80);
+}
+[data-theme="indigo"] {
+  --brand-bg-start: #171a34; /* deep indigo */
+  --brand-bg-end: #0f1224;   /* darker indigo */
+  --brand-emerald: #6366f1;  /* indigo accents */
+  --brand-teal: #818cf8;
+  --scrollbar-thumb: rgba(99,102,241,0.60);
+  --scrollbar-thumb-hover: rgba(99,102,241,0.80);
+}
+[data-theme="cyan"] {
+  --brand-bg-start: #0a2630; /* deep cyan */
+  --brand-bg-end: #061a20;   /* darker cyan */
+  --brand-emerald: #06b6d4;  /* cyan accents */
+  --brand-teal: #22d3ee;
+  --scrollbar-thumb: rgba(6,182,212,0.60);
+  --scrollbar-thumb-hover: rgba(6,182,212,0.80);
+}
+[data-theme="orange"] {
+  --brand-bg-start: #2f1608; /* deep orange */
+  --brand-bg-end: #1f0e05;   /* darker orange */
+  --brand-emerald: #f97316;  /* orange accents */
+  --brand-teal: #fb923c;
+  --scrollbar-thumb: rgba(249,115,22,0.60);
+  --scrollbar-thumb-hover: rgba(249,115,22,0.80);
+}

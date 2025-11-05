@@ -175,8 +175,8 @@ export async function handleChannels(req, res, body, ctx) {
     const auth = req.headers['authorization'] || '';
     if (auth.startsWith('Bearer ')) { try { const p = jwt.verify(auth.slice(7), JWT_SECRET); userId = p.sub; } catch {} }
     if (!userId) return json(res, 401, { message: 'Unauthorized' }), true;
-    const { rows: roles } = await pool.query('SELECT role FROM space_members WHERE space_id=$1 AND user_id=$2', [sid, userId]);
-    if (!roles[0] || roles[0].role !== 'owner') return json(res, 403, { message: 'Only owners can rename channels' }), true;
+    const { rowCount: isMember } = await pool.query('SELECT 1 FROM space_members WHERE space_id=$1 AND user_id=$2', [sid, userId]);
+    if (isMember === 0) return json(res, 403, { message: 'Forbidden' }), true;
     const check = await pool.query('SELECT 1 FROM channels WHERE id=$1 AND space_id=$2', [cid, sid]);
     if (check.rowCount === 0) return json(res, 404, { message: 'channel not found' }), true;
     await pool.query('UPDATE channels SET name=$1 WHERE id=$2', [nm, cid]);

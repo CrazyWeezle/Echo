@@ -43,6 +43,19 @@ export async function initDb() {
   // Ensure email uniqueness when provided (case-insensitive)
   await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS users_email_lower_unique ON users (LOWER(email)) WHERE email IS NOT NULL`);
 
+  // Profiles table removed; users.* is canonical now
+
+  // Favorites: per-user pinned items (channels, lists, etc.) stored by opaque target_id
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS favorites (
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      target_id TEXT NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT now(),
+      PRIMARY KEY (user_id, target_id)
+    );
+  `);
+  // No profile backfill; legacy table is deprecated
+
   // Friends tables
   await pool.query(`
     CREATE TABLE IF NOT EXISTS friendships (

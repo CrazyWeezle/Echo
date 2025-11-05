@@ -31,7 +31,19 @@ export async function handleSpaces(req, res, body, ctx) {
     const ok = await pool.query('SELECT 1 FROM space_members WHERE space_id=$1 AND user_id=$2', [sid, viewer]);
     if (ok.rowCount === 0) return json(res, 403, { message: 'Forbidden' }), true;
     const { rows } = await pool.query(
-      'SELECT u.id, u.username, u.name, u.avatar_url as "avatarUrl", COALESCE(u.status, \'\') as status, u.name_color as "nameColor", m.role as "role" FROM users u JOIN space_members m ON m.user_id=u.id WHERE m.space_id=$1 ORDER BY lower(u.name)'
+      `SELECT 
+         u.id,
+         u.username,
+         u.name as name,
+         u.avatar_url as "avatarUrl",
+         COALESCE(u.status, '') as status,
+         u.name_color as "nameColor",
+         u.bio as bio,
+         m.role as "role"
+       FROM users u
+       JOIN space_members m ON m.user_id=u.id
+       WHERE m.space_id=$1
+       ORDER BY lower(u.name)`
     , [sid]);
     return json(res, 200, { members: rows }), true;
   }

@@ -19,7 +19,11 @@ export async function handleMessages(req, res, body, ctx) {
     const mem = await pool.query('SELECT 1 FROM space_members WHERE space_id=$1 AND user_id=$2', [sid, userId]);
     if (mem.rowCount === 0) return json(res, 403, { message: 'Forbidden' }), true;
     const q = await pool.query(
-      `SELECT r.reaction, r.user_id as "userId", COALESCE(u.name,'User') as name, r.created_at as "createdAt"
+      `SELECT r.reaction,
+              r.user_id as "userId",
+              COALESCE(u.name,'User') as name,
+              u.username as "username",
+              r.created_at as "createdAt"
        FROM message_reactions r
        LEFT JOIN users u ON u.id = r.user_id
        WHERE r.message_id=$1
@@ -30,10 +34,9 @@ export async function handleMessages(req, res, body, ctx) {
     for (const row of q.rows) {
       const key = row.reaction;
       if (!by[key]) by[key] = [];
-      by[key].push({ userId: row.userId, name: row.name, createdAt: row.createdAt });
+      by[key].push({ userId: row.userId, name: row.name, username: row.username, createdAt: row.createdAt });
     }
     return json(res, 200, { reactions: by }), true;
   }
   return false;
 }
-

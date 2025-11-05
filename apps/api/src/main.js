@@ -21,6 +21,7 @@ import { handleForms } from './routes/forms.js';
 import { handleHabits } from './routes/habits.js';
 import { handleMessages } from './routes/messages.js';
 import { handlePush, sendWebPushToUsers } from './routes/push.js';
+import { handleProfile } from './routes/profile.js';
 
 import { listSpaces, listChannels, getBacklog } from './services/chat.js';
 
@@ -89,6 +90,7 @@ const server = http.createServer(async (req, res) => {
     if (req.url.startsWith('/api/spaces') || req.url.startsWith('/api/invites/')) { const handled = await handleSpaces(req, res, body, { io }); if (handled) return; }
     if (req.url.startsWith('/api/channels')) { const handled = await handleChannels(req, res, body, { io }); if (handled) return; }
     if (req.url.startsWith('/api/files')) { const handled = await handleFiles(req, res, body, { io }); if (handled) return; }
+    if (req.url === '/api/users/me/profile') { const handled = await handleProfile(req, res, body, { io }); if (handled) return; }
     if (req.url.startsWith('/api/kanban')) { const handled = await handleKanban(req, res, body, { io }); if (handled) return; }
     if (req.url.startsWith('/api/forms')) { const handled = await handleForms(req, res, body, { io }); if (handled) return; }
     if (req.url.startsWith('/api/habits')) { const handled = await handleHabits(req, res, body, { io }); if (handled) return; }

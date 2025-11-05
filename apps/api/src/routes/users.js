@@ -109,8 +109,23 @@ export async function handleUsers(req, res, body, ctx) {
       uname = String(u.searchParams.get('username') || '').trim().toLowerCase();
     } catch {}
     if (!uid && !uname) return json(res, 400, { message: 'userId or username required' }), true;
-    const q = uid ? await pool.query('SELECT id, username, name, avatar_url as "avatarUrl", bio, COALESCE(status, \'\') as status, tone_url as "toneUrl", name_color as "nameColor", friend_ring_color as "friendRingColor", COALESCE(friend_ring_enabled, true) as "friendRingEnabled", COALESCE(pronouns, \'\') as pronouns, COALESCE(location, \'\') as location, COALESCE(website, \'\') as website, COALESCE(banner_url, \'\') as "bannerUrl" FROM users WHERE id=$1', [uid])
-                        : await pool.query('SELECT id, username, name, avatar_url as "avatarUrl", bio, COALESCE(status, \'\') as status, tone_url as "toneUrl", name_color as "nameColor", friend_ring_color as "friendRingColor", COALESCE(friend_ring_enabled, true) as "friendRingEnabled", COALESCE(pronouns, \'\') as pronouns, COALESCE(location, \'\') as location, COALESCE(website, \'\') as website, COALESCE(banner_url, \'\') as "bannerUrl" FROM users WHERE username=$1', [uname]);
+    const q = uid
+      ? await pool.query(
+          `SELECT u.id, u.username, u.name, u.avatar_url as "avatarUrl", u.bio, COALESCE(u.status,'') as status,
+                  u.tone_url as "toneUrl", u.name_color as "nameColor", u.friend_ring_color as "friendRingColor",
+                  COALESCE(u.friend_ring_enabled, true) as "friendRingEnabled", COALESCE(u.pronouns,'') as pronouns,
+                  COALESCE(u.location,'') as location, COALESCE(u.website,'') as website, COALESCE(u.banner_url,'') as "bannerUrl"
+           FROM users u WHERE u.id=$1`,
+          [uid]
+        )
+      : await pool.query(
+          `SELECT u.id, u.username, u.name, u.avatar_url as "avatarUrl", u.bio, COALESCE(u.status,'') as status,
+                  u.tone_url as "toneUrl", u.name_color as "nameColor", u.friend_ring_color as "friendRingColor",
+                  COALESCE(u.friend_ring_enabled, true) as "friendRingEnabled", COALESCE(u.pronouns,'') as pronouns,
+                  COALESCE(u.location,'') as location, COALESCE(u.website,'') as website, COALESCE(u.banner_url,'') as "bannerUrl"
+           FROM users u WHERE u.username=$1`,
+          [uname]
+        );
     const row = q.rows[0];
     if (!row) return json(res, 404, { message: 'User not found' }), true;
     // Enrich with friendship metadata relative to the viewer so the
@@ -133,6 +148,83 @@ export async function handleUsers(req, res, body, ctx) {
       }
     } catch {}
     return json(res, 200, row), true;
+  }
+
+  // --- Favorites (channels/lists) -------------------------------------------------
+  // GET /api/users/me/favorites
+  if (req.method === 'GET' && req.url === '/api/users/me/favorites') {
+    let userId = null;
+    const a = req.headers['authorization'] || '';
+    if (a.startsWith('Bearer ')) { try { const p = jwt.verify(a.slice(7), JWT_SECRET); userId = p.sub; } catch {} }
+    if (!userId) return json(res, 401, { message: 'Unauthorized' }), true;
+    const { rows } = await pool.query('SELECT target_id FROM favorites WHERE user_id=$1 ORDER BY created_at DESC', [userId]);
+    return json(res, 200, { favorites: rows.map(r => r.target_id) }), true;
+  }
+
+  // POST /api/users/me/favorites  { id } OR { favorites: string[] } (replace all)
+  if (req.method === 'POST' && req.url === '/api/users/me/favorites') {
+    let userId = null;
+    const a = req.headers['authorization'] || '';
+    if (a.startsWith('Bearer ')) { try { const p = jwt.verify(a.slice(7), JWT_SECRET); userId = p.sub; } catch {} }
+    if (!userId) return json(res, 401, { message: 'Unauthorized' }), true;
+    const { id, favorites } = body || {};
+    if (Array.isArray(favorites)) {
+      // Replace all (cap at 16 for safety)
+      const uniq = Array.from(new Set(favorites.map((s) => String(s).slice(0, 256)))).slice(0, 16);
+      await pool.query('DELETE FROM favorites WHERE user_id=$1', [userId]);
+      for (const t of uniq) {
+        try { await pool.query('INSERT INTO favorites(user_id, target_id) VALUES ($1,$2)', [userId, t]); } catch {}
+      }
+      return json(res, 200, { favorites: uniq }), true;
+    }
+    const t = String(id || '').slice(0, 256);
+    if (!t) return json(res, 400, { message: 'id required' }), true;
+    try { await pool.query('INSERT INTO favorites(user_id, target_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [userId, t]); } catch {}
+    return json(res, 200, { ok: true }), true;
+  }
+
+  // DELETE /api/users/me/favorites  { id }
+  if (req.method === 'DELETE' && req.url === '/api/users/me/favorites') {
+    let userId = null;
+    const a = req.headers['authorization'] || '';
+    if (a.startsWith('Bearer ')) { try { const p = jwt.verify(a.slice(7), JWT_SECRET); userId = p.sub; } catch {} }
+    if (!userId) return json(res, 401, { message: 'Unauthorized' }), true;
+    const { id } = body || {};
+    const t = String(id || '').slice(0, 256);
+    if (!t) return json(res, 400, { message: 'id required' }), true;
+    await pool.query('DELETE FROM favorites WHERE user_id=$1 AND target_id=$2', [userId, t]);
+    return json(res, 200, { ok: true }), true;
+  }
+
+  // PATCH /api/users/me (continued): also support activity + showActivity in profiles
+  if (req.method === 'PATCH' && req.url === '/api/users/me') {
+    // handled above for core fields; now add-on for mini status
+    try {
+      let userId = null;
+      const auth = req.headers['authorization'] || '';
+      if (auth.startsWith('Bearer ')) { try { const p = jwt.verify(auth.slice(7), JWT_SECRET); userId = p.sub; } catch {} }
+      if (!userId) ; else {
+        const { activity, showActivity } = body || {};
+        const updates = [];
+        const vals = [];
+        let i = 1;
+        if (typeof activity === 'string' || activity === null) { updates.push(`mini_status=$${i++}`); vals.push(activity ? String(activity).slice(0, 160) : null); }
+        if (typeof showActivity === 'boolean') { updates.push(`mini_status_show=$${i++}`); vals.push(!!showActivity); }
+        if (updates.length > 0) {
+          await pool.query('INSERT INTO profiles(id, user_id, display_name) VALUES (gen_random_uuid(), $1, \'\') ON CONFLICT (user_id) DO NOTHING', [userId]).catch(async () => {
+            // Fallback: if gen_random_uuid is unavailable, ensure existence via a SELECT/INSERT from Node
+            const got = await pool.query('SELECT 1 FROM profiles WHERE user_id=$1', [userId]);
+            if (got.rowCount === 0) {
+              const { randomUUID } = await import('node:crypto');
+              await pool.query('INSERT INTO profiles(id, user_id, display_name) VALUES ($1,$2,$3)', [randomUUID(), userId, '']);
+            }
+          });
+          const sql = `UPDATE profiles SET ${updates.join(', ')}, updated_at=now() WHERE user_id=$${i}`;
+          await pool.query(sql, [...vals, userId]);
+        }
+      }
+    } catch {}
+    // fall through to original return already handled above
   }
 
   // POST /api/users/password

@@ -107,29 +107,7 @@ export default function UnifiedSettingsModal({
   const [toneUrl, setToneUrl] = useState<string | null>(()=>{ try { return localStorage.getItem('toneUrl')||null; } catch { return null; } });
   async function saveNotifications(){ setLoading(true); setErr(''); try{ const u=await api.patchAuth('/users/me',{ toneUrl }, token); try{ localStorage.setItem('notifEnabled', notifEnabled?'1':'0'); localStorage.setItem('soundEnabled', soundEnabled?'1':'0'); if(toneUrl) localStorage.setItem('toneUrl', toneUrl); else localStorage.removeItem('toneUrl'); }catch{} onUserSaved(u);} catch(e:any){ setErr(e?.message||'Failed to save'); } finally{ setLoading(false);} }
 
-  // Personalization: friend indicator color + toggle
-  const [friendRingColor, setFriendRingColor] = useState<string>(() => {
-    try { const raw = localStorage.getItem('user'); if (raw) { const u = JSON.parse(raw); if (u?.friendRingColor) return String(u.friendRingColor); } const f = localStorage.getItem('friendRingColor'); return f || '#34d399'; } catch { return '#34d399'; }
-  });
-  const [friendRingEnabled, setFriendRingEnabled] = useState<boolean>(() => {
-    try { const raw = localStorage.getItem('user'); if (raw) { const u = JSON.parse(raw); if (typeof u?.friendRingEnabled === 'boolean') return !!u.friendRingEnabled; } const f = localStorage.getItem('friendRingEnabled'); if (f==='0') return false; if (f==='1') return true; } catch {}
-    return true;
-  });
-  async function savePersonalization(){
-    setLoading(true); setErr('');
-    try {
-      const u = await api.patchAuth('/users/me', { friendRingColor: String(friendRingColor||'').trim() || null, friendRingEnabled: !!friendRingEnabled }, token);
-      try {
-        const raw = localStorage.getItem('user'); const prev = raw ? JSON.parse(raw) : {};
-        localStorage.setItem('user', JSON.stringify({ ...prev, friendRingColor: u.friendRingColor ?? prev.friendRingColor, friendRingEnabled: typeof u.friendRingEnabled==='boolean' ? u.friendRingEnabled : (prev.friendRingEnabled ?? true) }));
-        if (u.friendRingColor) localStorage.setItem('friendRingColor', u.friendRingColor);
-        localStorage.setItem('friendRingEnabled', (typeof u.friendRingEnabled==='boolean' ? u.friendRingEnabled : true) ? '1' : '0');
-      } catch {}
-      onUserSaved(u);
-    } catch (e:any) {
-      setErr(e?.message || 'Failed to save');
-    } finally { setLoading(false); }
-  }
+  // Personalization: friend indicator removed
 
   // Space
   const [sName, setSName] = useState(spaceName||'');
@@ -244,27 +222,6 @@ export default function UnifiedSettingsModal({
                 <div className="text-emerald-300 font-semibold">Themes</div>
                 <p className="text-sm text-neutral-400 mb-2">Choose an accent theme. This updates brand gradients and accent colors across the app.</p>
                 <ThemeSelector />
-              </div>
-              <div>
-                <div className="text-emerald-300 font-semibold mb-2">Friend Indicator</div>
-                <div className="flex items-center justify-between mb-2">
-                  <label className="text-sm text-neutral-300">Show friend indicator ring</label>
-                  <input type="checkbox" checked={friendRingEnabled} onChange={(e)=>setFriendRingEnabled(e.target.checked)} />
-                </div>
-                <div className="flex items-center gap-3">
-                  <input type="color" value={(function(){ const c=String(friendRingColor||'').trim(); return /^#([0-9a-fA-F]{6})$/.test(c)?c:'#34d399'; })()} onChange={(e)=>setFriendRingColor(e.target.value)} className="h-9 w-12 bg-neutral-900 border border-neutral-800 rounded cursor-pointer" title="Pick a color" />
-                  <input className="flex-1 p-2.5 rounded-md bg-neutral-900 text-neutral-100 placeholder-neutral-500 border border-neutral-800 focus:outline-none focus:ring-2 focus:ring-emerald-600/60" placeholder="#34d399 or 'teal'" value={friendRingColor} onChange={(e)=>setFriendRingColor(e.target.value)} />
-                  <div className="text-sm flex items-center gap-2">
-                    <span className="inline-block h-6 w-6 rounded-full relative">
-                      <span className="absolute -inset-0.5 rounded-full" style={{ border: `2px solid ${friendRingColor || '#34d399'}`, boxShadow: `0 0 8px ${friendRingColor || '#34d399'}` }}></span>
-                      <span className="absolute inset-0 rounded-full bg-neutral-800 border border-neutral-700"></span>
-                    </span>
-                    Preview
-                  </div>
-                </div>
-                <div className="mt-3">
-                  <button disabled={loading} className="px-3 py-2 rounded border border-emerald-700 bg-emerald-800/70 text-emerald-50 hover:bg-emerald-700/70" onClick={savePersonalization}>{loading?'Saving...':'Save personalization'}</button>
-                </div>
               </div>
             </div>
           )}
@@ -689,13 +646,18 @@ function ThemeSelector() {
   }, [theme]);
 
   const options = [
-    { id: 'emerald', name: 'Emerald', preview: 'from-emerald-400 to-teal-400' },
-    { id: 'blue',    name: 'Blue',    preview: '' },
-    { id: 'purple',  name: 'Purple',  preview: '' },
+    { id: 'emerald', name: 'Emerald' },
+    { id: 'blue',    name: 'Blue' },
+    { id: 'purple',  name: 'Purple' },
+    { id: 'rose',    name: 'Rose' },
+    { id: 'amber',   name: 'Amber' },
+    { id: 'indigo',  name: 'Indigo' },
+    { id: 'cyan',    name: 'Cyan' },
+    { id: 'orange',  name: 'Orange' },
   ];
   return (
     <div className="space-y-3">
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-3 md:grid-cols-4 gap-3">
         {options.map(opt => (
           <button key={opt.id}
                   className={`p-3 rounded-lg border ${theme===opt.id ? 'border-emerald-500' : 'border-neutral-800'} bg-neutral-900 hover:border-emerald-600 transition-colors`}
@@ -707,6 +669,11 @@ function ThemeSelector() {
               {opt.id==='emerald' && <div className="absolute inset-0 bg-gradient-to-r from-emerald-500/40 to-teal-400/40" />}
               {opt.id==='blue' && <div className="absolute inset-0 bg-gradient-to-r from-sky-500/40 to-blue-400/40" />}
               {opt.id==='purple' && <div className="absolute inset-0 bg-gradient-to-r from-fuchsia-500/40 to-violet-400/40" />}
+              {opt.id==='rose' && <div className="absolute inset-0 bg-gradient-to-r from-rose-500/40 to-pink-400/40" />}
+              {opt.id==='amber' && <div className="absolute inset-0 bg-gradient-to-r from-amber-500/40 to-yellow-400/40" />}
+              {opt.id==='indigo' && <div className="absolute inset-0 bg-gradient-to-r from-indigo-500/40 to-sky-400/40" />}
+              {opt.id==='cyan' && <div className="absolute inset-0 bg-gradient-to-r from-cyan-500/40 to-teal-400/40" />}
+              {opt.id==='orange' && <div className="absolute inset-0 bg-gradient-to-r from-orange-500/40 to-amber-400/40" />}
             </div>
           </button>
         ))}

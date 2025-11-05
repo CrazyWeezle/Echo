@@ -1,6 +1,7 @@
-// apps/web/src/App.tsx
+
 import { useEffect, useRef, useState, Suspense, lazy } from "react";
 import Login from "./pages/Login"; // match actual filename case for Linux builds
+import SettingsRoute from "./routes/settings";
 import { socket, connectSocket, disconnectSocket, getLocalUser, setLocalUser } from "./lib/socket";
 import { debounce } from "./lib/debounce";
 import { signUpload, api } from "./lib/api";
@@ -8,12 +9,14 @@ import { initPush } from "./lib/push";
 import { registerWebPush } from "./lib/webpush";
 import FriendsModal from "./components/FriendsModal";
 import MemberProfileModal from "./components/MemberProfileModal";
+import ProfileModal from "./components/ProfileModal";
 import InputModal from "./components/InputModal";
 const GifPicker = lazy(() => import("./components/GifPicker"));
 const EmojiPanel = lazy(() => import("./components/EmojiPanel"));
 import UnifiedSettingsModal from "./components/UnifiedSettingsModal";
 import ToastHost from "./components/ToastHost";
 import ConfirmHost from "./components/ConfirmHost";
+import UserRow from "./components/people/UserRow";
 import { askConfirm, toast } from "./lib/ui";
 
 type Msg = {
@@ -52,6 +55,11 @@ export default function App() {
     setToken(t);
     setUser(u);
   };
+
+  // Lightweight route switch for settings
+  if (location.pathname.startsWith("/settings")) {
+    return token ? <SettingsRoute /> : <Login onAuth={handleAuth} />;
+  }
 
   return token ? <ChatApp token={token} user={user} /> : <Login onAuth={handleAuth} />;
 }
@@ -130,6 +138,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
   const [spaceMobileIds, setSpaceMobileIds] = useState<string[]>([]);
   const [globalMobileIds, setGlobalMobileIds] = useState<string[]>([]);
   const [members, setMembers] = useState<{ id: string; name: string; username?: string; avatarUrl?: string | null; status?: string; nameColor?: string | null; role?: string }[]>([]);
+  const [activityByUser, setActivityByUser] = useState<Record<string, string>>({});
   const [unread, setUnread] = useState<Record<string, number>>({});
   // Throttle notifications: one per channel until user visits it.
   // Persist across reloads so you don't get spam after refresh.
@@ -148,9 +157,9 @@ function ChatApp({ token, user }: { token: string; user: any }) {
     try {
       const tok = localStorage.getItem('token') || '';
       const res = await api.getAuth(`/messages/reactions?messageId=${encodeURIComponent(messageId)}`, tok);
-      const map: Record<string, { users: { userId: string; name: string; createdAt?: string }[] }> = {};
+      const map: Record<string, { users: { userId: string; name?: string; username?: string; createdAt?: string }[] }> = {};
       for (const [emoji, list] of Object.entries(res?.reactions || {})) {
-        map[emoji] = { users: (list as any[]).map(it => ({ userId: String((it as any).userId || ''), name: String((it as any).name || 'User'), createdAt: (it as any).createdAt })) };
+        map[emoji] = { users: (list as any[]).map(it => ({ userId: String((it as any).userId || ''), name: (it as any).name ? String((it as any).name) : undefined, username: (it as any).username ? String((it as any).username) : undefined, createdAt: (it as any).createdAt })) };
       }
       setReactionInfoByMsg(prev => ({ ...prev, [messageId]: map }));
     } catch {}
@@ -191,6 +200,10 @@ function ChatApp({ token, user }: { token: string; user: any }) {
 
   // People column visible on all pages except landing (no current space)
   const showPeople = !!currentVoidId;
+
+  // Disable legacy mini status background prefetch and local seeding (status now derives from bio only)
+  useEffect(() => { /* no-op: mini status disabled */ }, [members]);
+  useEffect(() => { /* no-op: mini status disabled */ }, [me?.userId]);
 
   // --- Mobile gestures: swipe anywhere to open drawers ---
   useEffect(() => {
@@ -369,11 +382,25 @@ function ChatApp({ token, user }: { token: string; user: any }) {
   const [favorites, setFavorites] = useState<string[]>(() => {
     try { const raw = localStorage.getItem('favorites'); return raw ? JSON.parse(raw) : []; } catch { return []; }
   });
+  // Load favorites from server (canonical) on mount/token change
+  useEffect(() => {
+    (async () => {
+      try {
+        const tok = localStorage.getItem('token') || '';
+        if (!tok) return;
+        const res = await api.getAuth('/users/me/favorites', tok);
+        const arr = Array.isArray(res?.favorites) ? res.favorites as string[] : [];
+        setFavorites(arr);
+        try { localStorage.setItem('favorites', JSON.stringify(arr)); } catch {}
+      } catch {}
+    })();
+  }, [token]);
   useEffect(() => { try { localStorage.setItem('favorites', JSON.stringify(favorites)); } catch {} }, [favorites]);
   const isFav = (vId: string, cId: string) => favorites.includes(fq(vId, cId));
   const toggleFav = (vId: string, cId: string) => {
     const id = fq(vId, cId);
     setFavorites(prev => { if (prev.includes(id)) return prev.filter(x => x !== id); if (prev.length >= 4) { toast('You can pin up to 4 favorites', 'error'); return prev; } return [...prev, id]; });
+    (async () => { try { const tok = localStorage.getItem('token') || ''; if (!tok) return; if (favorites.includes(id)) await api.deleteAuth('/users/me/favorites', { id }, tok); else await api.postAuth('/users/me/favorites', { id }, tok); } catch {} })();
   };
   // Kanban list favorites support (id format: klist:<voidId>:<channelId>:<listId>)
   const listFavId = (vId: string, cId: string, listId: string) => `klist:${vId}:${cId}:${listId}`;
@@ -381,6 +408,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
   const toggleListFav = (vId: string, cId: string, listId: string) => {
     const id = listFavId(vId, cId, listId);
     setFavorites(prev => { if (prev.includes(id)) return prev.filter(x => x !== id); if (prev.length >= 4) { toast('You can pin up to 4 favorites', 'error'); return prev; } return [...prev, id]; });
+    (async () => { try { const tok = localStorage.getItem('token') || ''; if (!tok) return; if (favorites.includes(id)) await api.deleteAuth('/users/me/favorites', { id }, tok); else await api.postAuth('/users/me/favorites', { id }, tok); } catch {} })();
   };
   function parseListFav(fid: string): { vId: string; cIdRaw: string; fqid: string; listId: string } | null {
     if (!fid.startsWith('klist:')) return null;
@@ -548,6 +576,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
   const [friendsOpen, setFriendsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [viewUserId, setViewUserId] = useState<string | null>(null);
+  const [profileOpen, setProfileOpen] = useState<boolean>(false);
   const [gifOpen, setGifOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const addBtnRef = useRef<HTMLButtonElement | null>(null);
@@ -2022,28 +2051,14 @@ function ChatApp({ token, user }: { token: string; user: any }) {
           {members.map(m => {
             const online = globalUserIds.includes(m.id) || spaceUserIds.includes(m.id) || roomUserIds.includes(m.id);
             const onMobile = globalMobileIds.includes(m.id) || spaceMobileIds.includes(m.id) || roomMobileIds.includes(m.id);
-            const st = String(m.status || '').toLowerCase();
-            let label = 'Offline';
-            if (st === 'dnd') { label = 'Do Not Disturb'; }
-            else if (st === 'idle') { label = 'Idle'; }
-            else if (st === 'invisible') { label = 'Offline'; }
-            else if (online) { label = 'Online'; }
+            const activityText = (() => { const t = activityByUser[m.id]; return t ? t : ''; })();
+            const miniFromBio = (() => { const b = String((m as any).bio || '').trim(); return b ? b.split(/\r?\n/)[0].slice(0, 120) : ''; })();
             return (
-              <div key={m.id} className="w-full flex items-center gap-2 px-2 py-1 rounded hover:bg-neutral-800/40">
-                <button className="flex-1 text-left flex items-center gap-2" onClick={()=>{ if (m.id !== me.userId) setViewUserId(m.id); }}>
-                <div className="relative h-8 w-8">
-                  {(() => { const ring = (st === 'dnd') ? '#ef4444' : (st === 'idle') ? '#f59e0b' : ((online && onMobile) ? '#14b8a6' : (online ? '#10b981' : null)); return ring ? (<span className="pointer-events-none absolute -inset-0.5 rounded-full" style={{ border: `2px solid ${ring}`, boxShadow: `0 0 10px ${ring}` }}></span>) : null; })()}
-                  <div className="h-8 w-8 rounded-full overflow-hidden bg-neutral-800 border border-neutral-700 flex items-center justify-center">
-                    {m.avatarUrl ? <img src={m.avatarUrl} alt="avatar" className="h-full w-full object-cover"/> : <span className="text-[10px] text-neutral-400">{(m.name?.[0]||'?').toUpperCase()}</span>}
-                  </div>
-                  {/* Status dot replaced by ring */}
-                </div>
-                <div className="min-w-0">
-                  <div className="truncate text-neutral-200 text-sm" style={m.nameColor ? { color: String(m.nameColor) } : undefined}>{m.name || m.username}</div>
-                  <div className="text-[10px] text-neutral-400">{label}{m.role ? ` - ${m.role}` : ''}</div>
-                </div>
-                </button>
-              </div>
+              <UserRow
+                key={m.id}
+                data={{ id: m.id, name: m.name, username: m.username, avatarUrl: m.avatarUrl, nameColor: m.nameColor, status: (miniFromBio) || undefined, rawStatus: (m as any).status, online, onMobile, activityText }}
+                onClick={() => { if (m.id !== me.userId) setViewUserId(m.id); else setSettingsOpen(true); }}
+              />
             );
           })}
           {members.length === 0 && <div className="text-neutral-500 text-sm px-2">No members</div>}
@@ -3341,18 +3356,21 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                         <span className="mr-1">{emoji}</span>{v.count}
                       </button>
                       {hoverReaction && hoverReaction.messageId === m.id && hoverReaction.emoji === emoji && (
-                        <div className="fixed z-[10000] pointer-events-none mt-0 w-44 max-w-[11rem] rounded-md border border-neutral-700 bg-neutral-900 text-neutral-200 text-xs shadow-xl p-2">
+                        <div className="absolute left-1/2 -translate-x-1/2 -top-1.5 -translate-y-full z-50 pointer-events-none w-52 max-w-[13rem] rounded-md border border-neutral-700 bg-neutral-900 text-neutral-200 text-xs shadow-xl p-2">
                           {(() => {
                             const info = reactionInfoByMsg[m.id]?.[emoji]?.users || [];
                             if (info.length === 0) return <div className="text-neutral-500">No details</div>;
                             return (
                               <div className="space-y-1 max-h-60 overflow-auto">
-                                {info.map((it, i) => (
-                                  <div key={i} className="flex items-center justify-between gap-2">
-                                    <span className="truncate max-w-[12ch]">{it.name}</span>
-                                    <span className="text-neutral-400">{timeAgo(it.createdAt)}</span>
-                                  </div>
-                                ))}
+                                {info.map((it, i) => {
+                                  const who = (it.name && it.name.trim()) || (it.username && it.username.trim()) || (it.userId ? it.userId.slice(0,8) : 'User');
+                                  return (
+                                    <div key={i} className="flex items-center justify-between gap-2">
+                                      <span className="truncate max-w-[20ch]" title={who}>{who}</span>
+                                      <span className="text-neutral-400">{timeAgo(it.createdAt)}</span>
+                                    </div>
+                                  );
+                                })}
                               </div>
                             );
                           })()}
@@ -3751,6 +3769,26 @@ function ChatApp({ token, user }: { token: string; user: any }) {
         }}
       />
 
+      <ProfileModal
+        token={localStorage.getItem('token') || ''}
+        open={profileOpen}
+        onClose={()=>setProfileOpen(false)}
+        onSaved={(u: any) => {
+          const nextMe = { userId: me.userId, name: u?.name || me.name, avatarUrl: (u?.avatarUrl ?? null) };
+          setMe(nextMe);
+          setMembers(prev => prev.map(m => m.id === me.userId ? { ...m, name: u?.name ?? m.name, avatarUrl: u?.avatarUrl ?? m.avatarUrl, status: u?.status ?? m.status, nameColor: u?.nameColor ?? m.nameColor, bio: u?.bio ?? m.bio } : m));
+          setLocalUser(nextMe);
+          try {
+            const raw = localStorage.getItem('user');
+            const prev = raw ? JSON.parse(raw) : {};
+            localStorage.setItem('user', JSON.stringify({ ...prev, name: u?.name, avatarUrl: u?.avatarUrl ?? null, toneUrl: u?.toneUrl ?? prev?.toneUrl, status: u?.status || prev?.status, nameColor: u?.nameColor ?? null }));
+            if (u?.nameColor) localStorage.setItem('nameColor', u.nameColor); else localStorage.removeItem('nameColor');
+            if (u?.toneUrl) localStorage.setItem('toneUrl', u.toneUrl); else localStorage.removeItem('toneUrl');
+          } catch {}
+        }}
+        onOpenSettings={()=> setSettingsOpen(true)}
+      />
+
       <UnifiedSettingsModal
         token={localStorage.getItem('token') || ''}
         spaceId={currentVoidId}
@@ -3770,7 +3808,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
           const nextMe = { userId: me.userId, name: u?.name || me.name, avatarUrl: (u?.avatarUrl ?? null) };
           setMe(nextMe);
           // reflect changes in people list immediately
-          setMembers(prev => prev.map(m => m.id === me.userId ? { ...m, name: u?.name ?? m.name, avatarUrl: u?.avatarUrl ?? m.avatarUrl, status: u?.status ?? m.status, nameColor: u?.nameColor ?? m.nameColor } : m));
+          setMembers(prev => prev.map(m => m.id === me.userId ? { ...m, name: u?.name ?? m.name, avatarUrl: u?.avatarUrl ?? m.avatarUrl, status: u?.status ?? m.status, nameColor: u?.nameColor ?? m.nameColor, bio: u?.bio ?? m.bio } : m));
           setLocalUser(nextMe);
           try {
             const raw = localStorage.getItem('user');
@@ -4019,26 +4057,14 @@ function ChatApp({ token, user }: { token: string; user: any }) {
               {members.map(m => {
                 const online = globalUserIds.includes(m.id) || spaceUserIds.includes(m.id) || roomUserIds.includes(m.id);
                 const onMobile = globalMobileIds.includes(m.id) || spaceMobileIds.includes(m.id) || roomMobileIds.includes(m.id);
-                const st = String(m.status || '').toLowerCase();
-                let label = 'Offline';
-                if (st === 'dnd') { label = 'Do Not Disturb'; }
-                else if (st === 'idle') { label = 'Idle'; }
-                else if (st === 'invisible') { label = 'Offline'; }
-                else if (online) { label = 'Online'; }
+                const activityText = (() => { const t = activityByUser[m.id]; return t ? t : ''; })();
+                const miniFromBio = (() => { const b = String((m as any).bio || '').trim(); return b ? b.split(/\r?\n/)[0].slice(0, 120) : ''; })();
                 return (
-                  <div key={m.id} className="flex items-center gap-2 px-2 py-1 rounded hover:bg-neutral-800/40">
-                    <div className="relative h-8 w-8">
-                      {(() => { const ring = (st === 'dnd') ? '#ef4444' : (st === 'idle') ? '#f59e0b' : ((online && onMobile) ? '#14b8a6' : (online ? '#10b981' : null)); return ring ? (<span className="pointer-events-none absolute -inset-0.5 rounded-full" style={{ border: `2px solid ${ring}`, boxShadow: `0 0 10px ${ring}` }}></span>) : null; })()}
-                      <div className="h-8 w-8 rounded-full overflow-hidden bg-neutral-800 border border-neutral-700 flex items-center justify-center">
-                        {m.avatarUrl ? <img src={m.avatarUrl} alt="avatar" className="h-full w-full object-cover"/> : <span className="text-[10px] text-neutral-400">{(m.name?.[0]||'?').toUpperCase()}</span>}
-                      </div>
-                      {/* Status dot replaced by ring */}
-                    </div>
-                    <div className="min-w-0">
-                      <div className="truncate text-neutral-200 text-sm">{m.name || m.username}</div>
-                      <div className="text-[10px] text-neutral-400">{label}</div>
-                    </div>
-                  </div>
+                  <UserRow
+                    key={m.id}
+                    data={{ id: m.id, name: m.name, username: m.username, avatarUrl: m.avatarUrl, nameColor: m.nameColor, status: (miniFromBio) || undefined, rawStatus: (m as any).status, online, onMobile, activityText }}
+                    onClick={() => { setUsersSheetOpen(false); if (m.id !== me.userId) setViewUserId(m.id); else setSettingsOpen(true); }}
+                  />
                 );
               })}
               {members.length === 0 && <div className="text-neutral-500 text-sm px-2">No members</div>}

@@ -1,6 +1,6 @@
 Echo — Persistent Login, Chat, and Identity
 
-Echo is a minimal but complete real-time chat stack: username/password auth with short-lived JWT access tokens, httpOnly refresh cookies, Socket.IO realtime, spaces/channels, messages with reactions and attachments, presence, typing indicators, and optional S3/MinIO uploads — all backed by Postgres.
+Echo is a minimal but complete real-time chat stack: username/password auth with short‑lived JWT access tokens, httpOnly refresh cookies, Socket.IO realtime, spaces/channels, messages with reactions and attachments, presence, typing indicators, and optional S3/MinIO uploads — all backed by Postgres.
 
 Features
 - Auth: JWT access (15m) + httpOnly refresh cookie (30d)
@@ -106,7 +106,7 @@ Socket.IO Events (Summary)
   - Client: `void:list`, `void:switch { voidId }`, `channel:list { voidId }`, `channel:switch { channelId }`
   - Server: `void:list { voids }`, `channel:list { voidId, channels }`, `channel:backlog { voidId, channelId, messages }`
 - Messages:
--  - Send: `message:send { voidId, channelId, content, tempId?, attachments? }`
+  - Send: `message:send { voidId, channelId, content, tempId?, attachments? }`
   - Broadcast: `message:new { ... }`
   - Edit/Delete: `message:edit`, `message:delete` → `message:edited`, `message:deleted`
   - Reads: `read:up_to { channelId, lastMessageId }` → `message:seen { ... }`
@@ -127,10 +127,18 @@ Security Notes
 - Consider rate-limiting auth endpoints and CSRF hardening for cookie endpoints.
 - Lock down DB and MinIO in production (no public ports unless necessary).
 
+Secrets Management
+- Never commit real secrets. Keep only `*.env.example` files in git and load actual secrets via environment or a secret manager.
+- Rotate any tokens or keys that were previously committed.
+- Ensure `.dockerignore` excludes `.env` and `hosting/env/*.env` so secrets don’t enter images via build context.
+
 Troubleshooting
 - 401 after idle: browser lost refresh cookie or session rotation failed
 - CORS/WS issues: confirm `path: '/socket.io'` and Nginx route
 - Uploads fail: validate MinIO is healthy and env values match bucket/endpoint
 
 License
-- No license file is included. Add one if you plan to distribute.
+This repository uses the MIT License. See `LICENSE`.
+
+Contributing
+See `CONTRIBUTING.md` for guidelines on environment setup, coding standards, and submitting changes.

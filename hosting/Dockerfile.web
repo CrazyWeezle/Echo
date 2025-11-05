@@ -19,7 +19,7 @@ ENV VITE_VAPID_PUBLIC_KEY=$VITE_VAPID_PUBLIC_KEY
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
 COPY apps/web/package.json apps/web/package.json
 # Install only the web workspace (include devDependencies to build)
-RUN pnpm install --filter ./apps/web --frozen-lockfile
+RUN pnpm install --filter ./apps/web --no-frozen-lockfile
 
 COPY . .
 WORKDIR /repo/apps/web
