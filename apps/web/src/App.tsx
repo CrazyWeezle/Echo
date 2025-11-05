@@ -1,4 +1,4 @@
-﻿// apps/web/src/App.tsx
+// apps/web/src/App.tsx
 import { useEffect, useRef, useState, Suspense, lazy } from "react";
 import Login from "./pages/Login"; // match actual filename case for Linux builds
 import { socket, connectSocket, disconnectSocket, getLocalUser, setLocalUser } from "./lib/socket";
@@ -121,6 +121,9 @@ function ChatApp({ token, user }: { token: string; user: any }) {
   const [roomUserIds, setRoomUserIds] = useState<string[]>([]);
   const [spaceUserIds, setSpaceUserIds] = useState<string[]>([]);
   const [globalUserIds, setGlobalUserIds] = useState<string[]>([]);
+  const [roomMobileIds, setRoomMobileIds] = useState<string[]>([]);
+  const [spaceMobileIds, setSpaceMobileIds] = useState<string[]>([]);
+  const [globalMobileIds, setGlobalMobileIds] = useState<string[]>([]);
   const [members, setMembers] = useState<{ id: string; name: string; username?: string; avatarUrl?: string | null; status?: string; nameColor?: string | null; role?: string }[]>([]);
   const [unread, setUnread] = useState<Record<string, number>>({});
   // Throttle notifications: one per channel until user visits it.
@@ -621,6 +624,16 @@ function ChatApp({ token, user }: { token: string; user: any }) {
   const audioCtxRef = useRef<AudioContext | null>(null);
   const meterNodesRef = useRef(new Map<string, { analyser: AnalyserNode; data: Uint8Array; source: MediaStreamAudioSourceNode }>());
   const meterLoopRef = useRef<number | null>(null);
+  // Device management for voice
+  const [devicesOpen, setDevicesOpen] = useState(false);
+  const [inputs, setInputs] = useState<MediaDeviceInfo[]>([]);
+  const [outputs, setOutputs] = useState<MediaDeviceInfo[]>([]);
+  const [selectedInputId, setSelectedInputId] = useState<string | null>(null);
+  const [selectedOutputId, setSelectedOutputId] = useState<string | null>(null);
+  const audioElsRef = useRef<Map<string, HTMLAudioElement>>(new Map());
+  const [needsAudioUnlock, setNeedsAudioUnlock] = useState(false);
+  const [voiceVolumes, setVoiceVolumes] = useState<Record<string, number>>({});
+  const [voiceSilenced, setVoiceSilenced] = useState<Record<string, boolean>>({});
 
   function startMetersLoop() {
     if (meterLoopRef.current != null) return;
@@ -670,11 +683,77 @@ function ChatApp({ token, user }: { token: string; user: any }) {
     if (meterNodesRef.current.size === 0) stopMetersLoop();
   }
 
+  async function refreshDevices() {
+    try {
+      const list = await navigator.mediaDevices.enumerateDevices();
+      const ins = list.filter(d => d.kind === 'audioinput');
+      const outs = list.filter(d => d.kind === 'audiooutput');
+      setInputs(ins);
+      setOutputs(outs);
+      // Try to align selection with current stream
+      const cur = localStreamRef.current?.getAudioTracks?.()[0];
+      const curId = (cur?.getSettings?.() as any)?.deviceId || null;
+      if (curId && !selectedInputId) setSelectedInputId(curId);
+    } catch {}
+  }
+
+  async function applyOutputDevice(sinkId: string | null) {
+    try {
+      for (const el of audioElsRef.current.values()) {
+        try { if (el && typeof (el as any).setSinkId === 'function' && sinkId) { await (el as any).setSinkId(sinkId); } } catch {}
+      }
+    } catch {}
+  }
+
+  async function switchMicrophone(deviceId: string) {
+    try {
+      const newStream = await navigator.mediaDevices.getUserMedia({
+        audio: { deviceId: { exact: deviceId }, echoCancellation: true, noiseSuppression: true, autoGainControl: true } as any,
+        video: false
+      });
+      const newTrack = newStream.getAudioTracks()[0];
+      // Replace on all peer connections
+      for (const pc of pcMapRef.current.values()) {
+        const sender = pc.getSenders().find(s => s.track && s.track.kind === 'audio');
+        try { await sender?.replaceTrack(newTrack); } catch {}
+      }
+      // Stop previous track and update local stream
+      if (localStreamRef.current) { for (const t of localStreamRef.current.getAudioTracks()) { try { t.stop(); } catch {} } }
+      localStreamRef.current = newStream;
+      // Update meter
+      stopMeter('self');
+      startMeter('self', newStream);
+    } catch (e) {
+      toast('Failed to switch microphone', 'error');
+    }
+  }
+
+  // Refresh devices when joining voice or opening the devices panel
+  useEffect(() => {
+    if (voiceJoined && devicesOpen) refreshDevices();
+  }, [voiceJoined, devicesOpen]);
+
+  // Re-apply output device when selection changes
+  useEffect(() => {
+    if (voiceJoined) applyOutputDevice(selectedOutputId || null);
+  }, [selectedOutputId, voiceJoined]);
+
   // Voice helpers (component scope to avoid TDZ in minified builds)
   function ensurePc(peerId: string) {
     let pc = pcMapRef.current.get(peerId);
     if (!pc) {
-      pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+      // Build ICE servers (STUN + optional TURN via env)
+      const iceServers: RTCIceServer[] = [{ urls: 'stun:stun.l.google.com:19302' }];
+      try {
+        const turnUrl = (import.meta.env.VITE_TURN_URL ?? '').trim();
+        const turnUser = (import.meta.env.VITE_TURN_USERNAME ?? '').trim();
+        const turnPass = (import.meta.env.VITE_TURN_PASSWORD ?? '').trim();
+        if (turnUrl) {
+          if (turnUser && turnPass) iceServers.push({ urls: turnUrl, username: turnUser, credential: turnPass });
+          else iceServers.push({ urls: turnUrl });
+        }
+      } catch {}
+      pc = new RTCPeerConnection({ iceServers });
       pc.onicecandidate = (ev) => {
         if (ev.candidate) {
           socket.emit('voice:signal', { targetId: peerId, payload: { type: 'candidate', candidate: ev.candidate } });
@@ -721,6 +800,8 @@ function ChatApp({ token, user }: { token: string; user: any }) {
     remoteStreamsRef.current.delete(peerId);
     stopMeter(peerId);
     setVoicePeers((prev) => { const n = { ...prev }; delete n[peerId]; return n; });
+    setVoiceVolumes((prev) => { const n = { ...prev }; delete n[peerId]; return n; });
+    setVoiceSilenced((prev) => { const n = { ...prev }; delete n[peerId]; return n; });
   }
 
   async function createSpace() {
@@ -803,7 +884,11 @@ function ChatApp({ token, user }: { token: string; user: any }) {
     const nm = await askInput({ title: 'Create Channel', label: 'Channel name', placeholder: 'planning' });
     if (!nm) return;
     try {
-      let ctype = 'text';
+      // Ask for channel type
+      let ctypeRaw = await askInput({ title: 'Channel Type', label: 'Type (text, voice, announcement, kanban, form, habit, gallery, notes)', placeholder: 'text' });
+      let ctype = String(ctypeRaw || 'text').trim().toLowerCase();
+      const allowed = new Set(['text','voice','announcement','kanban','form','habit','gallery','notes']);
+      if (!allowed.has(ctype)) ctype = 'text';
       const res = await api.postAuth('/channels', { spaceId: currentVoidId, name: nm, type: ctype }, token);
       const cid = res.id;
       setCurrentChannelId(cid.includes(':') ? cid.split(':')[1] : cid);
@@ -870,7 +955,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
         } catch {}
       })();
     };
-    const onDisconnect = () => setStatus("disconnected");
+    const onDisconnect = () => { setStatus("disconnected"); if (voiceJoined) leaveVoice(); };
     const onError = async (err: any) => {
       console.error("socket error", err);
       setStatus("error");
@@ -1080,15 +1165,18 @@ function ChatApp({ token, user }: { token: string; user: any }) {
       typingTimers.current.set(userId, tid);
     };
 
-    const onPresenceRoom = ({ room, userIds }: { room: string; userIds: string[] }) => {
+    const onPresenceRoom = ({ room, userIds, mobileUserIds }: { room: string; userIds: string[]; mobileUserIds?: string[] }) => {
       setRoomUserIds(userIds);
+      setRoomMobileIds(mobileUserIds || []);
     };
-    const onPresenceSpace = ({ spaceId, userIds }: { spaceId: string; userIds: string[] }) => {
+    const onPresenceSpace = ({ spaceId, userIds, mobileUserIds }: { spaceId: string; userIds: string[]; mobileUserIds?: string[] }) => {
       if (spaceId !== currentVoidId) return;
       setSpaceUserIds(userIds);
+      setSpaceMobileIds(mobileUserIds || []);
     };
-  const onPresenceGlobal = ({ userIds }: { userIds: string[] }) => {
+  const onPresenceGlobal = ({ userIds, mobileUserIds }: { userIds: string[]; mobileUserIds?: string[] }) => {
     setGlobalUserIds(userIds);
+    setGlobalMobileIds(mobileUserIds || []);
   };
 
 
@@ -1198,8 +1286,10 @@ function ChatApp({ token, user }: { token: string; user: any }) {
     };
 
     const onVoicePeerJoined = ({ peerId, userId, name }: { peerId: string; userId?: string; name?: string }) => {
+      // Avoid offer glare: existing peers should not immediately send offers.
       setVoicePeers((prev) => ({ ...prev, [peerId]: { userId, name } }));
-      createAndSendOffer(peerId).catch(()=>{});
+      ensurePc(peerId);
+      // The joiner will send offers based on the initial peers list.
     };
     const onVoicePeerLeft = ({ peerId }: { peerId: string }) => { cleanupVoicePeer(peerId); };
     const onVoiceSignal = (msg: any) => { handleVoiceSignal(msg); };
@@ -1372,7 +1462,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
       const list: string[] = raw ? JSON.parse(raw) : [];
       // Filter out corrupted placeholders like '??' from older builds
       const valid = list.filter((ch) => typeof ch === 'string' && ch.trim() && ch !== '??' && ch !== '?');
-      const fallback = ['\uD83D\uDC4D', '\u2764\uFE0F', '\uD83D\uDE02']; // 👍 ❤️ 😂
+      const fallback = ['\uD83D\uDC4D', '\u2764\uFE0F', '\uD83D\uDE02']; // ?? ?? ??
       const uniq = Array.from(new Set([...valid.slice(-5).reverse(), ...fallback]));
       return uniq.slice(0, 3);
     } catch { return ['\uD83D\uDC4D', '\u2764\uFE0F', '\uD83D\uDE02']; }
@@ -1656,7 +1746,10 @@ function ChatApp({ token, user }: { token: string; user: any }) {
     if (!currentVoidId || !currentChannelId) return;
     if (voiceJoined) return;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } as any,
+        video: false
+      });
       localStreamRef.current = stream;
       stream.getAudioTracks().forEach(t => t.enabled = !voiceMuted);
       setVoiceJoined(true);
@@ -1894,6 +1987,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
         <div className="flex-1 overflow-auto p-2 space-y-1">
           {members.map(m => {
             const online = globalUserIds.includes(m.id) || spaceUserIds.includes(m.id) || roomUserIds.includes(m.id);
+            const onMobile = globalMobileIds.includes(m.id) || spaceMobileIds.includes(m.id) || roomMobileIds.includes(m.id);
             const st = String(m.status || '').toLowerCase();
             let color = 'bg-neutral-600';
             let label = 'Offline';
@@ -1911,7 +2005,16 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                   <div className="h-8 w-8 rounded-full overflow-hidden bg-neutral-800 border border-neutral-700 flex items-center justify-center">
                     {m.avatarUrl ? <img src={m.avatarUrl} alt="avatar" className="h-full w-full object-cover"/> : <span className="text-[10px] text-neutral-400">{(m.name?.[0]||'?').toUpperCase()}</span>}
                   </div>
-                  <span className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border border-neutral-900 ${color}`}></span>
+                  {online && onMobile ? (
+                    <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full bg-neutral-900 border border-neutral-900 flex items-center justify-center" title="Online on mobile" aria-label="Online on mobile">
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-2 w-2 text-emerald-500">
+                        <rect x="8" y="3" width="8" height="18" rx="2" ry="2"/>
+                        <line x1="12" y1="19" x2="12" y2="19"/>
+                      </svg>
+                    </span>
+                  ) : (
+                    <span className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border border-neutral-900 ${color}`}></span>
+                  )}
                 </div>
                 <div className="min-w-0">
                   <div className="truncate text-neutral-200 text-sm" style={m.nameColor ? { color: String(m.nameColor) } : undefined}>{m.name || m.username}</div>
@@ -2089,6 +2192,102 @@ function ChatApp({ token, user }: { token: string; user: any }) {
 
         {/* Messages, Kanban, or landing */}
         <div ref={listRef} className="overflow-auto p-4 space-y-2 bg-transparent pt-16 pb-44 md:pt-0 md:pb-8">
+          {currentVoidId && currentChannel?.type === 'voice' && voiceJoined && (
+            <div className="max-w-5xl mx-auto py-2">
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-6">
+                {(() => {
+                  const list: { id: string; name: string }[] = [];
+                  list.push({ id: 'self', name: me?.name || user?.username || 'You' });
+                  for (const [pid, info] of Object.entries(voicePeers)) {
+                    list.push({ id: pid, name: info?.name || 'User' });
+                  }
+                  return list.map(p => {
+                    const lvl = Math.min(1, Math.max(0, voiceLevels[p.id] || 0));
+                    const deg = Math.max(12, Math.round(lvl * 360));
+                    const speaking = lvl > 0.2;
+                    const mem = p.id==='self' ? { avatarUrl: me?.avatarUrl || null } : members.find(mm => mm.id === (voicePeers[p.id]?.userId || '')) || {} as any;
+                    const avatar = mem?.avatarUrl || null;
+                    const initial = (p.id==='self' ? (me?.name || user?.username || 'You') : p.name || 'U').trim()[0]?.toUpperCase() || 'U';
+                    const vol = voiceVolumes[p.id] ?? 1;
+                    const mutedLocal = p.id==='self' ? voiceMuted : !!voiceSilenced[p.id];
+                    return (
+                      <div key={p.id} className={`rounded-xl border border-neutral-800 bg-neutral-950/50 p-4 flex flex-col items-center min-h-[360px] ${speaking ? 'shadow-[0_0_0_2px_rgba(16,185,129,0.15)]' : ''}`}>
+                        <div className="relative">
+                          <div className="h-16 w-16 rounded-full p-[2px]" style={{ background: `conic-gradient(rgb(16 185 129) ${deg}deg, rgb(38 38 38) 0deg)` }}>
+                            <div className={`h-full w-full rounded-full overflow-hidden ${speaking ? 'bg-neutral-900/80' : 'bg-neutral-900/60'}`}>
+                              {avatar ? (
+                                <img src={avatar} alt={p.name || 'avatar'} className="h-full w-full object-cover" />
+                              ) : (
+                                <div className="h-full w-full flex items-center justify-center text-base">
+                                  <span className="text-neutral-200">{p.id==='self' ? (voiceMuted ? '??' : initial) : initial}</span>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                          {p.id==='self' && voiceMuted && (
+                            <span className="absolute -bottom-1 -right-1 h-5 w-5 rounded-full bg-neutral-900 border border-neutral-700 text-red-400 flex items-center justify-center" title="Muted"> 
+                              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5"><path d="M13.5 14.5V9.4a3.4 3.4 0 0 0-5.7-2.4L5 9H2v6h3l2.8 2.8a3.4 3.4 0 0 0 5.7-2.4Z"/><path d="m14 9 7-7"/></svg>
+                            </span>
+                          )}
+                        </div>
+                        <div className="mt-2 text-neutral-200 text-sm truncate max-w-[14ch]">{p.id==='self' ? (voiceMuted ? 'You (muted)' : 'You') : p.name}</div>
+                        <div className="mt-3 flex flex-col items-center gap-3 w-full">
+                          <div className="relative h-[240px] flex items-center justify-center w-full">
+                            <input
+                              type="range"
+                              min="0"
+                              max="1"
+                              step="0.01"
+                              value={vol}
+                              onChange={(e)=>{
+                                const v = Number(e.target.value);
+                                setVoiceVolumes(prev => ({ ...prev, [p.id]: v }));
+                                const el = audioElsRef.current.get(p.id);
+                                if (el) el.volume = v;
+                              }}
+                              className="accent-emerald-500"
+                              style={{ transform: 'rotate(-90deg)', width: '220px', height: '28px', transformOrigin: 'center' }}
+                              aria-label={`Volume for ${p.name||'user'}`}
+                            />
+                          </div>
+                          <button
+                            className={`px-2 py-1 rounded border text-xs inline-flex items-center justify-center ${mutedLocal ? 'border-red-700 bg-red-900/40 text-red-200' : 'border-neutral-700 text-neutral-300 hover:bg-neutral-800/60'}`}
+                            onClick={() => {
+                              if (p.id==='self') { toggleMute(); }
+                              else {
+                                setVoiceSilenced(prev => {
+                                  const val = !prev[p.id];
+                                  const next = { ...prev, [p.id]: val };
+                                  const el = audioElsRef.current.get(p.id);
+                                  if (el) el.muted = val;
+                                  return next;
+                                });
+                              }
+                            }}
+                            title={mutedLocal ? 'Unmute' : 'Mute'}
+                            aria-label={mutedLocal ? 'Unmute' : 'Mute'}
+                          >
+                            {mutedLocal ? (
+                              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 text-red-400">
+                                <path d="M13.5 14.5V9.4a3.4 3.4 0 0 0-5.7-2.4L5 9H2v6h3l2.8 2.8a3.4 3.4 0 0 0 5.7-2.4Z"/>
+                                <path d="m14 9 7-7"/>
+                              </svg>
+                            ) : (
+                              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+                                <path d="M11 5 6 9H2v6h4l5 4V5Z"/>
+                                <path d="M19 12a4 4 0 0 0-4-4"/>
+                                <path d="M19 12a4 4 0 0 1-4 4"/>
+                              </svg>
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  });
+                })()}
+              </div>
+            </div>
+          )}
           {!currentVoidId ? (
             <div className="h-full w-full flex items-center justify-center">
               <div className="relative w-full max-w-3xl mx-auto">
@@ -2774,7 +2973,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                             <img src={im.url} alt={im.name||'photo'} className={`w-full h-full object-cover transition-transform duration-300 ${hidden ? 'blur-sm brightness-50' : 'group-hover:scale-[1.03]'}`} />
                           </a>
                         {hidden && (
-                          <button className="absolute inset-0 flex items-center justify-center bg-neutral-950/50 text-neutral-200 text-sm font-medium" onClick={()=> setRevealedSpoilers(prev => ({ ...prev, [im.mid]: true }))}>Spoiler — tap to reveal</button>
+                          <button className="absolute inset-0 flex items-center justify-center bg-neutral-950/50 text-neutral-200 text-sm font-medium" onClick={()=> setRevealedSpoilers(prev => ({ ...prev, [im.mid]: true }))}>Spoiler � tap to reveal</button>
                         )}
                         {!selMode && (
                           <button
@@ -2873,7 +3072,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                     <input
                       value={noteSearch}
                       onChange={e=>setNoteSearch(e.target.value)}
-                      placeholder="Search notes…"
+                      placeholder="Search notes�"
                       className="px-3 py-1.5 rounded border border-neutral-700 bg-neutral-900 text-neutral-100"
                     />
                     <div className="flex items-center gap-1 overflow-x-auto">
@@ -2904,7 +3103,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                     ) : notes.map(n => (
                       <button key={n.id} onClick={()=>{ setNoteModalId(n.id); setNoteEditTitle(n.title); setNoteEditBody(n.body); }} className="text-left p-3 rounded-lg border border-neutral-800 bg-neutral-900/60 hover:bg-neutral-900/80 transition-colors shadow-sm">
                         <div className="font-semibold text-neutral-100 truncate mb-1" title={n.title}>{n.title}</div>
-                        <div className="text-sm text-neutral-400 line-clamp-3 whitespace-pre-wrap">{n.body || '—'}</div>
+                        <div className="text-sm text-neutral-400 line-clamp-3 whitespace-pre-wrap">{n.body || '�'}</div>
                         {n.tags.length>0 && (
                           <div className="mt-2 flex flex-wrap gap-1">
                             {n.tags.map(t => (<span key={t} className="px-1.5 py-0.5 rounded-full border border-neutral-700 text-[10px] text-neutral-300">#{t}</span>))}
@@ -2922,7 +3121,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                         <div className="relative w-[90vw] max-w-xl rounded-lg border border-neutral-800 bg-neutral-900 p-4 shadow-2xl">
                           <div className="flex items-center justify-between mb-3">
                             <div className="text-emerald-300 font-semibold">Edit Note</div>
-                            <button className="px-2 py-1 text-neutral-400 hover:text-neutral-200" onClick={()=> setNoteModalId(null)} aria-label="Close">✕</button>
+                            <button className="px-2 py-1 text-neutral-400 hover:text-neutral-200" onClick={()=> setNoteModalId(null)} aria-label="Close">?</button>
                           </div>
                           <input className="w-full mb-2 px-3 py-2 rounded bg-neutral-950 border border-neutral-800 text-neutral-100" value={noteEditTitle} onChange={e=>setNoteEditTitle(e.target.value)} placeholder="Title" />
                           <textarea className="w-full h-40 px-3 py-2 rounded bg-neutral-950 border border-neutral-800 text-neutral-100" value={noteEditBody} onChange={e=>setNoteEditBody(e.target.value)} placeholder="Body (supports #tags)" spellCheck={true} autoCorrect="on" autoCapitalize="sentences" />
@@ -3054,7 +3253,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                     </div>
                     {hidden && (
                       <button className="absolute inset-0 flex items-center justify-center bg-neutral-950/70 text-neutral-200 text-sm font-medium" onClick={() => setRevealedSpoilers(prev => ({ ...prev, [m.id]: true }))}>
-                        Spoiler — tap to reveal
+                        Spoiler � tap to reveal
                       </button>
                     )}
                   </div>
@@ -3075,7 +3274,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                     if (hidden) {
                       return (
                         <button className="w-full text-left px-2 py-2 rounded border border-neutral-800 bg-neutral-950/70 text-neutral-300" onClick={() => setRevealedSpoilers(prev => ({ ...prev, [m.id]: true }))}>
-                          Spoiler — click to reveal
+                          Spoiler � click to reveal
                         </button>
                       );
                     }
@@ -3149,7 +3348,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
             });
           })()
           )}
-          {currentVoidId && currentChannel?.type !== 'kanban' && currentChannel?.type !== 'form' && currentChannel?.type !== 'habit' && msgs.length === 0 && (
+          {currentVoidId && currentChannel?.type !== 'kanban' && currentChannel?.type !== 'form' && currentChannel?.type !== 'habit' && currentChannel?.type !== 'voice' && msgs.length === 0 && (
             <div className="text-neutral-500 text-sm">No messages yet</div>
           )}
         </div>
@@ -3194,50 +3393,111 @@ function ChatApp({ token, user }: { token: string; user: any }) {
           ) : currentChannel?.type === 'voice' ? (
             <div className="flex flex-col gap-3">
               <div className="flex items-center justify-between">
-                <div className="text-emerald-300 font-semibold">Voice room</div>
-                <div className="text-xs text-neutral-400">{voiceJoined ? (Object.keys(voicePeers).length + 1) : 0} listening</div>
+                <div className="flex items-center gap-2 text-emerald-300 font-semibold">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5"><path d="M11 5a3 3 0 0 1 6 0v7a3 3 0 0 1-6 0Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><path d="M12 19v3"/></svg>
+                  <span>Voice</span>
+                </div>
+                <div className="text-xs text-neutral-300 inline-flex items-center gap-1 rounded-full border border-neutral-800/80 bg-neutral-900/60 px-2 py-0.5">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                  <span>{voiceJoined ? (Object.keys(voicePeers).length + 1) : 0} listening</span>
+                </div>
               </div>
               {!voiceJoined ? (
                 <div className="flex items-center gap-2">
-                  <button className="px-3 py-2 rounded border border-emerald-700 bg-emerald-800/70 text-emerald-50 hover:bg-emerald-700/70" onClick={joinVoice}>Join Voice</button>
+                  <button className="px-4 py-2 rounded-lg border border-emerald-700 bg-gradient-to-r from-emerald-800/70 to-teal-800/70 hover:from-emerald-700/70 hover:to-teal-700/70 text-emerald-50 shadow-sm inline-flex items-center gap-2" onClick={joinVoice}>
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5"><path d="M12 5v14M5 12h14"/></svg>
+                    <span>Join Voice</span>
+                  </button>
                 </div>
               ) : (
-                <div className="flex items-center gap-2 flex-wrap">
-                  <button className="px-3 py-2 rounded border border-neutral-700 text-neutral-200 hover:bg-neutral-800/60" onClick={toggleMute}>{voiceMuted ? 'Unmute' : 'Mute'}</button>
-                  <button className="px-3 py-2 rounded border border-red-800 text-red-300 hover:bg-red-900/30" onClick={leaveVoice}>Leave</button>
-                  <div className="ml-auto flex items-center gap-2 text-xs text-neutral-400">
+                <div className="flex items-center gap-2 flex-wrap rounded-lg border border-neutral-800/70 bg-neutral-900/40 backdrop-blur px-2 py-2">
+                  <button className="px-3 py-2 rounded-md border border-neutral-700 text-neutral-200 hover:bg-neutral-800/60 inline-flex items-center gap-1" onClick={toggleMute} title={voiceMuted ? 'Unmute' : 'Mute'}>
+                    {voiceMuted ? (
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 text-red-400"><path d="M13.5 14.5V9.4a3.4 3.4 0 0 0-5.7-2.4L5 9H2v6h3l2.8 2.8a3.4 3.4 0 0 0 5.7-2.4Z"/><path d="m14 9 7-7"/></svg>
+                    ) : (
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M12 3v10"/><path d="M8 7h8"/><path d="M5 10v2a7 7 0 0 0 14 0v-2"/><path d="M12 19v3"/></svg>
+                    )}
+                    <span className="hidden sm:inline">{voiceMuted ? 'Unmute' : 'Mute'}</span>
+                  </button>
+                  <button className="px-3 py-2 rounded-md border border-red-800 text-red-300 hover:bg-red-900/30 inline-flex items-center gap-1" onClick={leaveVoice} title="Leave">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M10 3H3v18h7"/><path d="M21 12H7"/><path d="m14 7 5 5-5 5"/></svg>
+                    <span className="hidden sm:inline">Leave</span>
+                  </button>
+                  <button className="px-3 py-2 rounded-md border border-neutral-700 text-neutral-200 hover:bg-neutral-800/60 inline-flex items-center gap-1" onClick={()=>{ setDevicesOpen(v=>!v); if (!devicesOpen) refreshDevices(); }} title="Devices">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V22a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H2a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0A1.65 1.65 0 0 0 9 2.09V2a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0A1.65 1.65 0 0 0 22 12a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/></svg>
+                    <span className="hidden sm:inline">Devices</span>
+                  </button>
+                  {needsAudioUnlock && (
+                    <button className="px-3 py-2 rounded-md border border-amber-800 text-amber-200 hover:bg-amber-900/30 inline-flex items-center gap-1" onClick={async()=>{
+                      try { await audioCtxRef.current?.resume(); } catch {}
+                      try {
+                        let ok = true;
+                        for (const el of audioElsRef.current.values()) {
+                          try { const p = el.play(); if (p && typeof (p as any).then === 'function') { await p; } } catch { ok = false; }
+                        }
+                        if (ok) setNeedsAudioUnlock(false);
+                      } catch {}
+                    }} title="Enable Audio">
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M11 5v14l-7-4V9z"/><path d="M19 5v14"/></svg>
+                      <span className="hidden sm:inline">Enable Audio</span>
+                    </button>
+                  )}
+                  <div className="ml-auto hidden md:flex items-center gap-2 text-xs text-neutral-400">
                     <span>Peers:</span>
                     <span className="truncate max-w-[50vw]">{Object.values(voicePeers).map(p => p.name || 'User').join(', ') || 'None'}</span>
                   </div>
                 </div>
               )}
-              {voiceJoined && (
-                <div className="flex flex-wrap gap-2">
-                  {(() => {
-                    const list: { id: string; name: string }[] = [];
-                    list.push({ id: 'self', name: me?.name || user?.username || 'You' });
-                    for (const [pid, info] of Object.entries(voicePeers)) {
-                      list.push({ id: pid, name: info?.name || 'User' });
-                    }
-                    return list.map(p => {
-                      const lvl = Math.min(1, Math.max(0, voiceLevels[p.id] || 0));
-                      return (
-                        <div key={p.id} className="px-2 py-1 rounded border border-neutral-800 bg-neutral-950/70 text-xs text-neutral-300 flex items-center gap-2">
-                          <span className={`inline-block h-2 w-2 rounded-full ${lvl>0.2?'bg-emerald-500':lvl>0.05?'bg-emerald-700':'bg-neutral-700'}`}></span>
-                          <span className="max-w-[20ch] truncate">{p.id==='self' ? (voiceMuted ? 'You (muted)' : 'You') : p.name}</span>
-                          <span className="h-1 w-16 bg-neutral-800 rounded overflow-hidden">
-                            <span className="block h-full bg-emerald-500" style={{ width: `${Math.round(lvl*100)}%` }}></span>
-                          </span>
-                        </div>
-                      );
-                    });
-                  })()}
+              {voiceJoined && devicesOpen && (
+                <div className="flex items-center gap-3 flex-wrap text-sm text-neutral-300">
+                  <label className="flex items-center gap-1">Mic:
+                    <select className="bg-neutral-950 border border-neutral-800 rounded px-2 py-1 text-neutral-200"
+                      value={selectedInputId ?? ''}
+                      onChange={async (e)=>{ const id=e.target.value; setSelectedInputId(id); await switchMicrophone(id); }}>
+                      {inputs.length===0 ? <option value="">Default</option> : inputs.map(d=> (
+                        <option key={d.deviceId} value={d.deviceId}>{d.label || `Mic ${d.deviceId.slice(0,6)}`}</option>
+                      ))}
+                    </select>
+                  </label>
+                  {(() => { const hasSink = typeof (HTMLMediaElement.prototype as any).setSinkId === 'function'; return hasSink ? (
+                    <label className="flex items-center gap-1">Output:
+                      <select className="bg-neutral-950 border border-neutral-800 rounded px-2 py-1 text-neutral-200"
+                        value={selectedOutputId ?? ''}
+                        onChange={async (e)=>{ const id=e.target.value; setSelectedOutputId(id); await applyOutputDevice(id); }}>
+                        {outputs.length===0 ? <option value="">Default</option> : outputs.map(d=> (
+                          <option key={d.deviceId} value={d.deviceId}>{d.label || `Device ${d.deviceId.slice(0,6)}`}</option>
+                        ))}
+                      </select>
+                    </label>
+                  ) : null; })()}
                 </div>
               )}
+              {/* Participant tiles moved to main body */}
               {/* Remote audio sinks (hidden) */}
               <div className="sr-only">
                 {Array.from(remoteStreamsRef.current.entries()).map(([pid, ms]) => (
-                  <audio key={pid} autoPlay playsInline ref={(el) => { if (el) (el as any).srcObject = ms; }} />
+                  <audio
+                    key={pid}
+                    autoPlay
+                    playsInline
+                    ref={(el) => {
+                      if (el) {
+                        (el as any).srcObject = ms;
+                        audioElsRef.current.set(pid, el);
+                        try {
+                          if (selectedOutputId && typeof (el as any).setSinkId === 'function') {
+                            (el as any).setSinkId(selectedOutputId).catch(()=>{});
+                          }
+                        } catch {}
+                        try { el.volume = (voiceVolumes[pid] ?? 1); } catch {}
+                        try { el.muted = !!voiceSilenced[pid]; } catch {}
+                        try { const p = el.play(); if (p && typeof (p as any).then === 'function') { (p as any).catch(()=> setNeedsAudioUnlock(true)); } }
+                        catch { setNeedsAudioUnlock(true); }
+                      } else {
+                        audioElsRef.current.delete(pid);
+                      }
+                    }}
+                  />
                 ))}
               </div>
             </div>
@@ -3697,6 +3957,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
             <div className="p-2 space-y-1 overflow-auto">
               {members.map(m => {
                 const online = globalUserIds.includes(m.id) || spaceUserIds.includes(m.id) || roomUserIds.includes(m.id);
+                const onMobile = globalMobileIds.includes(m.id) || spaceMobileIds.includes(m.id) || roomMobileIds.includes(m.id);
                 const st = String(m.status || '').toLowerCase();
                 let color = 'bg-neutral-600';
                 let label = 'Offline';
@@ -3713,7 +3974,16 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                       <div className="h-8 w-8 rounded-full overflow-hidden bg-neutral-800 border border-neutral-700 flex items-center justify-center">
                         {m.avatarUrl ? <img src={m.avatarUrl} alt="avatar" className="h-full w-full object-cover"/> : <span className="text-[10px] text-neutral-400">{(m.name?.[0]||'?').toUpperCase()}</span>}
                       </div>
-                      <span className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border border-neutral-900 ${color}`}></span>
+                      {online && onMobile ? (
+                        <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full bg-neutral-900 border border-neutral-900 flex items-center justify-center" title="Online on mobile" aria-label="Online on mobile">
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-2 w-2 text-emerald-500">
+                            <rect x="8" y="3" width="8" height="18" rx="2" ry="2"/>
+                            <line x1="12" y1="19" x2="12" y2="19"/>
+                          </svg>
+                        </span>
+                      ) : (
+                        <span className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border border-neutral-900 ${color}`}></span>
+                      )}
                     </div>
                     <div className="min-w-0">
                       <div className="truncate text-neutral-200 text-sm">{m.name || m.username}</div>

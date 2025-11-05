@@ -154,18 +154,32 @@ function presenceLeave(room, userId) {
   if (!roomPresence.has(room)) return;
   roomPresence.get(room).delete(userId);
 }
+function collectMobileUserIds(room) {
+  try {
+    const set = (io.sockets.adapter.rooms.get(room) || new Set());
+    const mobile = new Set();
+    for (const sid of set) {
+      const s = io.sockets.sockets.get(sid);
+      if (s && s.data && s.data.userId && s.data.isMobile) mobile.add(String(s.data.userId));
+    }
+    return Array.from(mobile);
+  } catch { return []; }
+}
 function emitPresence(room) {
   const userIds = Array.from(roomPresence.get(room) || []);
-  io.to(room).emit('presence:room', { room, userIds });
+  const mobileUserIds = collectMobileUserIds(room);
+  io.to(room).emit('presence:room', { room, userIds, mobileUserIds });
 }
 function emitSpacePresence(room, spaceId) {
   const userIds = Array.from(roomPresence.get(room) || []);
-  io.to(room).emit('presence:space', { spaceId, userIds });
+  const mobileUserIds = collectMobileUserIds(room);
+  io.to(room).emit('presence:space', { spaceId, userIds, mobileUserIds });
 }
 function emitGlobalPresence() {
   const room = 'global';
   const userIds = Array.from(roomPresence.get(room) || []);
-  io.to(room).emit('presence:global', { userIds });
+  const mobileUserIds = collectMobileUserIds(room);
+  io.to(room).emit('presence:global', { userIds, mobileUserIds });
 }
 
 // Authenticate socket using the access token provided in the handshake
@@ -177,6 +191,13 @@ io.use(async (socket, next) => {
     socket.data.userId = payload.sub;
     const { rows } = await pool.query('SELECT name FROM users WHERE id=$1', [socket.data.userId]);
     socket.data.name = rows[0]?.name || '';
+    // Platform hint to support "online via mobile"
+    try {
+      const platformRaw = String(socket.handshake.auth?.platform || '').toLowerCase();
+      const ua = String(socket.handshake.headers['user-agent'] || '').toLowerCase();
+      const isMobileUA = /android|iphone|ipad|ipod|mobile/.test(ua);
+      socket.data.isMobile = platformRaw === 'mobile' || isMobileUA;
+    } catch { socket.data.isMobile = false; }
     return next();
   } catch (e) {
     return next(new Error('Invalid token'));
@@ -298,6 +319,10 @@ io.on('connection', async (socket) => {
       const mem = await pool.query('SELECT 1 FROM space_members WHERE space_id=$1 AND user_id=$2', [sid, userId]);
       if (mem.rowCount === 0) return;
       const vroom = `voice:${rid}`;
+      // If already in another voice room, leave it first
+      if (curVoiceRid && curVoiceRid !== vroom) {
+        try { socket.leave(curVoiceRid); socket.to(curVoiceRid).emit('voice:peer-left', { peerId: socket.id }); } catch {}
+      }
       curVoiceRid = vroom;
       socket.join(vroom);
       const set = (socket.adapter.rooms.get(vroom) || new Set());
@@ -325,6 +350,11 @@ io.on('connection', async (socket) => {
   socket.on('voice:signal', ({ targetId, payload }) => {
     try {
       if (!targetId || !payload) return;
+      // Validate membership: only relay if both peers are in the same voice room
+      const vroom = curVoiceRid;
+      if (!vroom) return;
+      const members = io.sockets.adapter.rooms.get(vroom);
+      if (!members || !members.has(String(targetId)) || !members.has(String(socket.id))) return;
       const to = io.sockets.sockets.get(String(targetId));
       if (!to) return;
       to.emit('voice:signal', { from: socket.id, payload });
@@ -511,6 +541,15 @@ io.on('connection', async (socket) => {
     presenceLeave(room(), userId); emitPresence(room());
     if (curVoid) { presenceLeave(spaceRoom(), userId); emitSpacePresence(spaceRoom(), curVoid); }
     presenceLeave('global', userId); emitGlobalPresence();
+    // Clean up voice room membership
+    try {
+      if (curVoiceRid) {
+        const vroom = curVoiceRid;
+        socket.leave(vroom);
+        socket.to(vroom).emit('voice:peer-left', { peerId: socket.id });
+        curVoiceRid = '';
+      }
+    } catch {}
   });
 });
 

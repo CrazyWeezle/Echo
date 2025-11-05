@@ -15,13 +15,23 @@ function loadAuth() {
 }
 const { token } = loadAuth();
 
+// Detect simple platform hint for presence (mobile vs web)
+const PLATFORM = (() => {
+  try {
+    const ua = (navigator.userAgent || '').toLowerCase();
+    const isCap = typeof (window as any).Capacitor !== 'undefined';
+    const isMobile = /android|iphone|ipad|ipod|mobile/i.test(ua) || isCap;
+    return isMobile ? 'mobile' : 'web';
+  } catch { return 'web'; }
+})();
+
 export const socket: Socket = io(base, {
     autoConnect: false,
     // Allow websocket with HTTP polling fallback for tunnel/proxy quirks
     transports: ["websocket", "polling"],
     path: "/socket.io",
     withCredentials: true,
-    auth: { token: localStorage.getItem('token') || undefined },
+    auth: { token: localStorage.getItem('token') || undefined, platform: PLATFORM },
     // Make reconnection more resilient over tunnels
     reconnection: true,
     reconnectionAttempts: Infinity,
