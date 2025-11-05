@@ -372,20 +372,21 @@ function ChatApp({ token, user }: { token: string; user: any }) {
 
   // Lightweight previews fed by user:notify for channels we might not be subscribed to
   // Lightweight previews fed by user:notify for channels we might not be subscribed to
-  const [previewsByChan, setPreviewsByChan] = useState<Record<string, { id:string; content:string; authorName?:string; createdAt?:string }[]>>({});
-  async function loadPreviewIfNeeded(fqChanId: string) {
+  const [previewsByChan, setPreviewsByChan] = useState<Record<string, { id:string; content:string; authorName?:string; createdAt?:string; attachments?: { url:string; contentType?: string; name?: string; size?: number }[] }[]>>({});
+  async function loadPreviewIfNeeded(fqChanId: string, force = false) {
     try {
-      if (Object.prototype.hasOwnProperty.call(previewsByChan, fqChanId)) return;
+      if (!force && Object.prototype.hasOwnProperty.call(previewsByChan, fqChanId)) return;
       const tok = localStorage.getItem('token') || '';
       const res = await api.getAuth(`/channels/preview?channelId=${encodeURIComponent(fqChanId)}&limit=5`, tok);
       const msgs = Array.isArray(res?.messages) ? res.messages as any[] : [];
-      const mapped = msgs.map(m => ({ id: String(m.id), content: String(m.content||''), authorName: String(m.authorName||''), createdAt: String(m.createdAt||'') }));
+      const mapped = msgs.map(m => ({ id: String(m.id), content: String(m.content||''), authorName: String(m.authorName||''), createdAt: String(m.createdAt||''), attachments: Array.isArray(m.attachments)? m.attachments : [] }));
       setPreviewsByChan(old => ({ ...old, [fqChanId]: mapped }));
     } catch {
       // mark as attempted to avoid spinner loops
       setPreviewsByChan(old => (Object.prototype.hasOwnProperty.call(old, fqChanId) ? old : { ...old, [fqChanId]: [] }));
     }
   }
+  const refreshPreview = (fqChanId: string) => loadPreviewIfNeeded(fqChanId, true);
 
   // Quick reply text per favorite card (landing dashboard)
   const [quickTextByFav, setQuickTextByFav] = useState<Record<string, string>>({});
@@ -601,6 +602,13 @@ function ChatApp({ token, user }: { token: string; user: any }) {
     const r = inputResolveRef.current; inputResolveRef.current = null;
     if (r) r(val);
   }
+
+  // Notes channel UI state
+  const [noteSearch, setNoteSearch] = useState<string>('');
+  const [noteTag, setNoteTag] = useState<string | null>(null);
+  const [noteModalId, setNoteModalId] = useState<string | null>(null);
+  const [noteEditTitle, setNoteEditTitle] = useState<string>('');
+  const [noteEditBody, setNoteEditBody] = useState<string>('');
 
   // Voice chat state
   const [voiceJoined, setVoiceJoined] = useState(false);
@@ -1145,6 +1153,11 @@ function ChatApp({ token, user }: { token: string; user: any }) {
             n.onclick = () => { window.focus(); n.close(); };
           }
         }
+      } catch {}
+      try {
+        // Proactively refresh preview data for favorites (keeps gallery frame fresh)
+        const fid = fq(voidId, channelId);
+        if (favorites.includes(fid)) refreshPreview(fid);
       } catch {}
       };
 
@@ -2209,18 +2222,42 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                         const cMeta = vId === currentVoidId ? channels.find(c=>c.id===cId) : null;
                         const cName = cMeta?.name || (cId === 'chat' && vId.startsWith('dm_') ? 'Direct Message' : cId);
                         const kk = k(vId, cId);
-                        const mbase = (msgsByKey[kk] || []).map(m => ({ id: m.id, content: m.content, authorName: m.authorName, createdAt: m.createdAt || '' }));
-                        const pbase = (previewsByChan[`${vId}:${cId}`] || []).map(x => ({ id: x.id, content: x.content, authorName: x.authorName, createdAt: x.createdAt || '' }));
+                        const mbase = (msgsByKey[kk] || []).map(m => ({ id: m.id, content: m.content, authorName: m.authorName, createdAt: m.createdAt || '', attachments: (m.attachments || []) as any }));
+                        const pbase = (previewsByChan[`${vId}:${cId}`] || []).map(x => ({ id: x.id, content: x.content, authorName: x.authorName, createdAt: x.createdAt || '', attachments: (x.attachments || []) as any }));
                         const seen: Record<string, boolean> = {};
-                        const merged = ([] as { id:string; content:string; authorName?:string; createdAt?:string }[])
+                        const merged = ([] as { id:string; content:string; authorName?:string; createdAt?:string; attachments?: any[] }[])
                           .concat(mbase, pbase)
                           .filter(it => { if (!it.id || seen[it.id]) return false; seen[it.id] = true; return true; })
                           .sort((a,b) => (new Date(a.createdAt||0).getTime()) - (new Date(b.createdAt||0).getTime()));
-                        const items = merged.slice(-5);
+                        const mergedAll = merged;
+                        const items = mergedAll.slice(-5);
                         const unreadCount = unread[`${vId}:${cId}`] || 0;
                         const fqid = fq(vId, cId);
                         const ctype = (vId === currentVoidId ? channels.find(c=>c.id===cId)?.type : undefined);
                         const hideComposer = ctype === 'kanban' || ctype === 'form' || ctype === 'habit' || !!kanbanByChan[fqid];
+                        const looksLikeGallery = mergedAll.some(it => (it.attachments||[]).some((a:any)=>{ const t=String(a?.contentType||'').toLowerCase(); const u=String(a?.url||'').toLowerCase(); return t.startsWith('image/') || /\.(png|jpe?g|webp)(\?.*)?$/.test(u); }));
+                        if (ctype === 'gallery' || looksLikeGallery) {
+                          // Photo frame view for gallery favorites: show latest image only
+                          let frame: any = null;
+                          for (let i = mergedAll.length - 1; i >= 0; i--) {
+                            const atts = mergedAll[i].attachments || [];
+                            const img = atts.find((a:any)=>{ const t=String(a?.contentType||'').toLowerCase(); const u=String(a?.url||'').toLowerCase(); return t.startsWith('image/') || /\.(png|jpe?g|webp)(\?.*)?$/.test(u); });
+                            if (img) { frame = { url: img.url, name: img.name }; break; }
+                          }
+                          return (
+                            <button key={fid} className="relative rounded-xl border border-neutral-800 bg-neutral-950 overflow-hidden group"
+                                    onClick={()=>{ switchVoid(vId); const shortId = cId.includes(':') ? cId.split(':')[1] : cId; switchChannel(shortId); }}
+                                    title={`${vName} / #${cName}`}>
+                              <div className="relative w-full pt-[66%]">
+                                {frame ? (
+                                  <img src={frame.url} alt={frame.name||'image'} className="absolute inset-0 w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.02]" />
+                                ) : (
+                                  <div className="absolute inset-0 flex items-center justify-center text-neutral-500">No images yet</div>
+                                )}
+                              </div>
+                            </button>
+                          );
+                        }
                         return (
                           <div key={fid} className="relative rounded-xl border border-neutral-800 bg-neutral-900/70 p-3">
                             <div className="flex items-center justify-between mb-2">
@@ -2237,16 +2274,36 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                                 </button>
                               </div>
                             </div>
-                            <div ref={(el)=>{ favScrollRefs.current[fid] = el; }} className="min-h-[88px] max-h-48 overflow-auto space-y-1 text-[12px]">
-                              {items.length === 0 ? (
-                                <div className="text-neutral-500">Loading recent messages...</div>
+                            <div ref={(el)=>{ favScrollRefs.current[fid] = el; }} className="min-h-[88px] max-h-48 overflow-auto text-[12px]">
+                              {ctype === 'gallery' ? (
+                                (() => {
+                                  // Find the most recent image attachment
+                                  for (let i = items.length - 1; i >= 0; i--) {
+                                    const atts = items[i].attachments || [];
+                                    const img = atts.find((a:any)=>{ const t=String(a?.contentType||'').toLowerCase(); const u=String(a?.url||'').toLowerCase(); return t.startsWith('image/') || /\.(png|jpe?g|webp)(\?.*)?$/.test(u); });
+                                    if (img) {
+                                      return (
+                                        <div key={items[i].id} className="relative w-full pt-[56%] rounded overflow-hidden border border-neutral-800 bg-neutral-950">
+                                          <img src={img.url} alt={img.name||'image'} className="absolute inset-0 w-full h-full object-cover" />
+                                        </div>
+                                      );
+                                    }
+                                  }
+                                  return <div className="text-neutral-500">No images yet</div>;
+                                })()
                               ) : (
-                                items.map(it => (
-                                  <div key={it.id} className="px-2 py-1 rounded border border-neutral-800 bg-neutral-950/50">
-                                    <div className="text-[11px] text-neutral-400">{it.authorName || 'User'}</div>
-                                    <div className="text-neutral-200 truncate">{it.content}</div>
-                                  </div>
-                                ))
+                                <div className="space-y-1">
+                                  {items.length === 0 ? (
+                                    <div className="text-neutral-500">Loading recent messages...</div>
+                                  ) : (
+                                    items.map(it => (
+                                      <div key={it.id} className="px-2 py-1 rounded border border-neutral-800 bg-neutral-950/50">
+                                        <div className="text-[11px] text-neutral-400">{it.authorName || 'User'}</div>
+                                        <div className="text-neutral-200 truncate">{it.content}</div>
+                                      </div>
+                                    ))
+                                  )}
+                                </div>
                               )}
                             </div>
                             {/* Quick composer (hidden for special channels: kanban/form/habit) */}
@@ -2259,7 +2316,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                                   onChange={(e) => setQuick(fid, (e.target as HTMLInputElement).value)}
                                   onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); quickSend(fid); } }}
                                   autoComplete="off"
-                                  autoCorrect="off"
+                                  autoCorrect="on"
                                   autoCapitalize="sentences"
                                   spellCheck={true}
                                   inputMode="text"
@@ -2646,7 +2703,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
           ) : (
           (() => {
             if (currentChannel?.type === 'gallery') {
-              const images: { url: string; name?: string; mid: string }[] = [];
+              const images: { url: string; name?: string; mid: string; spoiler?: boolean }[] = [];
               for (const m of msgs) {
                 for (const a of (m.attachments||[])) {
                   const t = String(a.contentType||'').toLowerCase();
@@ -2654,7 +2711,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                   const n = String(a.name||'').toLowerCase();
                   const isImg = t.startsWith('image/') || /(\.png|\.jpe?g)(\?.*)?$/.test(u) || /(\.png|\.jpe?g)(\?.*)?$/.test(n);
                   const isGif = t.includes('gif') || /(\.gif)(\?.*)?$/.test(u) || /(\.gif)(\?.*)?$/.test(n);
-                  if (isImg && !isGif) images.push({ url: a.url, name: a.name, mid: m.id });
+                  if (isImg && !isGif) images.push({ url: a.url, name: a.name, mid: m.id, spoiler: !!(m as any).spoiler });
                 }
               }
               // Selection state for bulk delete
@@ -2687,14 +2744,14 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                   </div>
                   <input ref={galleryFileRef} type="file" accept="image/png,image/jpeg" multiple className="hidden" onChange={(e)=> addGalleryFiles((e.target as HTMLInputElement).files)} />
                   <div
-                    className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-3 p-1"
+                    className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4 p-2 overflow-visible"
                     onDragOver={(e)=>{ e.preventDefault(); }}
                     onDrop={(e)=>{ e.preventDefault(); const files = e.dataTransfer?.files; if (files && files.length>0) addGalleryFiles(files); }}
                   >
                     {/* Always show an add tile */}
                     <button
                       type="button"
-                      className="relative block w-full pt-[100%] overflow-hidden rounded border border-neutral-800 bg-neutral-950 hover:bg-neutral-900/70 text-neutral-300"
+                      className="relative block w-full pt-[125%] overflow-hidden rounded border border-neutral-800 bg-neutral-950 hover:bg-neutral-900/70 text-neutral-300"
                       onClick={() => galleryFileRef.current?.click()}
                       title="Add photos"
                       aria-label="Add photos"
@@ -2706,14 +2763,22 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                       </span>
                     </button>
                     {/* Existing images */}
-                    {images.map((im, i) => (
-                      <div key={i} className={`relative group block w-full pt-[100%] overflow-hidden rounded-lg border ${ (selected as any)[keyOf(im)] ? 'border-emerald-600 ring-1 ring-emerald-700' : 'border-neutral-800'} bg-neutral-950 shadow-sm`}>
-                        <a href={selMode ? undefined : im.url} target={selMode ? undefined : "_blank"} rel={selMode ? undefined : "noreferrer"} className="absolute inset-0">
-                          <img src={im.url} alt={im.name||'photo'} className="w-full h-full object-cover transition-transform duration-200 group-hover:scale-[1.02]" />
-                        </a>
+                    {(() => {
+                      const imagesOrdered = images.slice().reverse();
+                      return imagesOrdered.map((im, i) => {
+                      const hidden = !!im.spoiler && !revealedSpoilers[im.mid];
+                      return (
+                      <div key={i} className="relative group overflow-visible">
+                        <div className={`block w-full pt-[125%] overflow-hidden rounded-xl border ${ (selected as any)[keyOf(im)] ? 'border-emerald-600 ring-1 ring-emerald-700' : 'border-neutral-800/80'} bg-neutral-950 shadow-md hover:shadow-lg transition-shadow` }>
+                          <a href={(selMode || hidden) ? undefined : im.url} target={(selMode || hidden) ? undefined : "_blank"} rel={(selMode || hidden) ? undefined : "noreferrer"} className="absolute inset-0">
+                            <img src={im.url} alt={im.name||'photo'} className={`w-full h-full object-cover transition-transform duration-300 ${hidden ? 'blur-sm brightness-50' : 'group-hover:scale-[1.03]'}`} />
+                          </a>
+                        {hidden && (
+                          <button className="absolute inset-0 flex items-center justify-center bg-neutral-950/50 text-neutral-200 text-sm font-medium" onClick={()=> setRevealedSpoilers(prev => ({ ...prev, [im.mid]: true }))}>Spoiler — tap to reveal</button>
+                        )}
                         {!selMode && (
                           <button
-                            className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity px-1.5 py-1 rounded bg-neutral-900/80 border border-neutral-700 text-neutral-300 hover:text-red-300 hover:border-red-600"
+                            className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity px-2 py-1 rounded-md bg-neutral-900/85 border border-neutral-700 text-neutral-300 hover:text-red-300 hover:border-red-600 backdrop-blur-sm"
                             title="Delete photo"
                             aria-label="Delete photo"
                             onClick={async (e)=>{
@@ -2733,21 +2798,28 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                         )}
                         {selMode && (
                           <button
-                            className={`absolute top-1 left-1 px-1.5 py-0.5 rounded border text-xs ${ (selected as any)[keyOf(im)] ? 'bg-emerald-700/70 border-emerald-600 text-emerald-50' : 'bg-neutral-900/70 border-neutral-700 text-neutral-300'}`}
+                            className={`absolute top-2 left-2 px-2 py-0.5 rounded-full border text-xs ${ (selected as any)[keyOf(im)] ? 'bg-emerald-700/70 border-emerald-600 text-emerald-50' : 'bg-neutral-900/70 border-neutral-700 text-neutral-300'}`}
                             onClick={(e)=>{ e.preventDefault(); (setSelected as any)((prev:Record<string,boolean>)=>({ ...prev, [keyOf(im)]: !prev[keyOf(im)] })); }}
                             title={(selected as any)[keyOf(im)] ? 'Deselect' : 'Select'}
                           >
                             {(selected as any)[keyOf(im)] ? 'Selected' : 'Select'}
                           </button>
                         )}
+                        </div>
+                        {/* Hover pop-out preview (disabled for spoilers or selection mode) */}
+                        {(!selMode && !hidden) && (
+                          <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center opacity-0 scale-95 group-hover:opacity-100 group-hover:scale-100 transition-transform transition-opacity duration-700 ease-out">
+                            <img src={im.url} alt={im.name||'photo'} className="max-h-[85vh] max-w-[90vw] rounded-2xl shadow-2xl object-contain" />
+                          </div>
+                        )}
                       </div>
-                    ))}
+                    )}); })()}
                     {/* If few images, pad with add placeholders to make it feel populated */}
                     {Array.from({ length: Math.max(0, 4 - Math.min(images.length, 4)) }).map((_, idx) => (
                       <button
                         key={`ph-${idx}`}
                         type="button"
-                        className="relative block w-full pt-[100%] overflow-hidden rounded border border-neutral-800 bg-neutral-950/60 hover:bg-neutral-900/60 text-neutral-400"
+                        className="relative block w-full pt-[125%] overflow-hidden rounded border border-neutral-800 bg-neutral-950/60 hover:bg-neutral-900/60 text-neutral-400"
                         onClick={() => galleryFileRef.current?.click()}
                         title="Add photos"
                         aria-label="Add photos"
@@ -2775,6 +2847,100 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                       </>
                     )}
                   </div>
+                </div>
+              );
+            }
+            if (currentChannel?.type === 'notes') {
+              // Build simple note cards from messages (title = first line)
+              const notesRaw = msgs.map(m => {
+                const text = String(m.content || '');
+                const [first, ...rest] = text.split(/\r?\n/);
+                const title = (first || '').trim() || 'Untitled';
+                const body = rest.join('\n').trim();
+                const tags = Array.from(new Set((text.match(/#([\w-]{1,30})/g) || []).map(s => s.slice(1).toLowerCase())));
+                return { id: m.id, title, body, createdAt: m.createdAt || '', tags };
+              }).reverse(); // newest first on grid
+              const allTags = Array.from(new Set(notesRaw.flatMap(n => n.tags))).slice(0, 20);
+              const q = (noteSearch || '').toLowerCase();
+              const notes = notesRaw.filter(n => {
+                const hitQ = !q || n.title.toLowerCase().includes(q) || n.body.toLowerCase().includes(q) || n.tags.some(t => t.includes(q));
+                const hitTag = !noteTag || n.tags.includes(noteTag.toLowerCase());
+                return hitQ && hitTag;
+              });
+              return (
+                <div className="min-h-full">
+                  <div className="mb-3 flex flex-wrap items-center gap-2">
+                    <input
+                      value={noteSearch}
+                      onChange={e=>setNoteSearch(e.target.value)}
+                      placeholder="Search notes…"
+                      className="px-3 py-1.5 rounded border border-neutral-700 bg-neutral-900 text-neutral-100"
+                    />
+                    <div className="flex items-center gap-1 overflow-x-auto">
+                      {allTags.map(t => (
+                        <button key={t} className={`px-2 py-1 rounded-full border text-xs ${noteTag===t?'border-emerald-600 bg-emerald-900/40 text-emerald-200':'border-neutral-700 text-neutral-300 hover:bg-neutral-800/60'}`} onClick={()=> setNoteTag(prev => prev===t ? null : t)}>#{t}</button>
+                      ))}
+                      {noteTag && (
+                        <button className="ml-2 px-2 py-1 rounded border border-neutral-700 text-neutral-300 hover:bg-neutral-800/60 text-xs" onClick={()=> setNoteTag(null)}>Clear tag</button>
+                      )}
+                    </div>
+                    <button
+                      className="px-2 py-1 rounded border border-neutral-700 text-neutral-200 hover:bg-neutral-800/60"
+                      onClick={async()=>{
+                        const t = await askInput({ title:'New Note', label:'Title', placeholder:'My note' });
+                        if (!t) return;
+                        const b = await askInput({ title:'New Note', label:'Content (optional)' });
+                        const content = b ? `${t}\n\n${b}` : t;
+                        const tempId = crypto.randomUUID();
+                        const fid = fq(currentVoidId, currentChannelId);
+                        setMsgsByKey(old => ({ ...old, [fid]: [...(old[fid]||[]), { id: tempId, content, optimistic: true }] }));
+                        socket.emit('message:send', { voidId: currentVoidId, channelId: fid, content, tempId, attachments: [] });
+                      }}
+                    >+ Add Note</button>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                    {notes.length === 0 ? (
+                      <div className="text-neutral-500 text-sm col-span-full">No notes yet</div>
+                    ) : notes.map(n => (
+                      <button key={n.id} onClick={()=>{ setNoteModalId(n.id); setNoteEditTitle(n.title); setNoteEditBody(n.body); }} className="text-left p-3 rounded-lg border border-neutral-800 bg-neutral-900/60 hover:bg-neutral-900/80 transition-colors shadow-sm">
+                        <div className="font-semibold text-neutral-100 truncate mb-1" title={n.title}>{n.title}</div>
+                        <div className="text-sm text-neutral-400 line-clamp-3 whitespace-pre-wrap">{n.body || '—'}</div>
+                        {n.tags.length>0 && (
+                          <div className="mt-2 flex flex-wrap gap-1">
+                            {n.tags.map(t => (<span key={t} className="px-1.5 py-0.5 rounded-full border border-neutral-700 text-[10px] text-neutral-300">#{t}</span>))}
+                          </div>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                  {noteModalId && (()=>{
+                    const sel = msgs.find(m => m.id === noteModalId);
+                    const canSave = (noteEditTitle.trim().length>0);
+                    return (
+                      <div className="fixed inset-0 z-40 flex items-center justify-center">
+                        <div className="absolute inset-0 bg-black/50" onClick={()=> setNoteModalId(null)} />
+                        <div className="relative w-[90vw] max-w-xl rounded-lg border border-neutral-800 bg-neutral-900 p-4 shadow-2xl">
+                          <div className="flex items-center justify-between mb-3">
+                            <div className="text-emerald-300 font-semibold">Edit Note</div>
+                            <button className="px-2 py-1 text-neutral-400 hover:text-neutral-200" onClick={()=> setNoteModalId(null)} aria-label="Close">✕</button>
+                          </div>
+                          <input className="w-full mb-2 px-3 py-2 rounded bg-neutral-950 border border-neutral-800 text-neutral-100" value={noteEditTitle} onChange={e=>setNoteEditTitle(e.target.value)} placeholder="Title" />
+                          <textarea className="w-full h-40 px-3 py-2 rounded bg-neutral-950 border border-neutral-800 text-neutral-100" value={noteEditBody} onChange={e=>setNoteEditBody(e.target.value)} placeholder="Body (supports #tags)" spellCheck={true} autoCorrect="on" autoCapitalize="sentences" />
+                          <div className="mt-3 flex items-center gap-2">
+                            <button disabled={!canSave} className="px-3 py-2 rounded border border-emerald-700 bg-emerald-800/70 text-emerald-50 hover:bg-emerald-700/70 disabled:opacity-50" onClick={()=>{
+                              if (!sel) return; const content = noteEditBody.trim()? `${noteEditTitle.trim()}\n\n${noteEditBody}` : noteEditTitle.trim();
+                              socket.emit('message:edit', { messageId: sel.id, content });
+                              const fid = fq(currentVoidId, currentChannelId);
+                              setMsgsByKey(old => { const list = old[fid]??[]; const idx=list.findIndex(m=>m.id===sel.id); if(idx===-1) return old; const copy=[...list]; copy[idx] = { ...copy[idx], content, optimistic: true }; return { ...old, [fid]: copy }; });
+                              setNoteModalId(null);
+                            }}>Save</button>
+                            <button className="px-3 py-2 rounded border border-neutral-700 text-neutral-200 hover:bg-neutral-800/60" onClick={()=> setNoteModalId(null)}>Cancel</button>
+                            <button className="ml-auto px-3 py-2 rounded border border-red-800 text-red-300 hover:bg-red-900/30" onClick={async()=>{ if(!sel) return; const ok = await askConfirm({ title:'Delete Note', message:'Delete this note?', confirmText:'Delete' }); if(!ok) return; socket.emit('message:delete', { messageId: sel.id }); setNoteModalId(null); }}>Delete</button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
               );
             }
@@ -2902,7 +3068,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
               )}
               <div className="whitespace-pre-wrap break-words text-neutral-100 mt-1">
                 {editingId === m.id ? (
-                  <textarea value={editText} onChange={e => setEditText(e.target.value)} className="w-full p-2 rounded bg-neutral-950 border border-neutral-800" rows={2} />
+                  <textarea value={editText} onChange={e => setEditText(e.target.value)} className="w-full p-2 rounded bg-neutral-950 border border-neutral-800" rows={2} spellCheck={true} autoCorrect="on" autoCapitalize="sentences" />
                 ) : (
                   (() => {
                     const hidden = !!m.spoiler && !revealedSpoilers[m.id];
@@ -3021,7 +3187,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
         </div>
 
         {/* Voice room or Input (hidden for Kanban/Form/Habit) */}
-        {currentChannel?.type !== 'kanban' && currentChannel?.type !== 'form' && currentChannel?.type !== 'habit' && currentChannel?.type !== 'gallery' && (
+        {currentChannel?.type !== 'kanban' && currentChannel?.type !== 'form' && currentChannel?.type !== 'habit' && currentChannel?.type !== 'gallery' && currentChannel?.type !== 'notes' && (
           <div className="p-3 border-t border-neutral-800/60 bg-neutral-900/40 safe-bottom md:static fixed inset-x-0 bottom-4 z-20 md:mb-4 shadow-[0_-8px_16px_rgba(0,0,0,0.35)]">
           {!currentVoidId ? (
             <div className="text-center text-sm text-neutral-400">Create or join a space to start chatting.</div>
@@ -3180,9 +3346,9 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                   onPaste={onComposerPaste}
                   onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
                   autoComplete="off"
-                  autoCorrect="off"
+                  autoCorrect="on"
                   autoCapitalize="sentences"
-                  spellCheck={false}
+                  spellCheck={true}
                   name="chat-message"
                   data-lpignore="true"
                   data-1p-ignore

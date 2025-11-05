@@ -1,0 +1,43 @@
+                        const [vId, cId] = fid.split(":");
+                        const v = voids.find(vv => vv.id === vId);
+                        const vName = v?.name || vId.replace(/^dm_/, 'DM ');
+                        const cMeta = vId === currentVoidId ? channels.find(c=>c.id===cId) : null;
+                        const cName = cMeta?.name || (cId === 'chat' && vId.startsWith('dm_') ? 'Direct Message' : cId);
+                        const kk = k(vId, cId);
+                        const mbase = (msgsByKey[kk] || []).map(m => ({ id: m.id, content: m.content, authorName: m.authorName, createdAt: m.createdAt || '', attachments: (m.attachments || []) as any }));
+                        const pbase = (previewsByChan[`${vId}:${cId}`] || []).map(x => ({ id: x.id, content: x.content, authorName: x.authorName, createdAt: x.createdAt || '', attachments: (x.attachments || []) as any }));
+                        const seen: Record<string, boolean> = {};
+                        const merged = ([] as { id:string; content:string; authorName?:string; createdAt?:string; attachments?: any[] }[])
+                          .concat(mbase, pbase)
+                          .filter(it => { if (!it.id || seen[it.id]) return false; seen[it.id] = true; return true; })
+                          .sort((a,b) => (new Date(a.createdAt||0).getTime()) - (new Date(b.createdAt||0).getTime()));
+                        const items = merged.slice(-5);
+                        const unreadCount = unread[`${vId}:${cId}`] || 0;
+                        const fqid = fq(vId, cId);
+                        const ctype = (vId === currentVoidId ? channels.find(c=>c.id===cId)?.type : undefined);
+                        const hideComposer = ctype === 'kanban' || ctype === 'form' || ctype === 'habit' || !!kanbanByChan[fqid];
+                        if (ctype === 'gallery') {
+                          // Photo frame view for gallery favorites: show latest image only
+                          let frame: any = null;
+                          for (let i = items.length - 1; i >= 0; i--) {
+                            const atts = items[i].attachments || [];
+                            const img = atts.find((a:any)=>{ const t=String(a?.contentType||'').toLowerCase(); const u=String(a?.url||'').toLowerCase(); return t.startsWith('image/') || /\.(png|jpe?g|webp)(\?.*)?$/.test(u); });
+                            if (img) { frame = { url: img.url, name: img.name }; break; }
+                          }
+                          return (
+                            <button key={fid} className="relative rounded-xl border border-neutral-800 bg-neutral-950 overflow-hidden group"
+                                    onClick={()=>{ switchVoid(vId); const shortId = cId.includes(':') ? cId.split(':')[1] : cId; switchChannel(shortId); }}
+                                    title={`${vName} / #${cName}`}>
+                              <div className="relative w-full pt-[66%]">
+                                {frame ? (
+                                  <img src={frame.url} alt={frame.name||'image'} className="absolute inset-0 w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.02]" />
+                                ) : (
+                                  <div className="absolute inset-0 flex items-center justify-center text-neutral-500">No images yet</div>
+                                )}
+                              </div>
+                            </button>
+                          );
+                        }
+                        return (
+                          <div key={fid} className="relative rounded-xl border border-neutral-800 bg-neutral-900/70 p-3">
+                            <div className="flex items-center justify-between mb-2">

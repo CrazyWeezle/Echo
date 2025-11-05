@@ -134,7 +134,7 @@ export default function GifPicker({ open, onClose, onPick }: { open: boolean; on
           ) : (
             <div className="space-y-2">
               <div className="flex items-center gap-2">
-                <input className="flex-1 px-2 py-1 rounded bg-neutral-900 text-neutral-100 border border-neutral-800" placeholder="Search GIFs" value={q} onChange={e=>setQ(e.target.value)} onKeyDown={(e)=>{ if(e.key==='Enter') { setPage(0); runSearch(true); } }} />
+                <input className="flex-1 px-2 py-1 rounded bg-neutral-900 text-neutral-100 border border-neutral-800" placeholder="Search GIFs" value={q} onChange={e=>setQ(e.target.value)} onKeyDown={(e)=>{ if(e.key==='Enter' && !e.shiftKey) { setPage(0); runSearch(true); } }} />
                 <button className="px-3 py-1 rounded border border-neutral-700 text-neutral-200 hover:bg-neutral-800/60" onClick={()=>{ setPage(0); runSearch(true); }}>Search</button>
                 <button className="px-3 py-1 rounded border border-neutral-700 text-neutral-200 hover:bg-neutral-800/60" onClick={()=>{ setQ(''); setPage(0); runSearch(true); }}>Trending</button>
               </div>

@@ -164,7 +164,7 @@ export default function ProfileModal({ token, open, onClose, onSaved, onOpenSett
           </div>
           <div>
             <label className="block text-sm text-neutral-400 mb-1">Bio</label>
-            <textarea rows={4} className="w-full p-2.5 rounded-md bg-neutral-900 text-neutral-100 placeholder-neutral-500 border border-neutral-800 focus:outline-none focus:ring-2 focus:ring-emerald-600/60" value={bio} onChange={e => setBio(e.target.value)} />
+            <textarea rows={4} className="w-full p-2.5 rounded-md bg-neutral-900 text-neutral-100 placeholder-neutral-500 border border-neutral-800 focus:outline-none focus:ring-2 focus:ring-emerald-600/60" value={bio} onChange={e => setBio(e.target.value)} spellCheck={true} autoCorrect="on" autoCapitalize="sentences" />
           </div>
           <div>
             <label className="block text-sm text-neutral-400 mb-1">Status</label>

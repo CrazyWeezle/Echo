@@ -148,7 +148,7 @@ export default function UnifiedSettingsModal({
   useEffect(() => { if (!open || isDmSpace) return; (async()=>{ try{ const res=await api.getAuth(`/spaces/members?spaceId=${encodeURIComponent(spaceId)}`, token); setSpaceMembers(res.members||[]); }catch{} })(); }, [open, token, spaceId, isDmSpace]);
   async function removeMember(uid: string){ const ok = await askConfirm({ title:'Remove Member', message:'Remove this user from this space?', confirmText:'Remove' }); if(!ok) return; setBusy(true); setErr(''); try{ await api.deleteAuth('/spaces/members', { spaceId, userId: uid }, token); setSpaceMembers(prev=>prev.filter(x=>x.id!==uid)); } catch(e:any){ setErr(e?.message||'Failed to remove member'); } finally{ setBusy(false);} }
   const [newChan, setNewChan] = useState('');
-  const [newChanType, setNewChanType] = useState<'text'|'voice'|'announcement'|'kanban'|'form'|'habit'|'gallery'>('text');
+  const [newChanType, setNewChanType] = useState<'text'|'voice'|'announcement'|'kanban'|'form'|'habit'|'gallery'|'notes'>('text');
   async function addChannel(){ const nm=newChan.trim(); if(!nm) return; setBusy(true); setErr(''); try{ const res=await api.postAuth('/channels',{ spaceId, name:nm, type:newChanType }, token); setNewChan(''); setNewChanType('text'); onRefreshChannels(spaceId); onSwitchToChannel(res.id);} catch(e:any){ setErr(e?.message||'Failed to create channel'); } finally{ setBusy(false);} }
   async function removeChannel(cid:string){ const ok = await askConfirm({ title:'Delete Channel', message:'Delete this channel?', confirmText:'Delete' }); if(!ok) return; setBusy(true); setErr(''); try{ await api.postAuth('/channels/delete',{ spaceId, channelId: cid }, token); onRefreshChannels(spaceId);} catch(e:any){ setErr(e?.message||'Failed to delete'); } finally{ setBusy(false);} }
   // sleek input modal helper
@@ -307,7 +307,7 @@ export default function UnifiedSettingsModal({
               </div>
               <div>
                 <label className="block text-sm text-neutral-400 mb-1">Bio</label>
-                <textarea rows={4} className="w-full p-2.5 rounded-md bg-neutral-900 text-neutral-100 placeholder-neutral-500 border border-neutral-800 focus:outline-none focus:ring-2 focus:ring-emerald-600/60" value={bio} onChange={e=>setBio(e.target.value)} />
+                <textarea rows={4} className="w-full p-2.5 rounded-md bg-neutral-900 text-neutral-100 placeholder-neutral-500 border border-neutral-800 focus:outline-none focus:ring-2 focus:ring-emerald-600/60" value={bio} onChange={e=>setBio(e.target.value)} spellCheck={true} autoCorrect="on" autoCapitalize="sentences" />
               </div>
               <div>
                 <label className="block text-sm text-neutral-400 mb-1">Status</label>
@@ -505,15 +505,16 @@ export default function UnifiedSettingsModal({
             <div className="space-y-3 fade-in">
               <div className="flex gap-2 items-center">
                 <input className="flex-1 p-2.5 rounded-md bg-neutral-900 text-neutral-100 placeholder-neutral-500 border border-neutral-800 focus:outline-none focus:ring-2 focus:ring-emerald-600/60" placeholder="New channel name" value={newChan} onChange={e=>setNewChan(e.target.value)} />
-                <select className="p-2 rounded-md bg-neutral-900 text-neutral-100 border border-neutral-800" value={newChanType} onChange={(e)=>setNewChanType((e.target.value as any)||'text')}>
-                  <option value="text">Text</option>
-                  <option value="voice">Voice</option>
-                  <option value="announcement">Announcement</option>
-                  <option value="kanban">Kanban</option>
-                  <option value="form">Form</option>
-                  <option value="habit">Habit Tracker</option>
-                  <option value="gallery">Photo Gallery</option>
-                </select>
+                 <select className="p-2 rounded-md bg-neutral-900 text-neutral-100 border border-neutral-800" value={newChanType} onChange={(e)=>setNewChanType((e.target.value as any)||'text')}>
+                   <option value="text">Text</option>
+                   <option value="voice">Voice</option>
+                   <option value="announcement">Announcement</option>
+                   <option value="kanban">Kanban</option>
+                   <option value="form">Form</option>
+                   <option value="habit">Habit Tracker</option>
+                   <option value="gallery">Photo Gallery</option>
+                   <option value="notes">Notes</option>
+                 </select>
                 <button disabled={busy} className="px-3 py-2 rounded border border-neutral-700 text-neutral-200 hover:bg-neutral-800/60" onClick={addChannel}>Add</button>
               </div>
               <ul className="divide-y divide-neutral-800 border border-neutral-800 rounded">
@@ -624,7 +625,7 @@ export default function UnifiedSettingsModal({
           <div className="relative w-full max-w-sm rounded-lg border border-neutral-800 bg-neutral-900 p-4 shadow-xl">
             {inCfg.title && <div className="text-emerald-300 font-semibold mb-2">{inCfg.title}</div>}
             {inCfg.label && <div className="text-xs text-neutral-500 mb-1">{inCfg.label}</div>}
-            <input className="w-full p-2.5 rounded-md bg-neutral-950 text-neutral-100 placeholder-neutral-500 border border-neutral-800 focus:outline-none focus:ring-2 focus:ring-emerald-600/60" placeholder={inCfg.placeholder} defaultValue={inCfg.initialValue||''} onKeyDown={(e)=>{ if(e.key==='Enter'){ closeAsk((e.target as HTMLInputElement).value.trim()); } if(e.key==='Escape'){ closeAsk(null);} }} />
+            <input className="w-full p-2.5 rounded-md bg-neutral-950 text-neutral-100 placeholder-neutral-500 border border-neutral-800 focus:outline-none focus:ring-2 focus:ring-emerald-600/60" placeholder={inCfg.placeholder} defaultValue={inCfg.initialValue||''} onKeyDown={(e)=>{ if(e.key==='Enter' && !e.shiftKey){ closeAsk((e.target as HTMLInputElement).value.trim()); } if(e.key==='Escape'){ closeAsk(null);} }} />
             <div className="mt-3 flex justify-end gap-2">
               <button className="px-3 py-2 rounded border border-neutral-700 text-neutral-200 hover:bg-neutral-800/70" onClick={()=>closeAsk(null)}>Cancel</button>
               <button className="px-3 py-2 rounded border border-emerald-700 bg-emerald-800/70 text-emerald-50 hover:bg-emerald-700/70" onClick={()=>{ const el=(document.activeElement as HTMLInputElement); const v=(el && 'value' in el)? (el as any).value : ''; closeAsk(String(v||'').trim()); }}>Save</button>

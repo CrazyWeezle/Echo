@@ -28,7 +28,7 @@ export async function handleChannels(req, res, body, ctx) {
     const { rows: srows } = await pool.query('SELECT 1 FROM spaces WHERE id=$1', [sid]);
     if (srows.length === 0) return json(res, 404, { message: 'space not found' }), true;
     const base = id ? slugify(id) : slugify(nm);
-    const allowed = new Set(['text','voice','announcement','kanban','form','habit','gallery']);
+    const allowed = new Set(['text','voice','announcement','kanban','form','habit','gallery','notes']);
     let ctype = String(type || 'text').toLowerCase();
     if (!allowed.has(ctype)) ctype = 'text';
     const cid = `${sid}:${base}`;

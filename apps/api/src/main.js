@@ -391,12 +391,12 @@ io.on('connection', async (socket) => {
         if (imgs.length > 0) {
           const gid = String(linkedGalleryId);
           const galleryMsgId = randomUUID();
-          await pool.query('INSERT INTO messages(id, channel_id, author_id, content) VALUES ($1,$2,$3,$4)', [galleryMsgId, gid, userId, '']);
+          await pool.query('INSERT INTO messages(id, channel_id, author_id, content, is_spoiler) VALUES ($1,$2,$3,$4,$5)', [galleryMsgId, gid, userId, '', !!spoiler]);
           for (const a of imgs) {
             await pool.query('INSERT INTO message_attachments(id, message_id, url, content_type, name, size_bytes) VALUES ($1,$2,$3,$4,$5,$6)', [randomUUID(), galleryMsgId, a.url, a.contentType || 'image/jpeg', a.name || 'image', a.size || 0]);
           }
           const galAtts = await pool.query('SELECT url, content_type as "contentType", name, size_bytes as size FROM message_attachments WHERE message_id=$1', [galleryMsgId]);
-          const galleryMessage = { id: galleryMsgId, content: '', createdAt: new Date().toISOString(), authorId: userId, authorName: socket.data.name, authorColor: socket.data.nameColor || null, reactions: {}, attachments: galAtts.rows, replyTo: null };
+          const galleryMessage = { id: galleryMsgId, content: '', spoiler: !!spoiler, createdAt: new Date().toISOString(), authorId: userId, authorName: socket.data.name, authorColor: socket.data.nameColor || null, reactions: {}, attachments: galAtts.rows, replyTo: null };
           io.to(gid).emit('message:new', { voidId: sid, spaceId: sid, channelId: gid, message: galleryMessage });
         }
       }
