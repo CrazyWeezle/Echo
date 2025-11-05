@@ -71,7 +71,7 @@ export default function ProfileModal({ token, open, onClose, onSaved, onOpenSett
       <div className="relative w-[calc(100%-1rem)] sm:w-full max-w-md max-h-[88vh] overflow-auto rounded-xl border border-neutral-800 bg-neutral-900 p-4 shadow-xl">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-lg font-semibold text-emerald-300">Your Profile</h2>
-          <button className="text-neutral-400 hover:text-neutral-200" onClick={onClose}>✕</button>
+          <button className="text-neutral-400 hover:text-neutral-200" onClick={onClose}></button>
         </div>
         {err && <div className="mb-2 text-sm text-red-400">{err}</div>}
         <div className="flex items-center gap-3 mb-4">
@@ -187,9 +187,10 @@ export default function ProfileModal({ token, open, onClose, onSaved, onOpenSett
         </div>
         <div className="mt-4 flex justify-end gap-2">
           <button className="px-3 py-2 rounded border border-neutral-700 text-neutral-200 hover:bg-neutral-800/70" onClick={onClose} disabled={loading}>Cancel</button>
-          <button className="px-3 py-2 rounded border border-emerald-700 bg-emerald-800/70 text-emerald-50 hover:bg-emerald-700/70" onClick={save} disabled={loading}>{loading ? 'Saving…' : 'Save'}</button>
+          <button className="px-3 py-2 rounded border border-emerald-700 bg-emerald-800/70 text-emerald-50 hover:bg-emerald-700/70" onClick={save} disabled={loading}>{loading ? 'Saving...' : 'Save'}</button>
         </div>
       </div>
     </div>
   );
 }
+

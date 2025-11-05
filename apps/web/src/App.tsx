@@ -121,6 +121,11 @@ function ChatApp({ token, user }: { token: string; user: any }) {
   const [roomUserIds, setRoomUserIds] = useState<string[]>([]);
   const [spaceUserIds, setSpaceUserIds] = useState<string[]>([]);
   const [globalUserIds, setGlobalUserIds] = useState<string[]>([]);
+  // Habit UI preferences (range per channel)
+  const [habitRangeByChan, setHabitRangeByChan] = useState<Record<string, number>>(() => {
+    try { const raw = localStorage.getItem('habitRangeByChan'); return raw ? JSON.parse(raw) : {}; } catch { return {}; }
+  });
+  useEffect(() => { try { localStorage.setItem('habitRangeByChan', JSON.stringify(habitRangeByChan)); } catch {} }, [habitRangeByChan]);
   const [roomMobileIds, setRoomMobileIds] = useState<string[]>([]);
   const [spaceMobileIds, setSpaceMobileIds] = useState<string[]>([]);
   const [globalMobileIds, setGlobalMobileIds] = useState<string[]>([]);
@@ -134,6 +139,35 @@ function ChatApp({ token, user }: { token: string; user: any }) {
   useEffect(() => { try { localStorage.setItem('notifiedChannels', JSON.stringify(notified)); } catch {} }, [notified]);
   const notifiedRef = useRef<Record<string, boolean>>({});
   useEffect(() => { notifiedRef.current = notified; }, [notified]);
+  // Reaction hover details cache: messageId -> emoji -> items
+  const [reactionInfoByMsg, setReactionInfoByMsg] = useState<Record<string, Record<string, { users: { userId: string; name: string; createdAt?: string }[] }>>>({});
+  const [hoverReaction, setHoverReaction] = useState<{ messageId: string; emoji: string } | null>(null);
+
+  async function loadReactionsFor(messageId: string) {
+    if (reactionInfoByMsg[messageId]) return;
+    try {
+      const tok = localStorage.getItem('token') || '';
+      const res = await api.getAuth(`/messages/reactions?messageId=${encodeURIComponent(messageId)}`, tok);
+      const map: Record<string, { users: { userId: string; name: string; createdAt?: string }[] }> = {};
+      for (const [emoji, list] of Object.entries(res?.reactions || {})) {
+        map[emoji] = { users: (list as any[]).map(it => ({ userId: String((it as any).userId || ''), name: String((it as any).name || 'User'), createdAt: (it as any).createdAt })) };
+      }
+      setReactionInfoByMsg(prev => ({ ...prev, [messageId]: map }));
+    } catch {}
+  }
+
+  function timeAgo(ts?: string) {
+    if (!ts) return '';
+    try {
+      const d = new Date(ts);
+      const s = Math.floor((Date.now() - d.getTime()) / 1000);
+      if (s < 60) return `${s}s ago`;
+      const m = Math.floor(s / 60); if (m < 60) return `${m}m ago`;
+      const h = Math.floor(m / 60); if (h < 24) return `${h}h ago`;
+      const dd = Math.floor(h / 24); if (dd < 7) return `${dd}d ago`;
+      return d.toLocaleString();
+    } catch { return ''; }
+  }
 
   // sheets (mobile)
   const [voidSheetOpen, setVoidSheetOpen] = useState(false);
@@ -1369,12 +1403,12 @@ function ChatApp({ token, user }: { token: string; user: any }) {
 
   // Auto-scroll behavior per channel type
   // - text-like channels: scroll to bottom (newest)
-  // - kanban: scroll to top (boards start at top)
+  // - kanban/gallery: scroll to top (boards and galleries start at top)
   useEffect(() => {
     const el = listRef.current;
     if (!el) return;
     const meta = channels.find(c => c.id === currentChannelId);
-    if (meta && meta.type === 'kanban') {
+    if (meta && (meta.type === 'kanban' || meta.type === 'gallery')) {
       el.scrollTop = 0; // show top of board
     } else {
       el.scrollTop = el.scrollHeight; // show latest messages
@@ -2558,11 +2592,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                 const defs = st?.defs || [];
                 const mine = st?.my || {};
                 // Day window selector: 7, 14, 30 (default 14)
-                const wRef: any = (window as any);
-                if (typeof wRef.dailyRange !== 'number') { wRef.dailyRange = 14; }
-                if (typeof wRef.setDailyRange !== 'function') {
-                  wRef.setDailyRange = (n: number) => { wRef.dailyRange = (n===7||n===14||n===30) ? n : 14; };
-                }
+                const range = Math.max(7, Math.min(30, habitRangeByChan[fid] || 14));
                 const today = new Date();
                 const days: string[] = [];
                 const fmt = (d: Date) => {
@@ -2571,16 +2601,17 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                   const dd = String(d.getDate()).padStart(2,'0');
                   return `${y}-${m}-${dd}`; // local date (YYYY-MM-DD)
                 };
-                for (let i=(wRef.dailyRange||14)-1; i>=0; i--) { const d=new Date(); d.setDate(today.getDate()-i); days.push(fmt(d)); }
+                for (let i=(range||14)-1; i>=0; i--) { const d=new Date(); d.setDate(today.getDate()-i); days.push(fmt(d)); }
                 return (
                   <div className="space-y-4">
                     <div className="flex items-center justify-between">
                       <div className="text-emerald-300 font-semibold">Daily Tracker</div>
                       <div className="flex items-center gap-2 text-xs text-neutral-400">
                         <span>Range</span>
-                        <select className="bg-neutral-900 border border-neutral-700 rounded px-2 py-1 text-neutral-200" onChange={(e)=>{ try { const v=parseInt((e.target as HTMLSelectElement).value,10); (window as any).setDailyRange?.(v); } catch{} }}>
+                        <select className="bg-neutral-900 border border-neutral-700 rounded px-2 py-1 text-neutral-200" value={range}
+                                onChange={(e)=>{ try { const v=parseInt((e.target as HTMLSelectElement).value,10); setHabitRangeByChan(prev=>({ ...prev, [fid]: (v===7||v===14||v===30)?v:14 })); } catch{} }}>
                           <option value="7">7 days</option>
-                          <option value="14" selected>14 days</option>
+                          <option value="14">14 days</option>
                           <option value="30">30 days</option>
                         </select>
                       </div>
@@ -2641,7 +2672,17 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                         <tbody>
                           {defs.filter(d=>!!mine[d.id]).map(d => (
                             <tr key={d.id} className="bg-neutral-900/50">
-                              <td className="px-2 py-1 text-neutral-200">{d.name}</td>
+                              <td className="px-2 py-1 text-neutral-200">
+                                {d.name}
+                                {(() => {
+                                  try {
+                                    const set = new Set((mine[d.id]?.days||[]));
+                                    let streak = 0; const cur = new Date();
+                                    for (;;) { const key = fmt(cur); if (set.has(key)) { streak++; cur.setDate(cur.getDate()-1); } else break; }
+                                    return streak > 0 ? <span className="ml-2 text-[11px] text-emerald-400">Streak: {streak}</span> : null;
+                                  } catch { return null; }
+                                })()}
+                              </td>
                               {days.map(dy => {
                                 const done = !!mine[d.id].days?.includes(dy);
                                 return (
@@ -2913,6 +2954,8 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                   if (isImg && !isGif) images.push({ url: a.url, name: a.name, mid: m.id, spoiler: !!(m as any).spoiler });
                 }
               }
+              // Newest-first at top of page
+              images.reverse();
               // Selection state for bulk delete
               const [selMode, setSelMode] = (function(){ try { return (window as any)._galSelMode ??= [false, (v:boolean)=>{ (window as any)._galSelMode[0]=v; }]; } catch { return [false, (_:boolean)=>{}] as any; } })();
               const [selected, setSelected] = (function(){ try { return (window as any)._galSelected ??= [{}, (up:any)=>{ (window as any)._galSelected[0]=typeof up==='function'? up((window as any)._galSelected[0]): up; }]; } catch { return [{} as Record<string, boolean>, (_:any)=>{}] as any; } })();
@@ -3295,9 +3338,34 @@ function ChatApp({ token, user }: { token: string; user: any }) {
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 <div className="flex flex-wrap gap-1">
                   {Object.entries(m.reactions || {}).map(([emoji, v]) => (
-                    <button key={emoji} onClick={() => toggleReaction(m, emoji)} className={`px-2 py-0.5 rounded-full border text-sm ${v.mine ? 'bg-emerald-800/50 border-emerald-700' : 'bg-neutral-800/60 border-neutral-700'}`}>
-                      <span className="mr-1">{emoji}</span>{v.count}
-                    </button>
+                    <div key={emoji} className="relative inline-block">
+                      <button
+                        onClick={() => toggleReaction(m, emoji)}
+                        onMouseEnter={() => { setHoverReaction({ messageId: m.id, emoji }); loadReactionsFor(m.id); }}
+                        onMouseLeave={() => { setHoverReaction(hr => (hr && hr.messageId === m.id && hr.emoji === emoji ? null : hr)); }}
+                        className={`px-2 py-0.5 rounded-full border text-sm ${v.mine ? 'bg-emerald-800/50 border-emerald-700' : 'bg-neutral-800/60 border-neutral-700'}`}
+                      >
+                        <span className="mr-1">{emoji}</span>{v.count}
+                      </button>
+                      {hoverReaction && hoverReaction.messageId === m.id && hoverReaction.emoji === emoji && (
+                        <div className="fixed z-[10000] pointer-events-none mt-0 w-44 max-w-[11rem] rounded-md border border-neutral-700 bg-neutral-900 text-neutral-200 text-xs shadow-xl p-2">
+                          {(() => {
+                            const info = reactionInfoByMsg[m.id]?.[emoji]?.users || [];
+                            if (info.length === 0) return <div className="text-neutral-500">No details</div>;
+                            return (
+                              <div className="space-y-1 max-h-60 overflow-auto">
+                                {info.map((it, i) => (
+                                  <div key={i} className="flex items-center justify-between gap-2">
+                                    <span className="truncate max-w-[12ch]">{it.name}</span>
+                                    <span className="text-neutral-400">{timeAgo(it.createdAt)}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            );
+                          })()}
+                        </div>
+                      )}
+                    </div>
                   ))}
                 </div>
                 {/* Actions removed: reply/react/delete toolbar and buttons for a cleaner UI */}
@@ -4000,6 +4068,9 @@ function ChatApp({ token, user }: { token: string; user: any }) {
     </div>
   );
 }
+
+
+
 
 
 

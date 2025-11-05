@@ -114,7 +114,12 @@ export default function GifPicker({ open, onClose, onPick }: { open: boolean; on
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="absolute inset-0 bg-black/50" onClick={onClose} />
       <div className="relative w-full max-w-3xl rounded-xl border border-neutral-800 bg-neutral-900 p-2 shadow-xl">
-        <button aria-label="Close" className="absolute top-1 right-1 text-neutral-400 hover:text-neutral-200" onClick={onClose}>✕</button>
+        <button aria-label="Close" className="absolute top-1 right-1 text-neutral-400 hover:text-neutral-200" onClick={onClose}>
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" className="h-4 w-4">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
         <div className="mb-2 flex items-center gap-3">
           <div className="flex items-center gap-1 rounded border border-neutral-800">
             <button className={`px-3 py-1 ${tab==='gifs'?'bg-neutral-800 text-emerald-300':'text-neutral-300 hover:bg-neutral-800/60'}`} onClick={()=>setTab('gifs')}>GIFs</button>
@@ -144,7 +149,7 @@ export default function GifPicker({ open, onClose, onPick }: { open: boolean; on
                     <img src={g.preview || g.url} alt="gif" className="w-full h-28 object-cover" />
                   </button>
                 ))}
-                {loading && <div className="col-span-full text-center text-neutral-400 py-4">Loading…</div>}
+                {loading && <div className="col-span-full text-center text-neutral-400 py-4">Loading...</div>}
                 {!loading && results.length===0 && <div className="col-span-full text-center text-neutral-400 py-4">No results</div>}
               </div>
               <div className="flex justify-center">

@@ -29,7 +29,7 @@ export async function handleFriends(req, res, body, ctx) {
     if (a.startsWith('Bearer ')) { try { const p = jwt.verify(a.slice(7), JWT_SECRET); userId = p.sub; } catch {} }
     if (!userId) return json(res, 401, { message: 'Unauthorized' }), true;
     const { rows } = await pool.query(
-      `SELECT u.id, u.username, u.name, u.avatar_url as "avatarUrl", COALESCE(u.status,'') as status, u.name_color as "nameColor"
+      `SELECT u.id, u.username, u.name, u.avatar_url as "avatarUrl", COALESCE(u.status,'') as status, u.name_color as "nameColor", u.last_seen as "lastSeen"
        FROM friendships f
        JOIN users u ON u.id = CASE WHEN f.user_id_a=$1 THEN f.user_id_b ELSE f.user_id_a END
        WHERE f.user_id_a=$1 OR f.user_id_b=$1

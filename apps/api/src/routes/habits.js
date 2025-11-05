@@ -128,7 +128,7 @@ export async function handleHabits(req, res, body, ctx) {
     const a = req.headers['authorization'] || '';
     if (a.startsWith('Bearer ')) { try { const p = jwt.verify(a.slice(7), JWT_SECRET); userId = p.sub; } catch {} }
     if (!userId) return json(res, 401, { message: 'Unauthorized' }), true;
-    const { trackerId, defId } = body || {};
+    const { trackerId, defId, day, done } = body || {};
     let tid = String(trackerId || '').trim();
     if (!tid) {
       // If trackerId not provided, accept defId and resolve/create a tracker for this user
@@ -141,9 +141,29 @@ export async function handleHabits(req, res, body, ctx) {
         tid = q.rows[0]?.id || '';
       }
       if (!tid) return json(res, 400, { message: 'tracker not found' }), true;
+    } else {
+      // Enforce ownership of trackerId
+      const { rows } = await pool.query('SELECT user_id FROM habit_trackers WHERE id=$1', [tid]);
+      if (rows.length === 0) return json(res, 404, { message: 'tracker not found' }), true;
+      if (String(rows[0].user_id) !== String(userId)) return json(res, 403, { message: 'Forbidden' }), true;
     }
+    // Normalize and validate day (YYYY-MM-DD, UTC)
+    let dayStr = String(day || '').trim();
+    if (!dayStr) {
+      const d = new Date();
+      const y = d.getUTCFullYear(); const m = String(d.getUTCMonth()+1).padStart(2,'0'); const dd = String(d.getUTCDate()).padStart(2,'0');
+      dayStr = `${y}-${m}-${dd}`;
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dayStr)) return json(res, 400, { message: 'invalid day' }), true;
+    // Basic range guard (+/- 1 year)
+    try {
+      const dt = new Date(dayStr + 'T00:00:00Z');
+      const now = new Date();
+      const diffDays = Math.abs((dt.getTime() - now.getTime()) / 86400000);
+      if (diffDays > 370) return json(res, 400, { message: 'day out of range' }), true;
+    } catch {}
     if (typeof done === 'boolean') {
-      await pool.query('INSERT INTO habit_entries(id, tracker_id, day, done) VALUES ($1, $2, $3, $4) ON CONFLICT (tracker_id, day) DO UPDATE SET done=EXCLUDED.done', [randomUUID(), tid, day, !!done]);
+      await pool.query('INSERT INTO habit_entries(id, tracker_id, day, done) VALUES ($1, $2, $3, $4) ON CONFLICT (tracker_id, day) DO UPDATE SET done=EXCLUDED.done', [randomUUID(), tid, dayStr, !!done]);
     }
     try {
       const { rows } = await pool.query('SELECT d.channel_id FROM habit_trackers t JOIN habit_defs d ON d.id=t.habit_id WHERE t.id=$1', [tid]);

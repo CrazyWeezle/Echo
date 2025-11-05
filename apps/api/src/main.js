@@ -19,6 +19,7 @@ import { handleFiles } from './routes/files.js';
 import { handleKanban } from './routes/kanban.js';
 import { handleForms } from './routes/forms.js';
 import { handleHabits } from './routes/habits.js';
+import { handleMessages } from './routes/messages.js';
 import { handlePush, sendWebPushToUsers } from './routes/push.js';
 
 import { listSpaces, listChannels, getBacklog } from './services/chat.js';
@@ -91,6 +92,7 @@ const server = http.createServer(async (req, res) => {
     if (req.url.startsWith('/api/kanban')) { const handled = await handleKanban(req, res, body, { io }); if (handled) return; }
     if (req.url.startsWith('/api/forms')) { const handled = await handleForms(req, res, body, { io }); if (handled) return; }
     if (req.url.startsWith('/api/habits')) { const handled = await handleHabits(req, res, body, { io }); if (handled) return; }
+    if (req.url.startsWith('/api/messages')) { const handled = await handleMessages(req, res, body, { io }); if (handled) return; }
     if (req.url.startsWith('/api/push')) { const handled = await handlePush(req, res, body, { userId: userIdFromAuth(req) }); if (handled) return; }
 
     // Health check for container/platform readiness
@@ -541,6 +543,7 @@ io.on('connection', async (socket) => {
     presenceLeave(room(), userId); emitPresence(room());
     if (curVoid) { presenceLeave(spaceRoom(), userId); emitSpacePresence(spaceRoom(), curVoid); }
     presenceLeave('global', userId); emitGlobalPresence();
+    try { pool.query('UPDATE users SET last_seen = now() WHERE id=$1', [userId]); } catch {}
     // Clean up voice room membership
     try {
       if (curVoiceRid) {
@@ -557,3 +560,5 @@ io.on('connection', async (socket) => {
 server.listen(PORT, () => {
   console.log(`[api] listening on :${PORT}`);
 });
+  // Update last_seen on connect
+  try { await pool.query('UPDATE users SET last_seen = now() WHERE id=$1', [userId]); } catch {}

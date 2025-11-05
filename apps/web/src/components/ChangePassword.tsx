@@ -32,9 +32,10 @@ export default function ChangePassword({ token, onSuccess }: { token: string; on
       <input type="password" placeholder="New password" className="w-full p-2.5 rounded-md bg-neutral-900 text-neutral-100 border border-neutral-800 focus:outline-none focus:ring-2 focus:ring-emerald-600/60" value={newPw} onChange={e=>setNewPw(e.target.value)} />
       <input type="password" placeholder="Confirm new password" className="w-full p-2.5 rounded-md bg-neutral-900 text-neutral-100 border border-neutral-800 focus:outline-none focus:ring-2 focus:ring-emerald-600/60" value={confirmPw} onChange={e=>setConfirmPw(e.target.value)} />
       <div className="flex justify-end">
-        <button disabled={busy} className="px-3 py-2 rounded border border-emerald-700 bg-emerald-800/70 text-emerald-50 hover:bg-emerald-700/70" onClick={submit}>{busy?'Saving…':'Change password'}</button>
+        <button disabled={busy} className="px-3 py-2 rounded border border-emerald-700 bg-emerald-800/70 text-emerald-50 hover:bg-emerald-700/70" onClick={submit}>{busy?'Saving...':'Change password'}</button>
       </div>
     </div>
   );
 }
+
 

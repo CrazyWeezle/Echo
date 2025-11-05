@@ -49,6 +49,9 @@ export default function UnifiedSettingsModal({
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
   const [showChangePwd, setShowChangePwd] = useState(false);
+  // Privacy/Security toggles
+  const [showLastOnline, setShowLastOnline] = useState<boolean>(()=>{ try { return localStorage.getItem('showLastOnline') !== '0'; } catch { return true; } });
+  useEffect(()=>{ try { localStorage.setItem('showLastOnline', showLastOnline ? '1' : '0'); } catch {} }, [showLastOnline]);
 
   // Profile
   const [name, setName] = useState('');
@@ -191,8 +194,8 @@ export default function UnifiedSettingsModal({
     <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center">
       <div className="absolute inset-0 bg-black/50" onClick={onClose} />
       <div className="relative w-full md:w-[calc(100%-1rem)] md:max-w-3xl h-[85vh] md:h-auto rounded-t-2xl md:rounded-2xl bg-neutral-900/90 backdrop-blur-md ring-1 ring-emerald-900/40 shadow-2xl flex flex-col md:flex-row overflow-hidden">
-        <button aria-label="Close" title="Close" className="absolute top-2 right-2 text-neutral-400 hover:text-neutral-200 px-2 py-1" onClick={onClose}>✕</button>
-        <div className="hidden md:flex w-56 border-r border-neutral-800 p-3 flex-col min-h-0 overflow-auto bg-gradient-to-b from-neutral-900/60 to-neutral-900/30 gap-1">
+        <button aria-label="Close" title="Close" className="absolute top-2 right-2 text-neutral-400 hover:text-neutral-200 px-2 py-1" onClick={onClose}></button>
+        <div className="hidden md:flex border-r border-neutral-800 p-3 flex-col min-h-0 overflow-auto bg-gradient-to-b from-neutral-900/60 to-neutral-900/30 gap-1">
           <div className="text-xs uppercase tracking-wide text-neutral-400 px-1 pb-1">Settings</div>
           <button className={`w-full text-left px-3 py-2 rounded-md transition-colors ${tab==='profile'?'bg-emerald-900/30 text-emerald-200 ring-1 ring-emerald-800':'text-neutral-300 hover:bg-neutral-800/60'}`} onClick={()=>setTab('profile')}>Profile</button>
           <button className={`w-full text-left px-3 py-2 rounded-md transition-colors ${tab==='notifications'?'bg-emerald-900/30 text-emerald-200 ring-1 ring-emerald-800':'text-neutral-300 hover:bg-neutral-800/60'}`} onClick={()=>setTab('notifications')}>Notifications</button>
@@ -366,6 +369,13 @@ export default function UnifiedSettingsModal({
               <div className="text-emerald-300 font-semibold">Security</div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">
+                  <div className="text-neutral-300 font-medium">Privacy</div>
+                  <label className="flex items-center justify-between px-2 py-2 rounded border border-neutral-800 bg-neutral-900/50">
+                    <span className="text-neutral-200">Show "last online" timestamp</span>
+                    <input type="checkbox" checked={showLastOnline} onChange={(e)=>setShowLastOnline(e.target.checked)} />
+                  </label>
+                </div>
+                <div className="space-y-2">
                   <div className="text-neutral-300 font-medium">Change password</div>
                   {!showChangePwd && (
                     <button className="w-full text-left px-2 py-2 rounded border border-neutral-700 text-neutral-200 hover:bg-neutral-800/60" onClick={()=>setShowChangePwd(true)}>Open change password</button>
@@ -522,7 +532,7 @@ export default function UnifiedSettingsModal({
                   <li key={c.id} className="flex items-center justify-between px-3 py-2 gap-2">
                     <div className="truncate flex items-center gap-2">
                       <span className="opacity-70 text-sm">
-                        {c.type==='voice' ? '🔊' : c.type==='announcement' ? '📢' : c.type==='kanban' ? '🗂️' : c.type==='form' ? '📝' : '#'}
+                        {c.type==='voice' ? '🔊' : c.type==='announcement' ? '📢' : c.type==='kanban' ? '�-�️' : c.type==='form' ? '📝' : '#'}
                       </span>
                       <span> {c.name}</span>
                     </div>
@@ -703,5 +713,10 @@ function ThemeSelector() {
     </div>
   );
 }
+
+
+
+
+
 
 

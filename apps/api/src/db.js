@@ -211,6 +211,8 @@ export async function initDb() {
   `);
   await pool.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ`);
   await pool.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS is_spoiler BOOLEAN DEFAULT FALSE`);
+  // Last seen for users
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen TIMESTAMPTZ`);
 
   // Reactions per message
   await pool.query(`

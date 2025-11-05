@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../lib/api';
 
-type Friend = { id: string; username?: string; name?: string; avatarUrl?: string | null; status?: string; nameColor?: string | null };
+type Friend = { id: string; username?: string; name?: string; avatarUrl?: string | null; status?: string; nameColor?: string | null; lastSeen?: string };
 type IncomingReq = { id: string; fromUserId: string; fromUsername?: string; fromName?: string; fromAvatarUrl?: string | null; fromStatus?: string; createdAt?: string };
 type OutgoingReq = { id: string; toUserId: string; toUsername?: string; toName?: string; toAvatarUrl?: string | null; toStatus?: string; createdAt?: string };
 
@@ -66,7 +66,7 @@ export default function FriendsModal({ token, open, onClose, onStartDm, onlineId
       <div className="relative w-full max-w-2xl rounded-xl border border-neutral-800 bg-neutral-900 p-4 shadow-xl">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-lg font-semibold text-emerald-300">Friends</h2>
-          <button className="text-neutral-400 hover:text-neutral-200" onClick={onClose}>✕</button>
+          <button className="text-neutral-400 hover:text-neutral-200" onClick={onClose}>?</button>
         </div>
         {err && <div className="mb-2 text-sm text-red-400">{err}</div>}
         <div className="flex items-center gap-2 mb-3">
@@ -76,7 +76,7 @@ export default function FriendsModal({ token, open, onClose, onStartDm, onlineId
         </div>
         {tab === 'friends' && (
           <div className="max-h-[60vh] overflow-auto divide-y divide-neutral-800">
-            {loading && friends.length===0 ? <div className="p-3 text-neutral-400">Loading…</div> : null}
+            {loading && friends.length===0 ? <div className="p-3 text-neutral-400">Loading?</div> : null}
             {friends.map(f => {
               const isOnline = !!(onlineIds && onlineIds.includes(f.id));
               const st = String(f.status || '').toLowerCase();
@@ -90,6 +90,8 @@ export default function FriendsModal({ token, open, onClose, onStartDm, onlineId
                 // treat invisible as offline
                 label = 'Offline'; dot = 'bg-neutral-600';
               }
+const showLastOnline = (()=>{ try { return localStorage.getItem('showLastOnline') !== '0'; } catch { return true; } })();
+              const _ago = (showLastOnline && !isOnline && (f as any).lastSeen) ? (function(ts){ try { const d=new Date(ts); const s=Math.floor((Date.now()-d.getTime())/1000); if(s<60) return s+'s ago'; const m=Math.floor(s/60); if(m<60) return m+'m ago'; const h=Math.floor(m/60); if(h<24) return h+'h ago'; const dd=Math.floor(h/24); if(dd<7) return dd+'d ago'; return d.toLocaleString(); } catch { return ''; } })(f.lastSeen) : '';
               return (
               <div key={f.id} className="flex items-center justify-between p-2">
                 <div className="flex items-center gap-3 min-w-0">
@@ -100,7 +102,7 @@ export default function FriendsModal({ token, open, onClose, onStartDm, onlineId
                     <div className="truncate" style={f.nameColor?{color:f.nameColor}:undefined}>{f.name || f.username}</div>
                     <div className="flex items-center gap-1 text-xs text-neutral-500">
                       <span className={`inline-block h-2 w-2 rounded-full ${dot}`}></span>
-                      <span>{label}</span>
+                      <span>{label}{!isOnline && _ago ? ` � last online ${_ago}` : ""}</span>
                     </div>
                   </div>
                 </div>
@@ -153,13 +155,21 @@ export default function FriendsModal({ token, open, onClose, onStartDm, onlineId
               <label className="block text-sm text-neutral-400 mb-1">Add by username</label>
               <div className="flex items-center gap-2">
                 <input className="flex-1 p-2.5 rounded-md bg-neutral-900 text-neutral-100 placeholder-neutral-500 border border-neutral-800 focus:outline-none focus:ring-2 focus:ring-emerald-600/60" placeholder="username" value={newName} onChange={e=>setNewName(e.target.value)} />
-                <button className="px-3 py-2 rounded border border-emerald-700 bg-emerald-800/70 text-emerald-50 hover:bg-emerald-700/70" disabled={loading} onClick={addFriend}>{loading?'Sending…':'Send'}</button>
+                <button className="px-3 py-2 rounded border border-emerald-700 bg-emerald-800/70 text-emerald-50 hover:bg-emerald-700/70" disabled={loading} onClick={addFriend}>{loading?'Sending?':'Send'}</button>
               </div>
             </div>
-            <p className="text-xs text-neutral-500">They’ll see your request and can accept or decline.</p>
+            <p className="text-xs text-neutral-500">They?ll see your request and can accept or decline.</p>
           </div>
         )}
       </div>
     </div>
   );
 }
+
+
+
+
+
+
+
+

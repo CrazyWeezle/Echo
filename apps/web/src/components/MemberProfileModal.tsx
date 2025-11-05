@@ -49,11 +49,11 @@ export default function MemberProfileModal({ token, userId, open, onClose, onSta
       <div className="relative w-full max-w-md rounded-xl border border-neutral-800 bg-neutral-900 p-4 shadow-xl">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-lg font-semibold text-emerald-300">Profile</h2>
-          <button className="text-neutral-400 hover:text-neutral-200" onClick={onClose}>✕</button>
+          <button className="text-neutral-400 hover:text-neutral-200" onClick={onClose}></button>
         </div>
         {err && <div className="mb-2 text-sm text-red-400">{err}</div>}
         {(!u || loading) ? (
-          <div className="p-3 text-neutral-400">Loading…</div>
+          <div className="p-3 text-neutral-400">Loading...</div>
         ) : (
           <div className="space-y-3">
             <div className="flex items-center gap-3">
@@ -90,3 +90,4 @@ export default function MemberProfileModal({ token, userId, open, onClose, onSta
     </div>
   );
 }
+
