@@ -181,7 +181,12 @@ export default function SpaceSettingsModal({
       <div className="w-full max-w-2xl rounded-xl border border-neutral-800 bg-neutral-900 p-0 shadow-xl">
         <div className="flex items-center justify-between px-4 h-12 border-b border-neutral-800">
           <div className="font-semibold text-emerald-300">Space Settings</div>
-          <button className="text-neutral-400 hover:text-neutral-200" onClick={onClose}>✕</button>
+          <button className="text-neutral-400 hover:text-neutral-200" onClick={onClose} aria-label="Close" title="Close">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
         </div>
 
         <div className="flex">
@@ -285,4 +290,5 @@ export default function SpaceSettingsModal({
     </div>
   );
 }
+
 

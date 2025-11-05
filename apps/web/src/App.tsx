@@ -2023,32 +2023,20 @@ function ChatApp({ token, user }: { token: string; user: any }) {
             const online = globalUserIds.includes(m.id) || spaceUserIds.includes(m.id) || roomUserIds.includes(m.id);
             const onMobile = globalMobileIds.includes(m.id) || spaceMobileIds.includes(m.id) || roomMobileIds.includes(m.id);
             const st = String(m.status || '').toLowerCase();
-            let color = 'bg-neutral-600';
             let label = 'Offline';
-            if (st === 'dnd') { color = 'bg-red-500'; label = 'Do Not Disturb'; }
-            else if (st === 'idle') { color = 'bg-amber-500'; label = 'Idle'; }
-            else if (st === 'invisible') { color = 'bg-neutral-600'; label = 'Offline'; }
-            else if (online) { color = 'bg-emerald-500'; label = 'Online'; }
+            if (st === 'dnd') { label = 'Do Not Disturb'; }
+            else if (st === 'idle') { label = 'Idle'; }
+            else if (st === 'invisible') { label = 'Offline'; }
+            else if (online) { label = 'Online'; }
             return (
               <div key={m.id} className="w-full flex items-center gap-2 px-2 py-1 rounded hover:bg-neutral-800/40">
                 <button className="flex-1 text-left flex items-center gap-2" onClick={()=>{ if (m.id !== me.userId) setViewUserId(m.id); }}>
                 <div className="relative h-8 w-8">
-                  {friendRingEnabled && friendIds[m.id] && (
-                    <span className="pointer-events-none absolute -inset-0.5 rounded-full" style={{ border: `2px solid ${friendRingColor}`, boxShadow: `0 0 10px ${friendRingColor}` }}></span>
-                  )}
+                  {(() => { const ring = (st === 'dnd') ? '#ef4444' : (st === 'idle') ? '#f59e0b' : ((online && onMobile) ? '#14b8a6' : (online ? '#10b981' : null)); return ring ? (<span className="pointer-events-none absolute -inset-0.5 rounded-full" style={{ border: `2px solid ${ring}`, boxShadow: `0 0 10px ${ring}` }}></span>) : null; })()}
                   <div className="h-8 w-8 rounded-full overflow-hidden bg-neutral-800 border border-neutral-700 flex items-center justify-center">
                     {m.avatarUrl ? <img src={m.avatarUrl} alt="avatar" className="h-full w-full object-cover"/> : <span className="text-[10px] text-neutral-400">{(m.name?.[0]||'?').toUpperCase()}</span>}
                   </div>
-                  {online && onMobile ? (
-                    <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full bg-neutral-900 border border-neutral-900 flex items-center justify-center" title="Online on mobile" aria-label="Online on mobile">
-                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-2 w-2 text-emerald-500">
-                        <rect x="8" y="3" width="8" height="18" rx="2" ry="2"/>
-                        <line x1="12" y1="19" x2="12" y2="19"/>
-                      </svg>
-                    </span>
-                  ) : (
-                    <span className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border border-neutral-900 ${color}`}></span>
-                  )}
+                  {/* Status dot replaced by ring */}
                 </div>
                 <div className="min-w-0">
                   <div className="truncate text-neutral-200 text-sm" style={m.nameColor ? { color: String(m.nameColor) } : undefined}>{m.name || m.username}</div>
@@ -4027,31 +4015,19 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                 const online = globalUserIds.includes(m.id) || spaceUserIds.includes(m.id) || roomUserIds.includes(m.id);
                 const onMobile = globalMobileIds.includes(m.id) || spaceMobileIds.includes(m.id) || roomMobileIds.includes(m.id);
                 const st = String(m.status || '').toLowerCase();
-                let color = 'bg-neutral-600';
                 let label = 'Offline';
-                if (st === 'dnd') { color = 'bg-red-500'; label = 'Do Not Disturb'; }
-                else if (st === 'idle') { color = 'bg-amber-500'; label = 'Idle'; }
-                else if (st === 'invisible') { color = 'bg-neutral-600'; label = 'Offline'; }
-                else if (online) { color = 'bg-emerald-500'; label = 'Online'; }
+                if (st === 'dnd') { label = 'Do Not Disturb'; }
+                else if (st === 'idle') { label = 'Idle'; }
+                else if (st === 'invisible') { label = 'Offline'; }
+                else if (online) { label = 'Online'; }
                 return (
                   <div key={m.id} className="flex items-center gap-2 px-2 py-1 rounded hover:bg-neutral-800/40">
                     <div className="relative h-8 w-8">
-                      {friendRingEnabled && friendIds[m.id] && (
-                        <span className="pointer-events-none absolute -inset-0.5 rounded-full" style={{ border: `2px solid ${friendRingColor}`, boxShadow: `0 0 10px ${friendRingColor}` }}></span>
-                      )}
+                      {(() => { const ring = (st === 'dnd') ? '#ef4444' : (st === 'idle') ? '#f59e0b' : ((online && onMobile) ? '#14b8a6' : (online ? '#10b981' : null)); return ring ? (<span className="pointer-events-none absolute -inset-0.5 rounded-full" style={{ border: `2px solid ${ring}`, boxShadow: `0 0 10px ${ring}` }}></span>) : null; })()}
                       <div className="h-8 w-8 rounded-full overflow-hidden bg-neutral-800 border border-neutral-700 flex items-center justify-center">
                         {m.avatarUrl ? <img src={m.avatarUrl} alt="avatar" className="h-full w-full object-cover"/> : <span className="text-[10px] text-neutral-400">{(m.name?.[0]||'?').toUpperCase()}</span>}
                       </div>
-                      {online && onMobile ? (
-                        <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full bg-neutral-900 border border-neutral-900 flex items-center justify-center" title="Online on mobile" aria-label="Online on mobile">
-                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-2 w-2 text-emerald-500">
-                            <rect x="8" y="3" width="8" height="18" rx="2" ry="2"/>
-                            <line x1="12" y1="19" x2="12" y2="19"/>
-                          </svg>
-                        </span>
-                      ) : (
-                        <span className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border border-neutral-900 ${color}`}></span>
-                      )}
+                      {/* Status dot replaced by ring */}
                     </div>
                     <div className="min-w-0">
                       <div className="truncate text-neutral-200 text-sm">{m.name || m.username}</div>

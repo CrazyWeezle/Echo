@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+﻿import React, { useEffect, useRef, useState } from 'react';
 import { api, signUpload } from '../lib/api';
 import { askConfirm, toast } from '../lib/ui';
 import ChangePassword from './ChangePassword';
@@ -193,8 +193,13 @@ export default function UnifiedSettingsModal({
   return (
     <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center">
       <div className="absolute inset-0 bg-black/50" onClick={onClose} />
-      <div className="relative w-full md:w-[calc(100%-1rem)] md:max-w-3xl h-[85vh] md:h-auto rounded-t-2xl md:rounded-2xl bg-neutral-900/90 backdrop-blur-md ring-1 ring-emerald-900/40 shadow-2xl flex flex-col md:flex-row overflow-hidden">
-        <button aria-label="Close" title="Close" className="absolute top-2 right-2 text-neutral-400 hover:text-neutral-200 px-2 py-1" onClick={onClose}></button>
+      <div className="relative w-[calc(100%-2rem)] md:w-[calc(100%-3rem)] max-w-2xl h-[70vh] md:h-[68vh] rounded-2xl bg-neutral-900/90 backdrop-blur-md ring-1 ring-emerald-900/40 shadow-2xl grid grid-rows-[auto,1fr] md:grid-rows-1 md:grid-cols-[220px,1fr] overflow-hidden">
+        <button aria-label="Close" title="Close" className="absolute top-2 right-2 text-neutral-400 hover:text-neutral-200 px-2 py-1" onClick={onClose}>
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
         <div className="hidden md:flex border-r border-neutral-800 p-3 flex-col min-h-0 overflow-auto bg-gradient-to-b from-neutral-900/60 to-neutral-900/30 gap-1">
           <div className="text-xs uppercase tracking-wide text-neutral-400 px-1 pb-1">Settings</div>
           <button className={`w-full text-left px-3 py-2 rounded-md transition-colors ${tab==='profile'?'bg-emerald-900/30 text-emerald-200 ring-1 ring-emerald-800':'text-neutral-300 hover:bg-neutral-800/60'}`} onClick={()=>setTab('profile')}>Profile</button>
@@ -262,7 +267,7 @@ export default function UnifiedSettingsModal({
                   </div>
                 </div>
                 <div className="mt-3">
-                  <button disabled={loading} className="px-3 py-2 rounded border border-emerald-700 bg-emerald-800/70 text-emerald-50 hover:bg-emerald-700/70" onClick={savePersonalization}>{loading?'Saving…':'Save personalization'}</button>
+                  <button disabled={loading} className="px-3 py-2 rounded border border-emerald-700 bg-emerald-800/70 text-emerald-50 hover:bg-emerald-700/70" onClick={savePersonalization}>{loading?'Saving...':'Save personalization'}</button>
                 </div>
               </div>
             </div>
@@ -322,7 +327,7 @@ export default function UnifiedSettingsModal({
                 </select>
               </div>
               <div className="flex items-center gap-2">
-                <button disabled={loading} className="px-3 py-2 rounded border border-emerald-700 bg-emerald-800/70 text-emerald-50 hover:bg-emerald-700/70" onClick={saveProfile}>{loading?'Saving…':'Save changes'}</button>
+                <button disabled={loading} className="px-3 py-2 rounded border border-emerald-700 bg-emerald-800/70 text-emerald-50 hover:bg-emerald-700/70" onClick={saveProfile}>{loading?'Saving...':'Save changes'}</button>
               </div>
             </div>
           )}
@@ -359,7 +364,7 @@ export default function UnifiedSettingsModal({
                 <button className="ml-2 px-2 py-1 rounded border border-neutral-700 text-neutral-200 hover:bg-neutral-800/60" onClick={async()=>{ try { await api.postAuth('/push/test', { title:'ECHO', body:'Test notification' }, token); toast('Test push sent','success'); } catch { toast('Test push failed','error'); } }}>Send test push</button>
               </div>
               <div className="flex items-center gap-2">
-                <button disabled={loading} className="px-3 py-2 rounded border border-emerald-700 bg-emerald-800/70 text-emerald-50 hover:bg-emerald-700/70" onClick={saveNotifications}>{loading?'Saving…':'Save'}</button>
+                <button disabled={loading} className="px-3 py-2 rounded border border-emerald-700 bg-emerald-800/70 text-emerald-50 hover:bg-emerald-700/70" onClick={saveNotifications}>{loading?'Saving...':'Save'}</button>
               </div>
             </div>
           )}
@@ -438,7 +443,7 @@ export default function UnifiedSettingsModal({
                 <input type="checkbox" defaultChecked={(()=>{ try { const ms = JSON.parse(localStorage.getItem('mutedSpaces')||'{}'); return !!ms[spaceId]; } catch { return false; } })()} onChange={(e)=>{ try { const ms = JSON.parse(localStorage.getItem('mutedSpaces')||'{}'); ms[spaceId] = !!e.target.checked; localStorage.setItem('mutedSpaces', JSON.stringify(ms)); (window as any).dispatchEvent(new CustomEvent('echo:mutedSpaces', { detail: ms })); } catch {} }} />
               </div>
               <div className="flex items-center gap-2">
-                <button disabled={busy} className="px-3 py-2 rounded border border-emerald-700 bg-emerald-800/70 text-emerald-50 hover:bg-emerald-700/70" onClick={saveSpaceGeneral}>{busy?'Saving…':'Save changes'}</button>
+                <button disabled={busy} className="px-3 py-2 rounded border border-emerald-700 bg-emerald-800/70 text-emerald-50 hover:bg-emerald-700/70" onClick={saveSpaceGeneral}>{busy?'Saving...':'Save changes'}</button>
                 <div className="ml-auto flex items-center gap-2">
                   <button disabled={busy} className="px-3 py-2 rounded border border-neutral-700 text-neutral-200 hover:bg-neutral-800/60" onClick={leaveSpace}>Leave space</button>
                   <button disabled={busy} className="px-3 py-2 rounded border border-red-800 text-red-300 hover:bg-red-900/30" onClick={deleteSpace}>Delete space</button>
@@ -502,7 +507,7 @@ export default function UnifiedSettingsModal({
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                <button disabled={busy} className="px-3 py-2 rounded border border-emerald-700 bg-emerald-800/70 text-emerald-50 hover:bg-emerald-700/70" onClick={saveSpaceGeneral}>{busy?'Saving…':'Save changes'}</button>
+                <button disabled={busy} className="px-3 py-2 rounded border border-emerald-700 bg-emerald-800/70 text-emerald-50 hover:bg-emerald-700/70" onClick={saveSpaceGeneral}>{busy?'Saving...':'Save changes'}</button>
                 <div className="ml-auto flex items-center gap-2">
                   <button disabled={busy} className="px-3 py-2 rounded border border-neutral-700 text-neutral-200 hover:bg-neutral-800/60" onClick={leaveSpace}>Leave DM</button>
                 </div>
@@ -532,7 +537,7 @@ export default function UnifiedSettingsModal({
                   <li key={c.id} className="flex items-center justify-between px-3 py-2 gap-2">
                     <div className="truncate flex items-center gap-2">
                       <span className="opacity-70 text-sm">
-                        {c.type==='voice' ? '🔊' : c.type==='announcement' ? '📢' : c.type==='kanban' ? '�-�️' : c.type==='form' ? '📝' : '#'}
+                        {c.type==='voice' ? '🔊' : c.type==='announcement' ? '📢' : c.type==='kanban' ? '�-�️' : c.type==='form' ? '📝' : '#'}
                       </span>
                       <span> {c.name}</span>
                     </div>
