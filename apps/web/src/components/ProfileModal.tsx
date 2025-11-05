@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api, signUpload } from '../lib/api';
+import CloseButton from './CloseButton';
 
 export default function ProfileModal({ token, open, onClose, onSaved, onOpenSettings }: { token: string; open: boolean; onClose: () => void; onSaved: (u: any) => void; onOpenSettings?: () => void }) {
   const [loading, setLoading] = useState(false);
@@ -71,7 +72,7 @@ export default function ProfileModal({ token, open, onClose, onSaved, onOpenSett
       <div className="relative w-[calc(100%-1rem)] sm:w-full max-w-md max-h-[88vh] overflow-auto rounded-xl border border-neutral-800 bg-neutral-900 p-4 shadow-xl">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-lg font-semibold text-emerald-300">Your Profile</h2>
-          <button className="text-neutral-400 hover:text-neutral-200" onClick={onClose}></button>
+          <CloseButton onClick={onClose} />
         </div>
         {err && <div className="mb-2 text-sm text-red-400">{err}</div>}
         <div className="flex items-center gap-3 mb-4">

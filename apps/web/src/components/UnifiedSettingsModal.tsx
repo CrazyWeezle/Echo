@@ -1,4 +1,5 @@
-﻿import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import CloseButton from './CloseButton';
 import { api, signUpload } from '../lib/api';
 import { askConfirm, toast } from '../lib/ui';
 import ChangePassword from './ChangePassword';
@@ -194,12 +195,7 @@ export default function UnifiedSettingsModal({
     <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center">
       <div className="absolute inset-0 bg-black/50" onClick={onClose} />
       <div className="relative w-[calc(100%-2rem)] md:w-[calc(100%-3rem)] max-w-2xl h-[70vh] md:h-[68vh] rounded-2xl bg-neutral-900/90 backdrop-blur-md ring-1 ring-emerald-900/40 shadow-2xl grid grid-rows-[auto,1fr] md:grid-rows-1 md:grid-cols-[220px,1fr] overflow-hidden">
-        <button aria-label="Close" title="Close" className="absolute top-2 right-2 text-neutral-400 hover:text-neutral-200 px-2 py-1" onClick={onClose}>
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
-            <line x1="18" y1="6" x2="6" y2="18" />
-            <line x1="6" y1="6" x2="18" y2="18" />
-          </svg>
-        </button>
+        <CloseButton onClick={onClose} className="absolute top-2 right-2 px-2 py-1" />
         <div className="hidden md:flex border-r border-neutral-800 p-3 flex-col min-h-0 overflow-auto bg-gradient-to-b from-neutral-900/60 to-neutral-900/30 gap-1">
           <div className="text-xs uppercase tracking-wide text-neutral-400 px-1 pb-1">Settings</div>
           <button className={`w-full text-left px-3 py-2 rounded-md transition-colors ${tab==='profile'?'bg-emerald-900/30 text-emerald-200 ring-1 ring-emerald-800':'text-neutral-300 hover:bg-neutral-800/60'}`} onClick={()=>setTab('profile')}>Profile</button>
@@ -430,7 +426,7 @@ export default function UnifiedSettingsModal({
                 <div>
                   <label className="block text-sm text-neutral-400 mb-1">Home channel</label>
                   <select value={sHome} onChange={(e)=>setSHome(e.target.value)} className="w-full p-2.5 rounded-md bg-neutral-900 text-neutral-100 border border-neutral-800 focus:outline-none focus:ring-2 focus:ring-emerald-600/60">
-                    <option value="">(none — remember last opened)</option>
+                    <option value="">(none ? remember last opened)</option>
                     {channels.map(c => (
                       <option key={c.id} value={c.id}>#{c.name || c.id}</option>
                     ))}
@@ -537,7 +533,7 @@ export default function UnifiedSettingsModal({
                   <li key={c.id} className="flex items-center justify-between px-3 py-2 gap-2">
                     <div className="truncate flex items-center gap-2">
                       <span className="opacity-70 text-sm">
-                        {c.type==='voice' ? '🔊' : c.type==='announcement' ? '📢' : c.type==='kanban' ? '�-�️' : c.type==='form' ? '📝' : '#'}
+                        {c.type==='voice' ? '??' : c.type==='announcement' ? '??' : c.type==='kanban' ? '?-??' : c.type==='form' ? '??' : '#'}
                       </span>
                       <span> {c.name}</span>
                     </div>
@@ -718,6 +714,8 @@ function ThemeSelector() {
     </div>
   );
 }
+
+
 
 
 

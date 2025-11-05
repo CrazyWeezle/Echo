@@ -3004,7 +3004,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                             <img src={im.url} alt={im.name||'photo'} className={`w-full h-full object-cover transition-transform duration-300 ${hidden ? 'blur-sm brightness-50' : 'group-hover:scale-[1.03]'}`} />
                           </a>
                         {hidden && (
-                          <button className="absolute inset-0 flex items-center justify-center bg-neutral-950/50 text-neutral-200 text-sm font-medium" onClick={()=> setRevealedSpoilers(prev => ({ ...prev, [im.mid]: true }))}>Spoiler � tap to reveal</button>
+                          <button className="absolute inset-0 flex items-center justify-center bg-neutral-950/50 text-neutral-200 text-sm font-medium" onClick={()=> setRevealedSpoilers(prev => ({ ...prev, [im.mid]: true }))}>Spoiler - tap to reveal</button>
                         )}
                         {!selMode && (
                           <button
@@ -3103,7 +3103,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                     <input
                       value={noteSearch}
                       onChange={e=>setNoteSearch(e.target.value)}
-                      placeholder="Search notes�"
+                      placeholder="Search notes"
                       className="px-3 py-1.5 rounded border border-neutral-700 bg-neutral-900 text-neutral-100"
                     />
                     <div className="flex items-center gap-1 overflow-x-auto">
@@ -3134,7 +3134,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                     ) : notes.map(n => (
                       <button key={n.id} onClick={()=>{ setNoteModalId(n.id); setNoteEditTitle(n.title); setNoteEditBody(n.body); }} className="text-left p-3 rounded-lg border border-neutral-800 bg-neutral-900/60 hover:bg-neutral-900/80 transition-colors shadow-sm">
                         <div className="font-semibold text-neutral-100 truncate mb-1" title={n.title}>{n.title}</div>
-                        <div className="text-sm text-neutral-400 line-clamp-3 whitespace-pre-wrap">{n.body || '�'}</div>
+                        <div className="text-sm text-neutral-400 line-clamp-3 whitespace-pre-wrap">{n.body || '...'}</div>
                         {n.tags.length>0 && (
                           <div className="mt-2 flex flex-wrap gap-1">
                             {n.tags.map(t => (<span key={t} className="px-1.5 py-0.5 rounded-full border border-neutral-700 text-[10px] text-neutral-300">#{t}</span>))}
@@ -3152,7 +3152,12 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                         <div className="relative w-[90vw] max-w-xl rounded-lg border border-neutral-800 bg-neutral-900 p-4 shadow-2xl">
                           <div className="flex items-center justify-between mb-3">
                             <div className="text-emerald-300 font-semibold">Edit Note</div>
-                            <button className="px-2 py-1 text-neutral-400 hover:text-neutral-200" onClick={()=> setNoteModalId(null)} aria-label="Close">?</button>
+                            <button className="px-2 py-1 text-neutral-400 hover:text-neutral-200" onClick={()=> setNoteModalId(null)} aria-label="Close" title="Close">
+                              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+                                <line x1="18" y1="6" x2="6" y2="18" />
+                                <line x1="6" y1="6" x2="18" y2="18" />
+                              </svg>
+                            </button>
                           </div>
                           <input className="w-full mb-2 px-3 py-2 rounded bg-neutral-950 border border-neutral-800 text-neutral-100" value={noteEditTitle} onChange={e=>setNoteEditTitle(e.target.value)} placeholder="Title" />
                           <textarea className="w-full h-40 px-3 py-2 rounded bg-neutral-950 border border-neutral-800 text-neutral-100" value={noteEditBody} onChange={e=>setNoteEditBody(e.target.value)} placeholder="Body (supports #tags)" spellCheck={true} autoCorrect="on" autoCapitalize="sentences" />
@@ -3284,7 +3289,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                     </div>
                     {hidden && (
                       <button className="absolute inset-0 flex items-center justify-center bg-neutral-950/70 text-neutral-200 text-sm font-medium" onClick={() => setRevealedSpoilers(prev => ({ ...prev, [m.id]: true }))}>
-                        Spoiler � tap to reveal
+                        Spoiler - tap to reveal
                       </button>
                     )}
                   </div>
@@ -3305,7 +3310,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                     if (hidden) {
                       return (
                         <button className="w-full text-left px-2 py-2 rounded border border-neutral-800 bg-neutral-950/70 text-neutral-300" onClick={() => setRevealedSpoilers(prev => ({ ...prev, [m.id]: true }))}>
-                          Spoiler � click to reveal
+                          Spoiler - click to reveal
                         </button>
                       );
                     }

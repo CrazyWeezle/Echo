@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../lib/api';
+import CloseButton from './CloseButton';
 
 export default function MemberProfileModal({ token, userId, open, onClose, onStartDm }: { token: string; userId: string; open: boolean; onClose: () => void; onStartDm: (userId: string) => void }) {
   const [loading, setLoading] = useState(false);
@@ -49,7 +50,7 @@ export default function MemberProfileModal({ token, userId, open, onClose, onSta
       <div className="relative w-full max-w-md rounded-xl border border-neutral-800 bg-neutral-900 p-4 shadow-xl">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-lg font-semibold text-emerald-300">Profile</h2>
-          <button className="text-neutral-400 hover:text-neutral-200" onClick={onClose}></button>
+          <CloseButton onClick={onClose} />
         </div>
         {err && <div className="mb-2 text-sm text-red-400">{err}</div>}
         {(!u || loading) ? (
