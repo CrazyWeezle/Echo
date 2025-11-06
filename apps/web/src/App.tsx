@@ -17,6 +17,7 @@ import UnifiedSettingsModal from "./components/UnifiedSettingsModal";
 import ToastHost from "./components/ToastHost";
 import ConfirmHost from "./components/ConfirmHost";
 import UserRow from "./components/people/UserRow";
+import MemberProfileCard from "./components/MemberProfileCard";
 import { askConfirm, toast } from "./lib/ui";
 
 type Msg = {
@@ -586,6 +587,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
     } catch {}
   }, [voids]);
   const [viewUserId, setViewUserId] = useState<string | null>(null);
+  const [viewUserCard, setViewUserCard] = useState<null | { id: string; x: number; y: number }>(null);
   const [profileOpen, setProfileOpen] = useState<boolean>(false);
   const [gifOpen, setGifOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
@@ -2081,7 +2083,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
               <UserRow
                 key={m.id}
                 data={{ id: m.id, name: m.name, username: m.username, avatarUrl: m.avatarUrl, nameColor: m.nameColor, status: (miniFromBio) || undefined, rawStatus: (m as any).status, online, onMobile, activityText }}
-                onClick={() => { if (m.id !== me.userId) setViewUserId(m.id); else setSettingsOpen(true); }}
+                onClick={(e: any) => { if (m.id !== me.userId) { const rect = (e.currentTarget as HTMLElement).getBoundingClientRect(); setViewUserCard({ id: m.id, x: rect.right + 8, y: rect.top + 8 }); } else setSettingsOpen(true); }}
               />
             );
           })}
@@ -3807,6 +3809,32 @@ function ChatApp({ token, user }: { token: string; user: any }) {
         }}
       />
 
+      {/* Compact profile card (click on user in People column) */}
+      {viewUserCard && (
+        <MemberProfileCard
+          token={localStorage.getItem('token') || ''}
+          userId={viewUserCard.id}
+          open={!!viewUserCard}
+          anchor={{ x: viewUserCard.x, y: viewUserCard.y }}
+          onClose={() => setViewUserCard(null)}
+          onOpenFull={() => { setViewUserId(viewUserCard.id); setViewUserCard(null); }}
+          onStartDm={async (uid) => {
+            try {
+              const tok = localStorage.getItem('token') || '';
+              const res = await api.postAuth('/dms/start', { userId: uid }, tok);
+              const sid = String(res.spaceId);
+              const cid = String(res.channelId);
+              socket.emit('void:list');
+              socket.emit('channel:list', { voidId: sid });
+              switchVoid(sid);
+              const shortId = cid.includes(':') ? cid.split(':')[1] : cid;
+              switchChannel(shortId);
+              setViewUserCard(null);
+            } catch (e: any) { toast(e?.message || 'Failed to start DM', 'error'); }
+          }}
+        />
+      )}
+
       <ProfileModal
         token={localStorage.getItem('token') || ''}
         open={profileOpen}
@@ -4123,7 +4151,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                   <UserRow
                     key={m.id}
                     data={{ id: m.id, name: m.name, username: m.username, avatarUrl: m.avatarUrl, nameColor: m.nameColor, status: (miniFromBio) || undefined, rawStatus: (m as any).status, online, onMobile, activityText }}
-                    onClick={() => { setUsersSheetOpen(false); if (m.id !== me.userId) setViewUserId(m.id); else setSettingsOpen(true); }}
+                    onClick={(e: any) => { setUsersSheetOpen(false); if (m.id !== me.userId) { const rect = (e.currentTarget as HTMLElement).getBoundingClientRect(); setViewUserCard({ id: m.id, x: rect.left - 328, y: rect.top + 8 }); } else setSettingsOpen(true); }}
                   />
                 );
               })}
