@@ -108,6 +108,11 @@ function ChatApp({ token, user }: { token: string; user: any }) {
     } catch { return ""; }
   });
   const [channels, setChannels] = useState<Channel[]>([]);
+  // Cache channel types across spaces so favorites can render correctly
+  const [channelTypeById, setChannelTypeById] = useState<Record<string, string>>(() => {
+    try { const raw = localStorage.getItem('channelTypeById'); return raw ? JSON.parse(raw) : {}; } catch { return {}; }
+  });
+  useEffect(() => { try { localStorage.setItem('channelTypeById', JSON.stringify(channelTypeById)); } catch {} }, [channelTypeById]);
   const [currentChannelId, setCurrentChannelId] = useState<string>(() => {
     try { return localStorage.getItem('currentChannelId') || "general"; } catch { return "general"; }
   });
@@ -483,6 +488,11 @@ function ChatApp({ token, user }: { token: string; user: any }) {
   // Quick reply text per favorite card (landing dashboard)
   const [quickTextByFav, setQuickTextByFav] = useState<Record<string, string>>({});
   function setQuick(fid: string, v: string) { setQuickTextByFav(old => ({ ...old, [fid]: v })); }
+  const [quickPickerFor, setQuickPickerFor] = useState<string | null>(null);
+  function addQuickEmoji(fid: string, emoji: string) {
+    setQuick(fid, ((quickTextByFav[fid] || '') + emoji));
+    setQuickPickerFor(null);
+  }
   async function quickSend(fid: string) {
     const text = (quickTextByFav[fid] || '').trim();
     if (!text) return;
@@ -492,7 +502,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
     const fqid = fq(vId, cId);
     setMsgsByKey(old => {
       const list = old[fqid] ?? [];
-      return { ...old, [fqid]: [...list, { id: tempId, content: text, optimistic: true }] };
+      return { ...old, [fqid]: [...list, { id: tempId, content: text, optimistic: true, createdAt: new Date().toISOString(), authorName: me.name || 'You' }] };
     });
     socket.emit('message:send', { voidId: vId, channelId: fq(vId, cId), content: text, tempId, attachments: [] });
     setQuickTextByFav(old => ({ ...old, [fid]: '' }));
@@ -1123,6 +1133,14 @@ function ChatApp({ token, user }: { token: string; user: any }) {
     const onChannelList = ({ voidId, channels }: { voidId: string; channels: Channel[] }) => {
       if (voidId !== currentVoidIdRef.current) return;
       setChannels(channels.sort((a,b) => a.name.localeCompare(b.name)));
+      // Persist channel types for favorites rendering outside current space
+      try {
+        setChannelTypeById(prev => {
+          const next = { ...prev } as Record<string,string>;
+          for (const c of channels) { const fid = fq(voidId, c.id); if (c.type) next[fid] = String(c.type); }
+          return next;
+        });
+      } catch {}
       setChanOrder((prev) => {
         const cur = prev[voidId] || [];
         const known = new Set(cur);
@@ -2519,10 +2537,9 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                         const items = mergedAll.slice(-5);
                         const unreadCount = unread[`${vId}:${cId}`] || 0;
                         const fqid = fq(vId, cId);
-                        const ctype = (vId === currentVoidId ? channels.find(c=>c.id===cId)?.type : undefined);
-                        const hideComposer = ctype === 'kanban' || ctype === 'form' || ctype === 'habit' || !!kanbanByChan[fqid];
-                        const looksLikeGallery = mergedAll.some(it => (it.attachments||[]).some((a:any)=>{ const t=String(a?.contentType||'').toLowerCase(); const u=String(a?.url||'').toLowerCase(); return t.startsWith('image/') || /\.(png|jpe?g|webp)(\?.*)?$/.test(u); }));
-                        if (ctype === 'gallery' || looksLikeGallery) {
+                        const ctypeKnown = channelTypeById[fqid] || (vId === currentVoidId ? channels.find(c=>c.id===cId)?.type : undefined);
+                        const hideComposer = ctypeKnown === 'kanban' || ctypeKnown === 'form' || ctypeKnown === 'habit' || !!kanbanByChan[fqid];
+                        if (ctypeKnown === 'gallery') {
                           // Photo frame view for gallery favorites: show latest image only
                           let frame: any = null;
                           for (let i = mergedAll.length - 1; i >= 0; i--) {
@@ -2561,7 +2578,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                               </div>
                             </div>
                             <div ref={(el)=>{ favScrollRefs.current[fid] = el; }} className="min-h-[88px] max-h-48 overflow-auto text-[12px]">
-                              {ctype === 'gallery' ? (
+                              {ctypeKnown === 'gallery' ? (
                                 (() => {
                                   // Find the most recent image attachment
                                   for (let i = items.length - 1; i >= 0; i--) {
@@ -2582,48 +2599,80 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                                   {items.length === 0 ? (
                                     <div className="text-neutral-500">Loading recent messages...</div>
                                   ) : (
-                                    items.map(it => (
-                                      <div key={it.id} className="px-2 py-1 rounded border border-neutral-800 bg-neutral-950/50">
-                                        <div className="text-[11px] text-neutral-400">{it.authorName || 'User'}</div>
-                                        <div className="text-neutral-200 truncate">{it.content}</div>
-                                      </div>
-                                    ))
+                                    items.map(it => {
+                                      const atts = it.attachments || [];
+                                      const hasImg = atts.some((a:any)=>{ const t=String(a?.contentType||'').toLowerCase(); const u=String(a?.url||'').toLowerCase(); return t.startsWith('image/') || /\.(png|jpe?g|webp)(\?.*)?$/.test(u); });
+                                      const onlyImage = hasImg && (!it.content || String(it.content).trim()==='');
+                                      if (onlyImage) {
+                                        return (
+                                          <div key={it.id} className="px-2 py-1 rounded border border-neutral-800 bg-neutral-950/50">
+                                            <div className="text-neutral-200 truncate">@{it.authorName || 'User'} sent an image</div>
+                                          </div>
+                                        );
+                                      }
+                                      return (
+                                        <div key={it.id} className="px-2 py-1 rounded border border-neutral-800 bg-neutral-950/50">
+                                          <div className="text-[11px] text-neutral-400">{it.authorName || 'User'}</div>
+                                          <div className="text-neutral-200 truncate">{it.content || (hasImg ? 'sent an image' : '')}</div>
+                                        </div>
+                                      );
+                                    })
                                   )}
                                 </div>
                               )}
                             </div>
                             {/* Quick composer (hidden for special channels: kanban/form/habit) */}
                             {!hideComposer && (
-                              <div className="mt-3 pt-3 border-t border-neutral-800 flex items-center gap-2">
-                                <input
-                                  className="min-w-0 flex-1 px-3 py-2 rounded bg-neutral-900 text-neutral-100 placeholder-neutral-500 outline-none focus:ring-2 focus:ring-emerald-600/60 border border-neutral-800/60 text-sm"
-                                  placeholder={`Message #${cName}`}
-                                  value={quickTextByFav[fid] || ''}
-                                  onChange={(e) => setQuick(fid, (e.target as HTMLInputElement).value)}
-                                  onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); quickSend(fid); } }}
-                                  autoComplete="off"
-                                  autoCorrect="on"
-                                  autoCapitalize="sentences"
-                                  spellCheck={true}
-                                  inputMode="text"
-                                  name="chat-message"
-                                  data-lpignore="true"
-                                  data-1p-ignore
-                                  data-bw-ignore
-                                />
-                                <button
-                                  className="shrink-0 px-2 md:px-3 py-2 rounded border border-emerald-700 bg-emerald-800/70 hover:bg-emerald-700/70 text-emerald-50 flex items-center justify-center text-sm"
-                                  onClick={() => quickSend(fid)}
-                                  title="Send"
-                                >
-                                  <span className="md:hidden">
-                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+                              <div className="mt-3 pt-3 border-t border-neutral-800 relative">
+                                <div className="flex items-center gap-2 w-full max-w-full box-border rounded-full bg-neutral-900 border border-neutral-800 shadow-inner px-5 py-2.5 overflow-hidden">
+                                  <input
+                                    className="min-w-0 flex-1 px-3 py-2 bg-transparent text-neutral-100 placeholder-neutral-500 outline-none ring-0 border-0 text-base"
+                                    placeholder={`Message #${cName}`}
+                                    value={quickTextByFav[fid] || ''}
+                                    onChange={(e) => setQuick(fid, (e.target as HTMLInputElement).value)}
+                                    onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); quickSend(fid); } }}
+                                    autoComplete="off"
+                                    autoCorrect="on"
+                                    autoCapitalize="sentences"
+                                    spellCheck={true}
+                                    inputMode="text"
+                                    name="chat-message"
+                                    data-lpignore="true"
+                                    data-1p-ignore
+                                    data-bw-ignore
+                                  />
+                                  <button
+                                    type="button"
+                                    className="h-10 w-10 rounded-full text-neutral-300 hover:text-neutral-100 hover:bg-neutral-800/60 flex items-center justify-center"
+                                    title="Emoji" aria-label="Emoji"
+                                    onClick={() => setQuickPickerFor(quickPickerFor===fid?null:fid)}
+                                  >
+                                    <svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round' className='h-5 w-5'>
+                                      <circle cx='12' cy='12' r='9'/>
+                                      <path d='M8 14s1.5 2 4 2 4-2 4-2'/>
+                                      <path d='M9 9h.01M15 9h.01'/>
+                                    </svg>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="h-10 w-10 rounded-full bg-emerald-700 hover:bg-emerald-600 text-white flex items-center justify-center"
+                                    onClick={() => quickSend(fid)}
+                                    title="Send" aria-label="Send"
+                                    disabled={!((quickTextByFav[fid]||'').trim())}
+                                  >
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
                                       <path d="M22 2L11 13"/>
                                       <path d="M22 2l-7 20-4-9-9-4 20-7z"/>
                                     </svg>
-                                  </span>
-                                  <span className="hidden md:inline">Send</span>
-                                </button>
+                                  </button>
+                                </div>
+                                {quickPickerFor === fid && (
+                                  <div className="mt-2 inline-flex flex-wrap gap-1 max-w-full overflow-x-auto px-2 py-1 rounded-lg border border-neutral-800 bg-neutral-900/90">
+                                    {['🙂','😂','🔥','❤️','👍','🎉','😎','🤝'].map(e => (
+                                      <button key={e} className="px-2 py-1 text-neutral-200 hover:bg-neutral-800 rounded" onClick={()=>addQuickEmoji(fid, e)}>{e}</button>
+                                    ))}
+                                  </div>
+                                )}
                               </div>
                             )}
                           </div>
