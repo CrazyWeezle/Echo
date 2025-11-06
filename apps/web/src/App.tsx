@@ -9,7 +9,6 @@ import { initPush } from "./lib/push";
 import { registerWebPush } from "./lib/webpush";
 import FriendsModal from "./components/FriendsModal";
 import MemberProfileModal from "./components/MemberProfileModal";
-import ProfileModal from "./components/ProfileModal";
 import InputModal from "./components/InputModal";
 const GifPicker = lazy(() => import("./components/GifPicker"));
 const EmojiPanel = lazy(() => import("./components/EmojiPanel"));
@@ -588,7 +587,6 @@ function ChatApp({ token, user }: { token: string; user: any }) {
   }, [voids]);
   const [viewUserId, setViewUserId] = useState<string | null>(null);
   const [viewUserCard, setViewUserCard] = useState<null | { id: string; x: number; y: number }>(null);
-  const [profileOpen, setProfileOpen] = useState<boolean>(false);
   const [gifOpen, setGifOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const addBtnRef = useRef<HTMLButtonElement | null>(null);
@@ -3790,7 +3788,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
       <MemberProfileModal
         token={localStorage.getItem('token') || ''}
         userId={viewUserId || ''}
-        open={!!viewUserId}
+        open={!!viewUserId && !settingsOpen}
         spaceId={currentVoidId}
         onClose={()=>setViewUserId(null)}
         onStartDm={async (uid) => {
@@ -3835,25 +3833,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
         />
       )}
 
-      <ProfileModal
-        token={localStorage.getItem('token') || ''}
-        open={profileOpen}
-        onClose={()=>setProfileOpen(false)}
-        onSaved={(u: any) => {
-          const nextMe = { userId: me.userId, name: u?.name || me.name, avatarUrl: (u?.avatarUrl ?? null) };
-          setMe(nextMe);
-          setMembers(prev => prev.map(m => m.id === me.userId ? { ...m, name: u?.name ?? m.name, avatarUrl: u?.avatarUrl ?? m.avatarUrl, status: u?.status ?? m.status, nameColor: u?.nameColor ?? m.nameColor, bio: u?.bio ?? m.bio } : m));
-          setLocalUser(nextMe);
-          try {
-            const raw = localStorage.getItem('user');
-            const prev = raw ? JSON.parse(raw) : {};
-            localStorage.setItem('user', JSON.stringify({ ...prev, name: u?.name, avatarUrl: u?.avatarUrl ?? null, toneUrl: u?.toneUrl ?? prev?.toneUrl, status: u?.status || prev?.status, nameColor: u?.nameColor ?? null }));
-            if (u?.nameColor) localStorage.setItem('nameColor', u.nameColor); else localStorage.removeItem('nameColor');
-            if (u?.toneUrl) localStorage.setItem('toneUrl', u.toneUrl); else localStorage.removeItem('toneUrl');
-          } catch {}
-        }}
-        onOpenSettings={()=> setSettingsOpen(true)}
-      />
+      {/* ProfileModal removed in favor of new Profile tab inside Settings */}
 
       <UnifiedSettingsModal
         token={localStorage.getItem('token') || ''}

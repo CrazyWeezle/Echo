@@ -89,20 +89,13 @@ export default function UnifiedSettingsModal({
   const [bio, setBio] = useState('');
   const [bannerUrl, setBannerUrl] = useState<string | null>(null);
   const [bannerPositionY, setBannerPositionY] = useState<number>(50);
-  const [skills, setSkills] = useState<string[]>(()=>{ try { return JSON.parse(localStorage.getItem('profile.skills')||'[]'); } catch { return []; } });
-  const [projects, setProjects] = useState<{ title: string; url?: string }[]>(()=>{ try { return JSON.parse(localStorage.getItem('profile.projects')||'[]'); } catch { return []; } });
-  const [featuredChannels, setFeaturedChannels] = useState<string[]>(()=>{ try { return JSON.parse(localStorage.getItem('profile.channels')||'[]'); } catch { return []; } });
-  const [achievements, setAchievements] = useState<string[]>(()=>{ try { return JSON.parse(localStorage.getItem('profile.achievements')||'[]'); } catch { return []; } });
-  const [activityText, setActivityText] = useState<string>(()=>{ try { return localStorage.getItem('profile.activity') || ''; } catch { return ''; } });
-  const [activityShow, setActivityShow] = useState<boolean>(()=>{ try { return localStorage.getItem('profile.showActivity') !== '0'; } catch { return true; } });
-  const [activityMode, setActivityMode] = useState<'all'|'selected'>(()=>{ try { return (localStorage.getItem('profile.activitySpacesMode') as any) === 'selected' ? 'selected' : 'all'; } catch { return 'all'; } });
-  const [activitySpaces, setActivitySpaces] = useState<string[]>(()=>{ try { return JSON.parse(localStorage.getItem('profile.activitySpaces')||'[]'); } catch { return []; } });
+  // removed legacy skills/tags
+  // removed legacy profile extras (projects, featured channels, achievements)
+  // removed legacy mini status
   const [socials, setSocials] = useState<{ github?: string; linkedin?: string; notion?: string; twitter?: string; instagram?: string; portfolio?: string }>(()=>{ try { return JSON.parse(localStorage.getItem('profile.socials')||'{}')||{}; } catch { return {}; } });
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
-  const [status, setStatus] = useState<string>('online');
-  const [nameColor, setNameColor] = useState<string>('');
-  const [pronouns, setPronouns] = useState<string>('');
-  const [website, setWebsite] = useState<string>('');
+  // removed presence and name color
+  // removed legacy profile fields (pronouns, website)
   useEffect(() => {
     if (!open) return;
     (async () => {
@@ -119,10 +112,7 @@ export default function UnifiedSettingsModal({
           setBannerPositionY(p!=null ? Math.max(0, Math.min(100, Number(p))) : 50);
         } catch {}
         setAvatarUrl(u.avatarUrl||null);
-        setStatus(u.status||'online');
-        setNameColor(u.nameColor||'');
-        setPronouns(u.pronouns||'');
-        setWebsite(u.website||'');
+        // removed pronouns/website
       }
       catch (e:any) { setErr(e?.message || 'Failed to load profile'); }
       finally { setLoading(false); }
@@ -136,30 +126,34 @@ export default function UnifiedSettingsModal({
   async function saveProfile(){
     setLoading(true); setErr('');
     try{
-      const payload:any = { name, bio, avatarUrl, status, pronouns, website, bannerUrl };
-      const c = String(nameColor||'').trim(); payload.nameColor = c ? c : null;
+      const payload:any = { name, bio, avatarUrl, bannerUrl, bannerPositionY };
       const u=await api.patchAuth('/users/me', payload, token);
       try{
         const raw=localStorage.getItem('user'); const prev = raw?JSON.parse(raw):{};
-        localStorage.setItem('user', JSON.stringify({ ...prev, name: u?.name, avatarUrl: u?.avatarUrl ?? null, status: u?.status || prev?.status, nameColor: u?.nameColor ?? null, pronouns: u?.pronouns ?? prev?.pronouns, website: u?.website ?? prev?.website, bannerUrl: u?.bannerUrl ?? bannerUrl }));
-        if(u?.nameColor) localStorage.setItem('nameColor', u.nameColor); else localStorage.removeItem('nameColor');
-        // Persist profile extras locally
-        localStorage.setItem('profile.bannerUrl', bannerUrl||'');
+        localStorage.setItem('user', JSON.stringify({ ...prev, name: u?.name, avatarUrl: u?.avatarUrl ?? null, bannerUrl: u?.bannerUrl ?? bannerUrl }));
+        // Persist banner position locally
         localStorage.setItem('profile.bannerPositionY', String(bannerPositionY));
-        localStorage.setItem('profile.skills', JSON.stringify(skills));
-        localStorage.setItem('profile.projects', JSON.stringify(projects));
-        localStorage.setItem('profile.channels', JSON.stringify(featuredChannels));
-        localStorage.setItem('profile.achievements', JSON.stringify(achievements));
-        localStorage.setItem('profile.activity', activityText||'');
-        localStorage.setItem('profile.showActivity', activityShow ? '1':'0');
-        localStorage.setItem('profile.socials', JSON.stringify(normalizeSocials(socials)));
-        localStorage.setItem('profile.activitySpacesMode', activityMode);
-        localStorage.setItem('profile.activitySpaces', JSON.stringify(activitySpaces));
+        // removed featured channels
+        // removed other legacy profile local storage keys
       }catch{}
       onUserSaved(u);
     } catch(e:any) { setErr(e?.message||'Failed to save'); }
     finally { setLoading(false); }
   }
+
+  // Compute banner preview style for both gradients and images
+  const bannerStyle = (() => {
+    const u = (bannerUrl || '').trim();
+    if (!u) return undefined as React.CSSProperties | undefined;
+    const isGradient = /^(linear-gradient|radial-gradient|conic-gradient)\(/i.test(u);
+    const backgroundImage = isGradient ? u : `url("${u}")`;
+    return {
+      backgroundImage,
+      backgroundSize: 'cover',
+      backgroundRepeat: 'no-repeat',
+      backgroundPosition: `center ${bannerPositionY}%`,
+    } as React.CSSProperties;
+  })();
 
   // Notifications
   const [notifEnabled, setNotifEnabled] = useState<boolean>(()=>{ try { return localStorage.getItem('notifEnabled')==='1'; } catch { return false; } });
@@ -231,17 +225,17 @@ export default function UnifiedSettingsModal({
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center">
-      <div className="absolute inset-0 bg-black/50" onClick={onClose} />
-      <div className="relative w-[calc(100%-2rem)] md:w-[calc(100%-3rem)] max-w-4xl h-[78vh] md:h-[76vh] rounded-2xl bg-neutral-900/95 backdrop-blur-md ring-1 ring-neutral-800 shadow-2xl grid grid-rows-[auto,1fr] md:grid-rows-1 md:grid-cols-[240px,1fr] overflow-hidden">
+      <div className="absolute inset-0 bg-black/50 z-0" onClick={onClose} />
+      <div className="relative z-10 w-[calc(100%-2rem)] md:w-[calc(100%-3rem)] max-w-4xl h-[78vh] md:h-[76vh] rounded-2xl bg-neutral-900/95 backdrop-blur-md ring-1 ring-neutral-800 shadow-2xl grid grid-rows-[auto,1fr] md:grid-rows-1 md:grid-cols-[240px,1fr] overflow-hidden">
         <CloseButton onClick={onClose} className="absolute top-2 right-2 px-2 py-1" />
-        <div className="absolute top-3 right-10 hidden md:block text-[10px] uppercase tracking-wider text-neutral-500">ESC</div>
-        <div className="hidden md:flex border-r border-neutral-800 p-3 flex-col min-h-0 overflow-auto bg-gradient-to-b from-neutral-900/70 to-neutral-900/40 gap-1">
-          <div className="text-xs uppercase tracking-wide text-neutral-400 px-1 pb-1">User Settings</div>
+        <div className="absolute top-3 right-10 hidden md:block text-[10px] uppercase tracking-wider text-neutral-500 pointer-events-none">ESC</div>
+          <div className="hidden md:flex border-r border-neutral-800 p-3 flex-col min-h-0 overflow-auto bg-gradient-to-b from-neutral-900/70 to-neutral-900/40 gap-1">
+            <div className="text-xs uppercase tracking-wide text-neutral-400 px-1 pb-1">User Settings</div>
           <button className={`w-full text-left px-3 py-2 rounded-md transition-colors ${tab==='account'?'bg-white/5 text-white ring-1 ring-white/10':'text-neutral-300 hover:bg-white/5'}`} onClick={()=>setTab('account')}>My Account</button>
           <button className={`w-full text-left px-3 py-2 rounded-md transition-colors ${tab==='profile'?'bg-emerald-900/30 text-emerald-200 ring-1 ring-emerald-800':'text-neutral-300 hover:bg-neutral-800/60'}`} onClick={()=>setTab('profile')}>Profile</button>
           <button className={`w-full text-left px-3 py-2 rounded-md transition-colors ${tab==='notifications'?'bg-emerald-900/30 text-emerald-200 ring-1 ring-emerald-800':'text-neutral-300 hover:bg-neutral-800/60'}`} onClick={()=>setTab('notifications')}>Notifications</button>
-          <button className={`w-full text-left px-3 py-2 rounded-md transition-colors ${tab==='personalization'?'bg-emerald-900/30 text-emerald-200 ring-1 ring-emerald-800':'text-neutral-300 hover:bg-neutral-800/60'}`} onClick={()=>setTab('personalization')}>Personalization</button>
-          <button className={`w-full text-left px-3 py-2 rounded-md transition-colors ${tab==='security'?'bg-emerald-900/30 text-emerald-200 ring-1 ring-emerald-800':'text-neutral-300 hover:bg-neutral-800/60'}`} onClick={()=>setTab('security')}>Security</button>
+            <button className={`w-full text-left px-3 py-2 rounded-md transition-colors ${tab==='personalization'?'bg-emerald-900/30 text-emerald-200 ring-1 ring-emerald-800':'text-neutral-300 hover:bg-neutral-800/60'}`} onClick={()=>setTab('personalization')}>Personalization</button>
+            <button className={`w-full text-left px-3 py-2 rounded-md transition-colors ${tab==='security'?'bg-emerald-900/30 text-emerald-200 ring-1 ring-emerald-800':'text-neutral-300 hover:bg-neutral-800/60'}`} onClick={()=>setTab('security')}>Security</button>
           <div className="text-xs uppercase tracking-wide text-neutral-500 px-1 pt-3 pb-1">Space</div>
           {String(spaceId).startsWith('dm_') ? (
             <button className={`w-full text-left px-3 py-2 rounded-md transition-colors ${tab==='dm-info'?'bg-emerald-900/30 text-emerald-200 ring-1 ring-emerald-800':'text-neutral-300 hover:bg-neutral-800/60'}`} onClick={()=>setTab('dm-info')}>
@@ -294,15 +288,9 @@ export default function UnifiedSettingsModal({
               <div className="text-emerald-300 font-semibold">Profile</div>
               {/* Banner */}
               <div className="rounded-lg border border-neutral-800 overflow-hidden">
-                <div className="relative h-32 md:h-40" style={bannerUrl && !/^https?:/i.test(bannerUrl||'') && !/^data:/i.test(bannerUrl||'') ? { backgroundImage: bannerUrl, backgroundSize: 'cover', backgroundPosition: `center ${bannerPositionY}%` } : undefined}>
-                  {(!bannerUrl || /^https?:|^data:/i.test(bannerUrl||'')) && (
-                    <div className="absolute inset-0 bg-neutral-800">
-                      {bannerUrl ? <img src={bannerUrl} alt="banner" className="h-full w-full object-cover" style={{ objectPosition: `center ${bannerPositionY}%` }} /> : null}
-                    </div>
-                  )}
-                </div>
+                <div className="relative h-32 md:h-40 bg-neutral-800" style={bannerStyle} />
                 <div className="p-2 flex flex-wrap items-center gap-2 border-t border-neutral-800 bg-neutral-900/70">
-                  <input type="file" accept="image/*" className="hidden" id="pf-banner-file" onChange={async (e)=>{ const files=e.target.files; if(!files||files.length===0) return; const f=files[0]; try{ const up=await signUpload({ filename:f.name, contentType:f.type||'application/octet-stream', size:f.size }, token); await fetch(up.url,{method:'PUT', headers:up.headers, body:f}); setBannerUrl(up.publicUrl);} catch{} finally{ (e.target as HTMLInputElement).value=''; } }} />
+                  <input type="file" accept="image/*" className="hidden" id="pf-banner-file" onChange={async (e)=>{ const files=e.target.files; if(!files||files.length===0) return; const f=files[0]; try{ const up=await signUpload({ filename:f.name, contentType:f.type||'application/octet-stream', size:f.size }, token); await fetch(up.url,{method:'PUT', headers:up.headers, body:f}); setBannerUrl(up.publicUrl);} catch{ try { const blobUrl = URL.createObjectURL(f); setBannerUrl(blobUrl); } catch {} } finally{ (e.target as HTMLInputElement).value=''; } }} />
                   <label htmlFor="pf-banner-file" className="px-2 py-1 rounded border border-neutral-700 text-neutral-200 hover:bg-neutral-800/60 cursor-pointer">Upload banner</label>
                   <button className="px-2 py-1 rounded border border-neutral-700 text-neutral-200 hover:bg-neutral-800/60" onClick={()=>setBannerUrl(null)}>Remove</button>
                   <div className="ml-auto flex items-center gap-2">
@@ -310,19 +298,7 @@ export default function UnifiedSettingsModal({
                     <input type="range" min={0} max={100} value={bannerPositionY} onChange={e=>setBannerPositionY(parseInt(e.target.value,10))} />
                   </div>
                 </div>
-                <div className="p-2 border-t border-neutral-800 bg-neutral-900/50">
-                  <div className="flex items-center gap-2 text-xs text-neutral-400">
-                    <span>Quick gradients:</span>
-                    {[
-                      'linear-gradient(135deg,#22d3ee,#6366f1)',
-                      'linear-gradient(135deg,#34d399,#3b82f6)',
-                      'linear-gradient(135deg,#f59e0b,#ef4444)',
-                      'linear-gradient(135deg,#a78bfa,#f472b6)'
-                    ].map((g,i)=> (
-                      <button key={i} className="h-5 w-8 rounded border border-neutral-700" style={{ backgroundImage: g }} onClick={()=>setBannerUrl(g)} />
-                    ))}
-                  </div>
-                </div>
+                {/* quick gradients removed for minimal reset */}
               </div>
               {/* Avatar block */}
               <div className="flex items-center gap-3">
@@ -335,113 +311,21 @@ export default function UnifiedSettingsModal({
                 </label>
                 {avatarUrl && <button className="text-xs text-neutral-400 hover:text-neutral-200" onClick={()=>setAvatarUrl(null)}>Remove</button>}
               </div>
-              {/* Mini status widget */}
-              <div className="rounded-md border border-neutral-800 bg-neutral-900/60 p-3">
-                <div className="text-neutral-300 font-medium mb-2">Mini Status</div>
-                <div className="flex flex-col md:flex-row gap-2 items-stretch md:items-center">
-                  <input className="flex-1 p-2.5 rounded-md bg-neutral-900 text-neutral-100 placeholder-neutral-500 border border-neutral-800 focus:outline-none focus:ring-2 focus:ring-emerald-600/60" placeholder="Listening to / Working on…" value={activityText} onChange={e=>setActivityText(e.target.value)} />
-                  <label className="text-sm text-neutral-300 flex items-center gap-2"><input type="checkbox" checked={activityShow} onChange={e=>setActivityShow(e.target.checked)} /> Show</label>
-                </div>
-                <div className="mt-2 flex flex-wrap items-center gap-2">
-                  <span className="text-xs text-neutral-400">Visibility:</span>
-                  <div className="inline-flex rounded-lg border border-neutral-800 overflow-hidden">
-                    <button className={`px-2 py-1 text-xs ${activityMode==='all'?'bg-emerald-700/40 text-emerald-100':'text-neutral-300'}`} onClick={()=>setActivityMode('all')}>All spaces</button>
-                    <button className={`px-2 py-1 text-xs ${activityMode==='selected'?'bg-emerald-700/40 text-emerald-100':'text-neutral-300'}`} onClick={()=>setActivityMode('selected')}>Select…</button>
-                  </div>
-                  {activityMode==='selected' && (
-                    <div className="flex flex-wrap gap-2">
-                      {(spaces||[{id:spaceId,name:spaceName||spaceId}]).filter(s=>!String(s.id).startsWith('dm_')).map(s => {
-                        const on = activitySpaces.includes(s.id);
-                        return (
-                          <button key={s.id} onClick={()=>setActivitySpaces(prev=> on? prev.filter(x=>x!==s.id) : [...prev, s.id])} className={`px-2 py-1 rounded border text-xs ${on?'border-emerald-700 bg-emerald-900/40 text-emerald-200':'border-neutral-700 text-neutral-300 hover:bg-neutral-800/60'}`}>{s.name||s.id}</button>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-                <div className="mt-2 text-xs text-neutral-400">Preview: {activityShow ? (activityText ? activityText : '(no activity)') : '(hidden)'}
-                </div>
-              </div>
-              {/* Card grid */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <div className="md:col-span-2 rounded-lg border border-neutral-800 bg-neutral-900/60 p-3 shadow-sm">
-                  <div className="text-neutral-300 font-semibold mb-2">About</div>
-                  <div className="text-sm text-neutral-400 mb-2">Add tags that describe your skills.</div>
-                  <TagEditor value={skills} onChange={setSkills} placeholder="#javascript" />
-                </div>
-                <div className="rounded-lg border border-neutral-800 bg-neutral-900/60 p-3 shadow-sm">
-                  <div className="text-neutral-300 font-semibold mb-2">Achievements</div>
-                  <TagEditor value={achievements} onChange={setAchievements} placeholder="e.g., Hackathon Winner" />
-                </div>
-                <div className="rounded-lg border border-neutral-800 bg-neutral-900/60 p-3 shadow-sm md:col-span-2">
-                  <div className="text-neutral-300 font-semibold mb-2">Projects</div>
-                  <ProjectEditor value={projects} onChange={setProjects} />
-                </div>
-                <div className="rounded-lg border border-neutral-800 bg-neutral-900/60 p-3 shadow-sm md:col-span-3">
-                  <div className="text-neutral-300 font-semibold mb-2">Social Links</div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                    <SocialField label="GitHub" placeholder="https://github.com/username" value={socials.github||''} onChange={v=>setSocials(s=>({...s, github:v}))} />
-                    <SocialField label="LinkedIn" placeholder="https://www.linkedin.com/in/username" value={socials.linkedin||''} onChange={v=>setSocials(s=>({...s, linkedin:v}))} />
-                    <SocialField label="Notion" placeholder="https://notion.so/your-page" value={socials.notion||''} onChange={v=>setSocials(s=>({...s, notion:v}))} />
-                    <SocialField label="Portfolio" placeholder="https://yourdomain.com" value={socials.portfolio||''} onChange={v=>setSocials(s=>({...s, portfolio:v}))} />
-                    <SocialField label="Twitter/X" placeholder="https://twitter.com/username" value={socials.twitter||''} onChange={v=>setSocials(s=>({...s, twitter:v}))} />
-                    <SocialField label="Instagram" placeholder="https://instagram.com/username" value={socials.instagram||''} onChange={v=>setSocials(s=>({...s, instagram:v}))} />
-                  </div>
-                </div>
-                <div className="rounded-lg border border-neutral-800 bg-neutral-900/60 p-3 shadow-sm">
-                  <div className="text-neutral-300 font-semibold mb-2">Channels</div>
-                  <div className="space-y-2">
-                    <div className="text-sm text-neutral-400">Pick channels to feature on your profile.</div>
-                    <div className="flex flex-wrap gap-2">
-                      {channels.map(c => {
-                        const on = featuredChannels.includes(c.id);
-                        return (
-                          <button key={c.id} onClick={()=>setFeaturedChannels(p=> on? p.filter(x=>x!==c.id) : [...p, c.id])} className={`px-2 py-1 rounded border text-xs ${on?'border-emerald-700 bg-emerald-900/40 text-emerald-200':'border-neutral-700 text-neutral-300 hover:bg-neutral-800/60'}`}>#{c.name||c.id}</button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                </div>
-              </div>
-              <div>
-                <label className="block text-xs text-neutral-500 mb-1">Or paste image URL</label>
-                <input className="w-full p-2.5 rounded-md bg-neutral-900 text-neutral-100 placeholder-neutral-500 border border-neutral-800 focus:outline-none focus:ring-2 focus:ring-emerald-600/60" placeholder="https://example.com/avatar.png" value={avatarUrl||''} onChange={e=>setAvatarUrl(e.target.value.trim()||null)} />
-              </div>
+              {/* mini status removed for minimal reset */}
+              {/* removed legacy cards (tags, social links, projects, channels) */}
+              {/* removed paste image URL field for minimal reset */}
               {/* Fields */}
               <div>
                 <label className="block text-sm text-neutral-400 mb-1">Display name</label>
                 <input className="w-full p-2.5 rounded-md bg-neutral-900 text-neutral-100 placeholder-neutral-500 border border-neutral-800 focus:outline-none focus:ring-2 focus:ring-emerald-600/60" value={name} onChange={e=>setName(e.target.value)} />
               </div>
-              <div>
-                <label className="block text-sm text-neutral-400 mb-1">Pronouns</label>
-                <input className="w-full p-2.5 rounded-md bg-neutral-900 text-neutral-100 placeholder-neutral-500 border border-neutral-800 focus:outline-none focus:ring-2 focus:ring-emerald-600/60" placeholder="they/them" value={pronouns} onChange={e=>setPronouns(e.target.value)} />
-              </div>
-              <div>
-                <label className="block text-sm text-neutral-400 mb-1">Website</label>
-                <input className="w-full p-2.5 rounded-md bg-neutral-900 text-neutral-100 placeholder-neutral-500 border border-neutral-800 focus:outline-none focus:ring-2 focus:ring-emerald-600/60" placeholder="https://example.com" value={website} onChange={e=>setWebsite(e.target.value)} />
-              </div>
-              <div>
-                <label className="block text-sm text-neutral-400 mb-1">Display name color</label>
-                <div className="flex items-center gap-3">
-                  <input type="color" value={(function(){ const c=String(nameColor||'').trim(); return /^#([0-9a-fA-F]{6})$/.test(c)?c:'#ffffff'; })()} onChange={(e)=>setNameColor(e.target.value)} className="h-9 w-12 bg-neutral-900 border border-neutral-800 rounded cursor-pointer" title="Pick a color" />
-                  <input className="flex-1 p-2.5 rounded-md bg-neutral-900 text-neutral-100 placeholder-neutral-500 border border-neutral-800 focus:outline-none focus:ring-2 focus:ring-emerald-600/60" placeholder="#34d399 or 'teal'" value={nameColor} onChange={(e)=>setNameColor(e.target.value)} />
-                  <div className="text-sm" style={nameColor?{color:nameColor}:undefined}>{name||'Preview'}</div>
-                </div>
-                <p className="mt-1 text-xs text-neutral-500">Use a hex color like #34d399 or leave blank to use default.</p>
-              </div>
+              {/* removed pronouns and website for minimal reset */}
+              {/* removed display name color for minimal reset */}
               <div>
                 <label className="block text-sm text-neutral-400 mb-1">Bio</label>
                 <textarea rows={4} className="w-full p-2.5 rounded-md bg-neutral-900 text-neutral-100 placeholder-neutral-500 border border-neutral-800 focus:outline-none focus:ring-2 focus:ring-emerald-600/60" value={bio} onChange={e=>setBio(e.target.value)} spellCheck={true} autoCorrect="on" autoCapitalize="sentences" />
               </div>
-              <div>
-                <label className="block text-sm text-neutral-400 mb-1">Status</label>
-                <select className="w-full p-2.5 rounded-md bg-neutral-900 text-neutral-100 border border-neutral-800 focus:outline-none focus:ring-2 focus:ring-emerald-600/60" value={status} onChange={e=>setStatus(e.target.value)}>
-                  <option value="online">Online</option>
-                  <option value="idle">Idle</option>
-                  <option value="dnd">Do Not Disturb</option>
-                  <option value="invisible">Invisible</option>
-                </select>
-              </div>
+              {/* removed presence status for minimal reset */}
               <div className="flex items-center gap-2">
                 <button disabled={loading} className="px-3 py-2 rounded border border-emerald-700 bg-emerald-800/70 text-emerald-50 hover:bg-emerald-700/70" onClick={saveProfile}>{loading?'Saving...':'Save changes'}</button>
               </div>
@@ -866,77 +750,7 @@ export default function UnifiedSettingsModal({
   );
 }
 
-// Simple tag editor used for skills/achievements
-function TagEditor({ value, onChange, placeholder }: { value: string[]; onChange: (v:string[])=>void; placeholder?: string }) {
-  const [input, setInput] = useState('');
-  function add(tag: string) {
-    const t = tag.trim(); if (!t) return;
-    if (!value.includes(t)) onChange([...value, t]);
-    setInput('');
-  }
-  return (
-    <div>
-      <div className="flex items-center gap-2">
-        <input value={input} onChange={e=>setInput(e.target.value)}
-               onKeyDown={e=>{ if(e.key==='Enter'){ e.preventDefault(); add(input);} }}
-               placeholder={placeholder||'Add tag and press Enter'}
-               className="flex-1 p-2.5 rounded-md bg-neutral-900 text-neutral-100 placeholder-neutral-500 border border-neutral-800 focus:outline-none focus:ring-2 focus:ring-emerald-600/60" />
-        <button className="px-2 py-1 rounded border border-neutral-700 text-neutral-200 hover:bg-neutral-800/60" onClick={()=>add(input)}>Add</button>
-      </div>
-      <div className="mt-2 flex flex-wrap gap-2">
-        {value.map(t => (
-          <span key={t} className="inline-flex items-center gap-2 px-2 py-1 rounded-full border border-neutral-700 text-xs text-neutral-300">
-            {t}
-            <button className="text-neutral-500 hover:text-neutral-200" onClick={()=>onChange(value.filter(x=>x!==t))}>×</button>
-          </span>
-        ))}
-        {value.length===0 && <span className="text-xs text-neutral-500">No items yet</span>}
-      </div>
-    </div>
-  );
-}
 
-// Project editor for title + optional URL
-function ProjectEditor({ value, onChange }: { value: { title: string; url?: string }[]; onChange: (v:{ title:string; url?:string }[])=>void }) {
-  const [title, setTitle] = useState('');
-  const [url, setUrl] = useState('');
-  function add() {
-    const t = title.trim(); if (!t) return;
-    const u = url.trim();
-    onChange([...value, { title: t, url: u || undefined }]);
-    setTitle(''); setUrl('');
-  }
-  return (
-    <div>
-      <div className="flex flex-col md:flex-row gap-2">
-        <input value={title} onChange={e=>setTitle(e.target.value)} placeholder="Project title" className="flex-1 p-2.5 rounded-md bg-neutral-900 text-neutral-100 placeholder-neutral-500 border border-neutral-800 focus:outline-none focus:ring-2 focus:ring-emerald-600/60" />
-        <input value={url} onChange={e=>setUrl(e.target.value)} placeholder="https://link" className="flex-1 p-2.5 rounded-md bg-neutral-900 text-neutral-100 placeholder-neutral-500 border border-neutral-800 focus:outline-none focus:ring-2 focus:ring-emerald-600/60" />
-        <button className="px-2 py-1 rounded border border-neutral-700 text-neutral-200 hover:bg-neutral-800/60" onClick={add}>Add</button>
-      </div>
-      <div className="mt-2 space-y-2">
-        {value.map((p, i) => (
-          <div key={i} className="flex items-center justify-between rounded border border-neutral-800 p-2 bg-neutral-900/60">
-            <div className="text-sm text-neutral-200">
-              {p.title} {p.url ? <a className="ml-2 text-emerald-300 hover:underline" href={p.url} target="_blank" rel="noopener noreferrer">link</a> : null}
-            </div>
-            <button className="text-neutral-500 hover:text-neutral-200" onClick={()=>onChange(value.filter((_,idx)=>idx!==i))}>Remove</button>
-          </div>
-        ))}
-        {value.length===0 && <div className="text-xs text-neutral-500">No projects yet</div>}
-      </div>
-    </div>
-  );
-}
-
-function SocialField({ label, value, onChange, placeholder }: { label: string; value: string; onChange: (v:string)=>void; placeholder?: string }) {
-  return (
-    <label className="block">
-      <span className="block text-sm text-neutral-400 mb-1">{label}</span>
-      <input value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder}
-             className="w-full p-2.5 rounded-md bg-neutral-900 text-neutral-100 placeholder-neutral-500 border border-neutral-800 focus:outline-none focus:ring-2 focus:ring-emerald-600/60" />
-    </label>
-  );
-}
 
 function VaultInline({ spaces, onUnhide, onToggleMute }: { spaces: { id: string; name: string }[]; onUnhide: (id:string)=>void; onToggleMute: (id:string)=>void }) {
   const [hidden, setHidden] = useState<Record<string, boolean>>(()=>{ try { return JSON.parse(localStorage.getItem('hiddenSpaces')||'{}')||{}; } catch { return {}; } });
