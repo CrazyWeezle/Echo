@@ -1,18 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../lib/api';
 
-type Profile = {
-  id: string;
-  username?: string;
-  name?: string;
-  avatarUrl?: string | null;
-  bannerUrl?: string | null;
-  status?: string | null; // presence mode
-  bio?: string | null; // first line used as mini status
-  isFriend?: boolean;
-  incomingRequestId?: string | null;
-  outgoingRequestId?: string | null;
-};
+type Profile = {};
 
 export default function MemberProfileCard({
   token,
@@ -35,6 +24,7 @@ export default function MemberProfileCard({
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
+  const [quickMsg, setQuickMsg] = useState('');
 
   useEffect(() => {
     let cancelled = false;
@@ -102,6 +92,26 @@ export default function MemberProfileCard({
     finally { setBusy(false); }
   }
 
+  async function sendQuickMessage() {
+    if (!u || !u.isFriend) return;
+    const content = quickMsg.trim();
+    if (!content) return;
+    setBusy(true);
+    try {
+      const r = await api.postAuth('/dms/start', { userId: u.id }, token);
+      onStartDm(u.id);
+      try {
+        const m = await import('../lib/socket');
+        const tempId = (typeof crypto !== 'undefined' && 'randomUUID' in crypto) ? (crypto as any).randomUUID() : String(Date.now());
+        const channelId = (r as any)?.channelId || `${(r as any)?.spaceId || ''}:chat`;
+        const voidId = (r as any)?.spaceId || '';
+        m.socket.emit('message:send', { voidId, channelId, content, tempId, attachments: [] });
+      } catch {}
+      setQuickMsg('');
+    } catch (e: any) { setErr(e?.message || 'Failed to send'); }
+    finally { setBusy(false); }
+  }
+
   return (
     <div className="fixed inset-0 z-50" onClick={onClose}>
       {/* Card */}
@@ -140,7 +150,39 @@ export default function MemberProfileCard({
               )}
               <div className="mt-3 flex items-center gap-2">
                 {u.isFriend ? (
-                  <button className="px-3 py-1.5 rounded border border-emerald-700 bg-emerald-800/70 text-emerald-50 hover:bg-emerald-700/70 text-sm" onClick={() => onStartDm(u.id)}>Message</button>
+                  <div className="flex items-center gap-2 w-full rounded-full bg-neutral-900 border border-neutral-800 px-2 py-1.5">
+                    <input
+                      value={quickMsg}
+                      onChange={(e)=>setQuickMsg(e.target.value)}
+                      onKeyDown={(e)=>{ if(e.key==='Enter'){ e.preventDefault(); sendQuickMessage(); } }}
+                      placeholder="Write a quick message…"
+                      className="flex-1 px-2 py-2 bg-transparent text-neutral-100 placeholder-neutral-500 outline-none ring-0 border-0 text-sm"
+                    />
+                    <button
+                      type="button"
+                      className="shrink-0 h-8 w-8 rounded-full text-neutral-300 hover:text-neutral-100 hover:bg-neutral-800/60 flex items-center justify-center"
+                      title="Emoji" aria-label="Emoji"
+                      onClick={()=>setQuickMsg(m=> (m||'') + '🙂')}
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+                        <circle cx="12" cy="12" r="9"/>
+                        <path d="M8 14s1.5 2 4 2 4-2 4-2"/>
+                        <path d="M9 9h.01M15 9h.01"/>
+                      </svg>
+                    </button>
+                    <button
+                      type="button"
+                      className="shrink-0 h-8 w-8 rounded-full bg-emerald-700 hover:bg-emerald-600 text-white flex items-center justify-center"
+                      title="Send" aria-label="Send"
+                      onClick={sendQuickMessage}
+                      disabled={busy || !quickMsg.trim()}
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+                        <path d="M22 2L11 13"/>
+                        <path d="M22 2l-7 20-4-9-9-4 20-7z"/>
+                      </svg>
+                    </button>
+                  </div>
                 ) : u.incomingRequestId ? (
                   <>
                     <button className="px-3 py-1.5 rounded border border-emerald-700 text-emerald-200 hover:bg-emerald-900/20 text-sm" onClick={() => accept()} disabled={busy}>Accept</button>
@@ -151,10 +193,18 @@ export default function MemberProfileCard({
                 ) : (
                   <button className="px-3 py-1.5 rounded border border-neutral-700 text-neutral-200 hover:bg-neutral-800/70 text-sm" onClick={addFriend} disabled={busy}>Add Friend</button>
                 )}
-                {!!onOpenFull && (
-                  <button className="ml-auto px-2 py-1.5 rounded border border-neutral-700 text-neutral-300 hover:bg-neutral-800/60 text-xs" onClick={onOpenFull}>Open full</button>
-                )}
               </div>
+              {!!onOpenFull && (
+                <div className="mt-2 pt-2 border-t border-neutral-800 flex justify-center">
+                  <button
+                    className="px-2 py-1 rounded text-neutral-300 hover:text-neutral-100 hover:bg-neutral-800/50 text-xs"
+                    onClick={onOpenFull}
+                    aria-label="View full profile"
+                  >
+                    View full profile
+                  </button>
+                </div>
+              )}
             </>
           )}
         </div>
@@ -162,3 +212,6 @@ export default function MemberProfileCard({
     </div>
   );
 }
+
+
+
