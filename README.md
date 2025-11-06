@@ -47,6 +47,12 @@ Quickstart (Local Dev)
 - Web: `cd apps/web && pnpm dev`
 - App: open `http://localhost:5173`
 
+One-command dev
+- `pnpm run dev:stack`
+  - Starts DB/MinIO automatically and launches API + Web with sensible dev defaults
+  - API defaults: `DATABASE_URL=postgresql://echo:echo@localhost:5432/echo`, `ALLOWED_ORIGINS=http://localhost:3000`
+  - Web dev proxies `/api` to `http://localhost:5000` and `/files` to MinIO
+
 Run with Docker Compose
 - `cd hosting`
 - Copy and edit envs:

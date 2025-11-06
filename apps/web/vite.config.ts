@@ -45,6 +45,12 @@ export default defineConfig(({ mode }) => {
           secure: false,
           rewrite: (path) => path.replace(/^\/files/, '/'),
         },
+        // Proxy API so web dev works without setting VITE_API_URL
+        '/api': {
+          target: 'http://localhost:5000',
+          changeOrigin: true,
+          secure: false,
+        },
       },
     },
     build: {

@@ -1313,8 +1313,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
 
     const onSpaceNotify = ({ voidId, channelId, authorId, authorName, content, messageId }: { voidId: string; channelId: string; authorId?: string; authorName?: string; content?: string; messageId?: string }) => {
       const fid = fq(voidId, channelId);
-      // Do not notify for our own messages
-      if (authorId && me.userId && authorId === me.userId) return;
+      const isMineMsg = !!(authorId && me.userId && authorId === me.userId);
       // Deduplicate same messageId arriving from multiple paths
       if (messageId) {
         const seen = notifySeenIdsRef.current;
@@ -1331,8 +1330,10 @@ function ChatApp({ token, user }: { token: string; user: any }) {
       if (isCurrent && document.visibilityState === 'visible' && document.hasFocus()) {
         return;
       }
-      if (!isCurrent || document.visibilityState === 'hidden' || !document.hasFocus()) {
-        setUnread(prev => ({ ...prev, [fid]: (prev[fid] || 0) + 1 }));
+      if (!isMineMsg) {
+        if (!isCurrent || document.visibilityState === 'hidden' || !document.hasFocus()) {
+          setUnread(prev => ({ ...prev, [fid]: (prev[fid] || 0) + 1 }));
+        }
       }
       // Feed preview list so landing dashboard can show latest activity
       const preview = { id: messageId || String(Date.now()), content: content || '', authorName, createdAt: new Date().toISOString() };
@@ -1342,6 +1343,10 @@ function ChatApp({ token, user }: { token: string; user: any }) {
         while (list.length > 20) list.shift();
         return { ...old, [fid]: list };
       });
+      // Proactively refresh preview data for favorites (keeps gallery frame fresh)
+      try { if (favorites.includes(fid)) refreshPreview(fid); } catch {}
+      // Notifications: skip for our own messages
+      if (isMineMsg) return;
       // Suppress notifications for muted or hidden (vaulted) spaces/DMs
       if (mutedSpaces[voidId] || hiddenSpaces[voidId]) return;
       // Notify only once per channel until visited
@@ -1359,8 +1364,8 @@ function ChatApp({ token, user }: { token: string; user: any }) {
             const stored = localStorage.getItem('user'); let u: any = null; try { if (stored) u = JSON.parse(stored); } catch {}
             toneUrl = u?.toneUrl || null;
           }
-        if (toneUrl) new Audio(toneUrl).play().catch(()=>{}); else {
-          const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+          if (toneUrl) new Audio(toneUrl).play().catch(()=>{}); else {
+            const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
             const o = ctx.createOscillator(); const g = ctx.createGain(); o.type='sine'; o.frequency.value=880; o.connect(g); g.connect(ctx.destination); g.gain.setValueAtTime(0.0001, ctx.currentTime); g.gain.exponentialRampToValueAtTime(0.2, ctx.currentTime + 0.01); o.start(); o.stop(ctx.currentTime + 0.15);
           }
         }
@@ -1372,11 +1377,6 @@ function ChatApp({ token, user }: { token: string; user: any }) {
             n.onclick = () => { window.focus(); n.close(); };
           }
         }
-      } catch {}
-      try {
-        // Proactively refresh preview data for favorites (keeps gallery frame fresh)
-        const fid = fq(voidId, channelId);
-        if (favorites.includes(fid)) refreshPreview(fid);
       } catch {}
       };
 
@@ -1724,6 +1724,8 @@ function ChatApp({ token, user }: { token: string; user: any }) {
       const kk = k(currentVoidId, currentChannelId);
       setMsgsByKey(old => ({ ...old, [kk]: [...(old[kk] ?? []), { id: tempId, content: '', optimistic: true, attachments: atts }] }));
       socket.emit('message:send', { voidId: currentVoidId, channelId: fq(currentVoidId, currentChannelId), content: '', tempId, attachments: atts });
+      // Ensure landing favorites gallery widget refreshes even for our own uploads
+      try { refreshPreview(fq(currentVoidId, currentChannelId)); } catch {}
     } catch (e: any) {
       toast(e?.message || 'Failed to add photos', 'error');
     } finally {
@@ -3114,9 +3116,16 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                       return (
                       <div key={i} className="relative group overflow-visible">
                         <div className={`block w-full pt-[125%] overflow-hidden rounded-xl border ${ (selected as any)[keyOf(im)] ? 'border-emerald-600 ring-1 ring-emerald-700' : 'border-neutral-800/80'} bg-neutral-950 shadow-md hover:shadow-lg transition-shadow` }>
-                          <a href={(selMode || hidden) ? undefined : im.url} target={(selMode || hidden) ? undefined : "_blank"} rel={(selMode || hidden) ? undefined : "noreferrer"} className="absolute inset-0">
-                            <img src={im.url} alt={im.name||'photo'} className={`w-full h-full object-cover transition-transform duration-300 ${hidden ? 'blur-sm brightness-50' : 'group-hover:scale-[1.03]'}`} />
-                          </a>
+                          <button
+                            type="button"
+                            disabled={selMode || hidden}
+                            onClick={() => { if (!selMode && !hidden) setImagePreview({ url: im.url, name: im.name }); }}
+                            className="absolute inset-0 cursor-zoom-in"
+                            title={hidden ? undefined : 'Open preview'}
+                            aria-label={hidden ? undefined : 'Open preview'}
+                          >
+                            <img src={im.url} alt={im.name||'photo'} className={`w-full h-full object-cover ${hidden ? 'blur-sm brightness-50' : ''}`} />
+                          </button>
                         {hidden && (
                           <button className="absolute inset-0 flex items-center justify-center bg-neutral-950/50 text-neutral-200 text-sm font-medium" onClick={()=> setRevealedSpoilers(prev => ({ ...prev, [im.mid]: true }))}>Spoiler - tap to reveal</button>
                         )}
@@ -3150,12 +3159,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                           </button>
                         )}
                         </div>
-                        {/* Hover pop-out preview (disabled for spoilers or selection mode) */}
-                        {(!selMode && !hidden) && (
-                          <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center opacity-0 scale-95 group-hover:opacity-100 group-hover:scale-100 transition-transform transition-opacity duration-700 ease-out">
-                            <img src={im.url} alt={im.name||'photo'} className="max-h-[85vh] max-w-[90vw] rounded-2xl shadow-2xl object-contain" />
-                          </div>
-                        )}
+                        {/* Click-to-preview replaces hover pop-out */}
                       </div>
                     )}); })()}
                     {/* If few images, pad with add placeholders to make it feel populated */}
