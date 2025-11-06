@@ -24,7 +24,12 @@ export async function initDb() {
   // New columns for profiles on existing deployments
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS bio TEXT`);
+  // Presence vs activity: keep existing `status` for presence mode; add `activity` for mini status text
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS status TEXT`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS activity TEXT`);
+  // Optional structured profile fields
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS skills JSONB`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS socials JSONB`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS tone_url TEXT`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS name_color TEXT`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS friend_ring_color TEXT`);
@@ -226,6 +231,16 @@ export async function initDb() {
   await pool.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS is_spoiler BOOLEAN DEFAULT FALSE`);
   // Last seen for users
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen TIMESTAMPTZ`);
+
+  // Per-space user metadata (e.g., nickname per space)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS user_space_meta (
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      space_id TEXT NOT NULL REFERENCES spaces(id) ON DELETE CASCADE,
+      nickname TEXT,
+      PRIMARY KEY (user_id, space_id)
+    );
+  `);
 
   // Reactions per message
   await pool.query(`

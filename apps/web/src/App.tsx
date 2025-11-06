@@ -2080,7 +2080,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
             return (
               <UserRow
                 key={m.id}
-                data={{ id: m.id, name: m.name, username: m.username, avatarUrl: m.avatarUrl, nameColor: m.nameColor, status: (miniFromBio) || undefined, rawStatus: (m as any).status, online, onMobile, activityText }}
+                data={{ id: m.id, name: m.name, username: m.username, avatarUrl: m.avatarUrl, nameColor: m.nameColor, status: ((m as any).activity || miniFromBio) || undefined, rawStatus: (m as any).status, online, onMobile, activityText }}
                 onClick={(e: any) => { if (m.id !== me.userId) { const rect = (e.currentTarget as HTMLElement).getBoundingClientRect(); setViewUserCard({ id: m.id, x: rect.right + 8, y: rect.top + 8 }); } else setSettingsOpen(true); }}
               />
             );

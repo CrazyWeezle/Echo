@@ -41,6 +41,13 @@ export default function SpaceGeneralSection({
   async function pickSpaceImage(files: FileList|null){ if(!files||files.length===0) return; const f=files[0]; try{ const up=await signUpload({ filename:f.name, contentType:f.type||'application/octet-stream', size:f.size }, token); await fetch(up.url,{method:'PUT', headers:up.headers, body:f}); setSAvatarUrl(up.publicUrl);} catch(e:any){ setErr(e?.message||'Upload failed'); } finally{ if(fileRef.current) fileRef.current.value=''; } }
   async function deleteSpace(){ const ok = await askConfirm({ title:'Delete Space', message:'Delete this space?', confirmText:'Delete' }); if(!ok) return; setBusy(true); setErr(''); try{ await api.deleteAuth('/spaces',{ spaceId }, token); onSpaceDeleted(); onRefreshSpaces(); } catch(e:any){ setErr(e?.message||'Failed to delete'); } finally{ setBusy(false);} }
 
+  // Autosave on modal backdrop click
+  useEffect(() => {
+    const onAuto = () => { if (!busy && !isDmSpace) saveSpaceGeneral(); };
+    try { window.addEventListener('settings:autosave' as any, onAuto as any); } catch {}
+    return () => { try { window.removeEventListener('settings:autosave' as any, onAuto as any); } catch {} };
+  }, [busy, isDmSpace, sName, sAvatarUrl, sHome]);
+
   return (
     <div className="space-y-4">
       <div className="text-emerald-300 font-semibold">Space</div>
@@ -95,4 +102,3 @@ export default function SpaceGeneralSection({
     </div>
   );
 }
-

@@ -24,6 +24,13 @@ export default function NotificationsSection({ token, onSaved }: { token: string
     finally { setLoading(false); }
   }
 
+  // Autosave when settings modal backdrop is clicked
+  React.useEffect(() => {
+    const onAuto = () => { if (!loading) saveNotifications(); };
+    window.addEventListener('settings:autosave' as any, onAuto as any);
+    return () => window.removeEventListener('settings:autosave' as any, onAuto as any);
+  }, [loading, notifEnabled, soundEnabled, toneUrl]);
+
   return (
     <div className="space-y-3">
       <div className="text-emerald-300 font-semibold">Notifications</div>
@@ -62,4 +69,3 @@ export default function NotificationsSection({ token, onSaved }: { token: string
     </div>
   );
 }
-

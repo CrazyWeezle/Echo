@@ -92,6 +92,8 @@ export default function UnifiedSettingsModal({
   const [name, setName] = useState('');
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState<string | null>(null);
+  const [memberSince, setMemberSince] = useState<string>('');
+  const [lastSeen, setLastSeen] = useState<string>('');
   // removed legacy skills/tags
   // removed legacy profile extras (projects, featured channels, achievements)
   // removed legacy mini status
@@ -111,6 +113,7 @@ export default function UnifiedSettingsModal({
         // profile extras loaded in ProfileSettingsSection
         setAvatarUrl(u.avatarUrl||null);
         // removed pronouns/website
+        try { if (u.createdAt) setMemberSince(new Date(u.createdAt).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })); if (u.lastSeen) setLastSeen(new Date(u.lastSeen).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })); } catch {}
       }
       catch (e:any) { setErr(e?.message || 'Failed to load profile'); }
       finally { setLoading(false); }
@@ -141,7 +144,7 @@ export default function UnifiedSettingsModal({
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center">
-      <div className="absolute inset-0 bg-black/50 z-0" onClick={onClose} />
+      <div className="absolute inset-0 bg-black/50 z-0" onClick={() => { try { window.dispatchEvent(new CustomEvent('settings:autosave')); } catch {} onClose(); }} />
       <div className="relative z-10 w-[calc(100%-2rem)] md:w-[calc(100%-3rem)] max-w-4xl h-[78vh] md:h-[76vh] rounded-2xl bg-neutral-900/95 backdrop-blur-md ring-1 ring-neutral-800 shadow-2xl grid grid-rows-[auto,1fr] md:grid-rows-1 md:grid-cols-[240px,1fr] overflow-hidden">
         <CloseButton onClick={onClose} className="absolute top-2 right-2 px-2 py-1" />
         <div className="absolute top-3 right-10 hidden md:block text-[10px] uppercase tracking-wider text-neutral-500 pointer-events-none">ESC</div>
@@ -205,12 +208,12 @@ export default function UnifiedSettingsModal({
           {tab==='profile' && (
             <div className="space-y-4 fade-in">
               <div className="text-emerald-300 font-semibold">Profile</div>
-              <ProfileSettingsSection token={token} onSaved={(u:any)=>{ try { if (u?.name!==undefined) setName(u.name||''); if (u?.avatarUrl!==undefined) setAvatarUrl(u.avatarUrl||null); } catch {}; onUserSaved(u); }} />
+              <ProfileSettingsSection token={token} spaceId={spaceId} onSaved={(u:any)=>{ try { if (u?.name!==undefined) setName(u.name||''); if (u?.avatarUrl!==undefined) setAvatarUrl(u.avatarUrl||null); } catch {}; onUserSaved(u); onClose(); }} />
             </div>
           )}
 
           {tab==='notifications' && (
-            <NotificationsSection token={token} onSaved={onUserSaved} />
+            <NotificationsSection token={token} onSaved={(u:any)=>{ onUserSaved(u); onClose(); }} />
           )}
 
           {tab==='security' && (
@@ -259,7 +262,8 @@ export default function UnifiedSettingsModal({
                       { label: 'Display Name', value: name || '—', onClick: ()=>{} },
                       { label: 'Username', value: username || '—', onClick: ()=>{} },
                       { label: 'Email', value: email ? maskEmail(email) : 'Add an email', onClick: ()=>{} },
-                      { label: 'Phone Number', value: 'Add a phone', onClick: ()=>{} },
+                      { label: 'Member since', value: memberSince || '-', onClick: ()=>{} },
+                      { label: 'Last seen', value: lastSeen || '-', onClick: ()=>{} },
                     ].map((row, i) => (
                       <div key={i} className={`flex items-center justify-between px-3 py-3 ${i>0?'border-t border-neutral-800':''}`}>
                         <div>
@@ -273,6 +277,28 @@ export default function UnifiedSettingsModal({
                 </div>
               </div>
 
+              {/* Security actions */}
+              <div className="space-y-3">
+                <button className="px-4 py-2 rounded bg-teal-600 hover:bg-teal-500 text-white" onClick={()=>setTab("security")}>Change password</button>
+                <div className="flex gap-2 flex-wrap">
+                  <button
+                    className="px-4 py-2 rounded border border-red-700 text-red-300 hover:bg-red-900/20"
+                    onClick={async ()=>{
+                      const ok = await askConfirm({ title:"Deactivate Account", message:"Deactivate your account? You will be signed out.", confirmText:"Deactivate" });
+                      if (!ok) return;
+                      try { await api.postAuth("/users/deactivate", {}, token); } finally { try { localStorage.removeItem("token"); localStorage.removeItem("user"); localStorage.removeItem("me"); } catch {}; location.reload(); }
+                    }}
+                  >Deactivate account</button>
+                  <button
+                    className="px-4 py-2 rounded bg-red-600 hover:bg-red-500 text-white"
+                    onClick={async ()=>{
+                      const ok = await askConfirm({ title:"Delete Account", message:"This will permanently delete your account and all associated data. This cannot be undone.", confirmText:"Delete" });
+                      if (!ok) return;
+                      try { await api.request("/users/me", { method: "DELETE", token }); } finally { try { localStorage.removeItem("token"); localStorage.removeItem("user"); localStorage.removeItem("me"); } catch {}; location.reload(); }
+                    }}
+                  >Delete account</button>
+                </div>
+              </div>
               {/* Security actions moved to SecuritySection */}
             </div>
           )}

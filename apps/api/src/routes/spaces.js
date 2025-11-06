@@ -37,11 +37,14 @@ export async function handleSpaces(req, res, body, ctx) {
          u.name as name,
          u.avatar_url as "avatarUrl",
          COALESCE(u.status, '') as status,
+         COALESCE(u.activity, '') as activity,
          u.name_color as "nameColor",
          u.bio as bio,
-         m.role as "role"
+         m.role as "role",
+         COALESCE(meta.nickname, '') as nickname
        FROM users u
        JOIN space_members m ON m.user_id=u.id
+       LEFT JOIN user_space_meta meta ON meta.user_id=u.id AND meta.space_id=m.space_id
        WHERE m.space_id=$1
        ORDER BY lower(u.name)`
     , [sid]);

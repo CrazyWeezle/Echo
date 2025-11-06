@@ -56,9 +56,17 @@ export default function MemberProfileCard({
 
   const name = (u?.name || u?.username || '') as string;
   const miniStatus = useMemo(() => {
+    try {
+      const raw = localStorage.getItem('user');
+      const me = raw ? JSON.parse(raw) : null;
+      if (me && me.id && u?.id && me.id === u.id) {
+        const act = localStorage.getItem('profile.activity') || '';
+        if (act.trim()) return act.trim().slice(0, 140);
+      }
+    } catch {}
     const b = String(u?.bio || '').trim();
     return b ? b.split(/\r?\n/)[0].slice(0, 120) : '';
-  }, [u?.bio]);
+  }, [u?.id, u?.bio]);
 
   const width = 320; // px
   const height = 280; // approximate; we also clamp after render via CSS overflow
@@ -123,7 +131,7 @@ export default function MemberProfileCard({
           {!loading && err && <div className="text-red-400 text-xs mb-2">{err}</div>}
           {!!u && (
             <>
-              <div className="text-neutral-100 font-semibold leading-tight">{u.name || u.username || 'User'}</div>
+              <div className="text-neutral-100 font-semibold leading-tight">{u.name || u.username || 'User'} {u?.pronouns ? <span className="ml-2 text-xs text-neutral-400">({String(u.pronouns)})</span> : null}</div>
               <div className="text-xs text-neutral-400">{u.username ? `@${u.username}` : ''}</div>
               {!!miniStatus && (
                 <div className="mt-2 inline-block px-2 py-1 rounded-lg bg-neutral-800/80 text-xs text-neutral-300">
@@ -154,4 +162,3 @@ export default function MemberProfileCard({
     </div>
   );
 }
-

@@ -23,6 +23,18 @@ export function UserRow({ data, onClick }: { data: UserRowData; onClick?: () => 
       : (rawStatus === 'idle')
         ? 'idle'
         : (online ? (onMobile ? 'mobile' : 'online') : 'offline');
+  // Prefer the user's own local "What I'm up to" message if this row is for me
+  const displayStatus = (() => {
+    try {
+      const raw = localStorage.getItem('user');
+      const me = raw ? JSON.parse(raw) : null;
+      if (me && me.id && data?.id && String(me.id) === String(data.id)) {
+        const act = localStorage.getItem('profile.activity') || '';
+        if (act && String(act).trim()) return String(act).trim();
+      }
+    } catch {}
+    return status || null;
+  })();
   return (
     <div className="w-full flex items-center gap-2 px-2 py-1 rounded hover:bg-neutral-800/40">
       <button className="flex-1 text-left flex items-center gap-2" onClick={onClick} aria-label={`Open profile for ${name || username}`}>
@@ -39,16 +51,9 @@ export function UserRow({ data, onClick }: { data: UserRowData; onClick?: () => 
         <div className="min-w-0">
           <div className="truncate text-neutral-200 text-sm" style={nameColor ? { color: String(nameColor) } : undefined}>
             <span className="font-semibold">{name || username}</span>
-            {/* Hide presence dot for offline/invisible */}
-            {presence !== 'offline' && (
-              <span
-                className="ml-2 inline-block align-middle h-2 w-2 rounded-full"
-                style={{ backgroundColor: (presence==='online'||presence==='mobile') ? '#10b981' : (presence==='idle') ? '#f59e0b' : (presence==='dnd') ? '#ef4444' : '#475569' }}
-                aria-hidden="true"
-              />
-            )}
+            {/* presence dot removed; glowing ring indicates online */}
           </div>
-          <StatusWidget statusText={status || null} presence={presence} activity={activityText || null} />
+          <StatusWidget statusText={displayStatus} presence={presence} activity={activityText || null} />
         </div>
       </button>
     </div>

@@ -13,7 +13,10 @@ export async function handleUsers(req, res, body, ctx) {
       try { const p = jwt.verify(auth.slice(7), JWT_SECRET); userId = p.sub; } catch {}
     }
     if (!userId) return json(res, 401, { message: 'Unauthorized' }), true;
-    const { rows } = await pool.query('SELECT id, username, name, avatar_url as "avatarUrl", bio, COALESCE(status, \'\') as status, tone_url as "toneUrl", name_color as "nameColor", friend_ring_color as "friendRingColor", COALESCE(friend_ring_enabled, true) as "friendRingEnabled", COALESCE(pronouns, \'\') as pronouns, COALESCE(location, \'\') as location, COALESCE(website, \'\') as website, COALESCE(banner_url, \'\') as "bannerUrl" FROM users WHERE id=$1', [userId]);
+    const { rows } = await pool.query(
+      'SELECT id, username, name, avatar_url as "avatarUrl", bio, COALESCE(status, \'\') as status, COALESCE(activity, \'\') as activity, tone_url as "toneUrl", name_color as "nameColor", friend_ring_color as "friendRingColor", COALESCE(friend_ring_enabled, true) as "friendRingEnabled", COALESCE(pronouns, \'\') as pronouns, COALESCE(location, \'\') as location, COALESCE(website, \'\') as website, COALESCE(banner_url, \'\') as "bannerUrl", skills, socials, created_at as "createdAt", last_seen as "lastSeen" FROM users WHERE id=$1',
+      [userId]
+    );
     const u = rows[0];
     if (!u) return json(res, 404, { message: 'User not found' }), true;
     return json(res, 200, u), true;
@@ -27,12 +30,37 @@ export async function handleUsers(req, res, body, ctx) {
       try { const p = jwt.verify(auth.slice(7), JWT_SECRET); userId = p.sub; } catch {}
     }
     if (!userId) return json(res, 401, { message: 'Unauthorized' }), true;
-    const { name, bio, avatarUrl, status, toneUrl, nameColor, friendRingColor, friendRingEnabled, pronouns, location, website, bannerUrl } = body || {};
+    const { name, bio, avatarUrl, status, activity, skills, socials, toneUrl, nameColor, friendRingColor, friendRingEnabled, pronouns, location, website, bannerUrl } = body || {};
     const fields = []; const values = [];
     if (typeof name === 'string') { fields.push('name'); values.push(String(name).trim().slice(0, 64)); }
     if (typeof bio === 'string' || bio === null) { fields.push('bio'); values.push(bio ? String(bio).trim().slice(0, 2048) : null); }
     if (typeof avatarUrl === 'string' || avatarUrl === null) { fields.push('avatar_url'); values.push(avatarUrl ? String(avatarUrl).trim().slice(0, 2048) : null); }
     if (typeof status === 'string') { fields.push('status'); values.push(String(status).trim().slice(0, 20)); }
+    if (typeof activity === 'string' || activity === null) { fields.push('activity'); values.push(activity ? String(activity).trim().slice(0, 160) : null); }
+    if (skills !== undefined) {
+      let v = null;
+      if (Array.isArray(skills)) {
+        const arr = skills.map(x => String(x || '').trim()).filter(Boolean).slice(0, 50);
+        v = JSON.stringify(arr);
+      }
+      fields.push('skills'); values.push(v);
+    }
+    if (socials !== undefined) {
+      let v = null;
+      if (socials && typeof socials === 'object') {
+        const src = socials || {};
+        const out = {};
+        const allow = ['github','discord','google','notion','twitter','linkedin','website'];
+        for (const k of allow) {
+          if (src[k] != null) {
+            const val = String(src[k] || '').trim();
+            if (val) out[k] = val.slice(0, 2048);
+          }
+        }
+        v = JSON.stringify(out);
+      }
+      fields.push('socials'); values.push(v);
+    }
     if (typeof toneUrl === 'string' || toneUrl === null) { fields.push('tone_url'); values.push(toneUrl ? String(toneUrl).trim().slice(0, 2048) : null); }
     if (typeof nameColor === 'string' || nameColor === null) {
       let c = nameColor;
@@ -68,7 +96,7 @@ export async function handleUsers(req, res, body, ctx) {
     if (fields.length === 0) return json(res, 400, { message: 'No updatable fields' }), true;
     const sets = fields.map((f, i) => `${f} = $${i + 1}`).join(', ');
     await pool.query(`UPDATE users SET ${sets} WHERE id = $${fields.length + 1}`, [...values, userId]);
-    const { rows } = await pool.query('SELECT id, username, name, avatar_url as "avatarUrl", bio, COALESCE(status, \'\') as status, tone_url as "toneUrl", name_color as "nameColor", friend_ring_color as "friendRingColor", COALESCE(friend_ring_enabled, true) as "friendRingEnabled", COALESCE(pronouns, \'\') as pronouns, COALESCE(location, \'\') as location, COALESCE(website, \'\') as website, COALESCE(banner_url, \'\') as "bannerUrl" FROM users WHERE id=$1', [userId]);
+    const { rows } = await pool.query('SELECT id, username, name, avatar_url as "avatarUrl", bio, COALESCE(status, \'\') as status, COALESCE(activity, \'\') as activity, tone_url as "toneUrl", name_color as "nameColor", friend_ring_color as "friendRingColor", COALESCE(friend_ring_enabled, true) as "friendRingEnabled", COALESCE(pronouns, \'\') as pronouns, COALESCE(location, \'\') as location, COALESCE(website, \'\') as website, COALESCE(banner_url, \'\') as "bannerUrl", skills, socials, created_at as "createdAt", last_seen as "lastSeen" FROM users WHERE id=$1', [userId]);
     if (typeof status === 'string' && io) {
       try {
         const s = String(status).trim().slice(0, 20);
@@ -96,6 +124,24 @@ export async function handleUsers(req, res, body, ctx) {
     return json(res, 200, { ok: true }), true;
   }
 
+  // DELETE /api/users/me — permanently delete the account
+  if (req.method === 'DELETE' && req.url === '/api/users/me') {
+    let userId = null;
+    const auth = req.headers['authorization'] || '';
+    if (auth.startsWith('Bearer ')) {
+      try { const p = jwt.verify(auth.slice(7), JWT_SECRET); userId = p.sub; } catch {}
+    }
+    if (!userId) return json(res, 401, { message: 'Unauthorized' }), true;
+    try {
+      await pool.query('DELETE FROM sessions WHERE user_id=$1', [userId]);
+      await pool.query('DELETE FROM users WHERE id=$1', [userId]);
+    } catch (e) {
+      return json(res, 500, { message: 'Failed to delete account' }), true;
+    }
+    setRefreshCookie(res, '', 0);
+    return json(res, 200, { ok: true }), true;
+  }
+
   // GET /api/users/profile?userId=... or ?username=...
   if (req.method === 'GET' && req.url.startsWith('/api/users/profile')) {
     let viewer = null;
@@ -111,18 +157,18 @@ export async function handleUsers(req, res, body, ctx) {
     if (!uid && !uname) return json(res, 400, { message: 'userId or username required' }), true;
     const q = uid
       ? await pool.query(
-          `SELECT u.id, u.username, u.name, u.avatar_url as "avatarUrl", u.bio, COALESCE(u.status,'') as status,
+          `SELECT u.id, u.username, u.name, u.avatar_url as "avatarUrl", u.bio, COALESCE(u.status,'') as status, COALESCE(u.activity,'') as activity,
                   u.tone_url as "toneUrl", u.name_color as "nameColor", u.friend_ring_color as "friendRingColor",
                   COALESCE(u.friend_ring_enabled, true) as "friendRingEnabled", COALESCE(u.pronouns,'') as pronouns,
-                  COALESCE(u.location,'') as location, COALESCE(u.website,'') as website, COALESCE(u.banner_url,'') as "bannerUrl"
+                  COALESCE(u.location,'') as location, COALESCE(u.website,'') as website, COALESCE(u.banner_url,'') as "bannerUrl", u.created_at as "createdAt", u.last_seen as "lastSeen"
            FROM users u WHERE u.id=$1`,
           [uid]
         )
       : await pool.query(
-          `SELECT u.id, u.username, u.name, u.avatar_url as "avatarUrl", u.bio, COALESCE(u.status,'') as status,
+          `SELECT u.id, u.username, u.name, u.avatar_url as "avatarUrl", u.bio, COALESCE(u.status,'') as status, COALESCE(u.activity,'') as activity,
                   u.tone_url as "toneUrl", u.name_color as "nameColor", u.friend_ring_color as "friendRingColor",
                   COALESCE(u.friend_ring_enabled, true) as "friendRingEnabled", COALESCE(u.pronouns,'') as pronouns,
-                  COALESCE(u.location,'') as location, COALESCE(u.website,'') as website, COALESCE(u.banner_url,'') as "bannerUrl"
+                  COALESCE(u.location,'') as location, COALESCE(u.website,'') as website, COALESCE(u.banner_url,'') as "bannerUrl", u.created_at as "createdAt", u.last_seen as "lastSeen"
            FROM users u WHERE u.username=$1`,
           [uname]
         );
