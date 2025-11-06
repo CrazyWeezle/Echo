@@ -3648,10 +3648,11 @@ function ChatApp({ token, user }: { token: string; user: any }) {
         </div>
       )}
               <div className="flex items-center gap-1 md:gap-2 w-full max-w-full overflow-visible relative">
+                <div className="flex items-center gap-2 w-full rounded-full bg-neutral-900 border border-neutral-800 px-2 py-1.5">
                 <button
                   ref={addBtnRef}
                   type="button"
-                  className="shrink-0 px-3 py-2 rounded border border-neutral-800 text-neutral-300 hover:text-neutral-100 hover:bg-neutral-800/60"
+                  className="shrink-0 h-9 w-9 rounded-full text-neutral-300 hover:text-neutral-100 hover:bg-neutral-800/60 flex items-center justify-center"
                   title="Add"
                   aria-label="Add"
                   onClick={() => {
@@ -3681,13 +3682,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                         <line x1="1" y1="1" x2="23" y2="23"/>
                       </svg>
                     </button>
-                    <button className="px-2 py-1 rounded hover:bg-neutral-800 text-neutral-200" onClick={()=>{ setComposerPickerOpen(true); setAddOpen(false); }} title="Emoji" aria-label="Emoji picker">
-                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
-                        <circle cx="12" cy="12" r="9"/>
-                        <path d="M8 14s1.5 2 4 2 4-2 4-2"/>
-                        <path d="M9 9h.01M15 9h.01"/>
-                      </svg>
-                    </button>
+                    {/* Emoji moved next to Send inside the pill */}
                     <button className="px-2 py-1 rounded hover:bg-neutral-800 text-neutral-200" onClick={()=>{ setGifOpen(true); setAddOpen(false); }} title="GIF">GIF</button>
                     <label className="px-2 py-1 rounded hover:bg-neutral-800 text-neutral-200 cursor-pointer" title="File">
                       <input type="file" multiple className="hidden" onChange={(e)=>{ onFilesSelected(e.target.files); setAddOpen(false); }} />
@@ -3715,7 +3710,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                 <textarea
                   ref={inputRef}
                   rows={1}
-                  className="min-w-0 flex-1 px-3 py-3 text-base rounded bg-neutral-900 text-neutral-100 placeholder-neutral-500 outline-none focus:ring-2 focus:ring-emerald-600/60 border border-neutral-800/60 resize-none"
+                  className="min-w-0 flex-1 px-2 py-2 text-base bg-transparent text-neutral-100 placeholder-neutral-500 outline-none ring-0 border-0 resize-none"
                   placeholder={`Message #${currentChannel?.name ?? 'general'}`}
                   value={text}
                   onChange={(e) => onInputChange(e.target.value)}
@@ -3731,18 +3726,32 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                   data-bw-ignore
                   data-form-type="other"
                 />
+                {/* Emoji button inside pill */}
                 <button
-                  className="shrink-0 px-2 md:px-3 py-2 rounded border border-emerald-700 bg-emerald-800/70 hover:bg-emerald-700/70 text-emerald-50 flex items-center justify-center"
+                  type="button"
+                  className="shrink-0 h-9 w-9 rounded-full text-neutral-300 hover:text-neutral-100 hover:bg-neutral-800/60 flex items-center justify-center"
+                  title="Emoji" aria-label="Emoji"
+                  onClick={() => setComposerPickerOpen(true)}
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
+                    <circle cx="12" cy="12" r="9"/>
+                    <path d="M8 14s1.5 2 4 2 4-2 4-2"/>
+                    <path d="M9 9h.01M15 9h.01"/>
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  className="shrink-0 h-9 w-9 rounded-full bg-emerald-700 hover:bg-emerald-600 text-white flex items-center justify-center"
+                  title="Send"
+                  aria-label="Send"
                   onClick={send}
                 >
-                  <span className="md:hidden">
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
-                      <path d="M22 2L11 13"/>
-                      <path d="M22 2l-7 20-4-9-9-4 20-7z"/>
-                    </svg>
-                  </span>
-                  <span className="hidden md:inline">Send</span>
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
+                    <path d="M22 2L11 13"/>
+                    <path d="M22 2l-7 20-4-9-9-4 20-7z"/>
+                  </svg>
                 </button>
+                </div>
               </div>
               {composerPickerOpen && (
                 <Suspense>
