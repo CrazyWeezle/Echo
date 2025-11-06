@@ -91,6 +91,17 @@ body {
   background: var(--scrollbar-thumb-hover);
 }
 
+/* ECHO Settings theme tokens */
+:root {
+  --echo-accent:  #10b981;
+  --echo-accent-fg: #061a13;
+  --echo-banner:  linear-gradient(135deg,#0ea5a3 0%, #10b981 60%, #86efac 100%);
+}
+.dark {
+  --echo-accent:  #22c55e;
+  --echo-accent-fg: #02110b;
+}
+
 /* Gentle fade/slide for settings sections */
 @keyframes fadeInUp {
   from { opacity: 0; transform: translateY(4px); }

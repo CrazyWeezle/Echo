@@ -11,6 +11,8 @@
   },
   "dependencies": {
     "@capacitor/core": "^7.4.4",
+    "framer-motion": "^11.3.12",
+    "lucide-react": "^0.469.0",
     "@tanstack/react-query": "^5.56.2",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",

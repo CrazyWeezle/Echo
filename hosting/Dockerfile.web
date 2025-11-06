@@ -15,6 +15,8 @@ ARG VITE_GIPHY_KEY
 ENV VITE_GIPHY_KEY=$VITE_GIPHY_KEY
 ARG VITE_VAPID_PUBLIC_KEY
 ENV VITE_VAPID_PUBLIC_KEY=$VITE_VAPID_PUBLIC_KEY
+ARG VITE_DISABLE_PWA
+ENV VITE_DISABLE_PWA=$VITE_DISABLE_PWA
 
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
 COPY apps/web/package.json apps/web/package.json
@@ -23,9 +25,9 @@ RUN pnpm install --filter ./apps/web --no-frozen-lockfile
 
 COPY . .
 WORKDIR /repo/apps/web
-# Sanity: print tail of App.tsx to confirm builder sees latest source (remove when stable)
-RUN echo '--- apps/web/src/App.tsx tail (2185-2266) ---' \
- && sed -n '2185,2266p' src/App.tsx || true
+# Sanity: print a small slice of MemberProfileModal and App to confirm builder sees source (harmless in logs)
+RUN echo '--- MemberProfileModal.tsx (320-360) ---' && sed -n '320,360p' src/components/MemberProfileModal.tsx || true \
+ && echo '--- App.tsx (1-40) ---' && sed -n '1,40p' src/App.tsx || true
 # Vite will read VITE_* from env at build-time
 # Use the package script to avoid PATH quirks
 RUN pnpm run build

@@ -151,6 +151,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
   // Reaction hover details cache: messageId -> emoji -> items
   const [reactionInfoByMsg, setReactionInfoByMsg] = useState<Record<string, Record<string, { users: { userId: string; name: string; createdAt?: string }[] }>>>({});
   const [hoverReaction, setHoverReaction] = useState<{ messageId: string; emoji: string } | null>(null);
+  const [reactionTipPos, setReactionTipPos] = useState<{ x: number; y: number } | null>(null);
 
   async function loadReactionsFor(messageId: string) {
     if (reactionInfoByMsg[messageId]) return;
@@ -575,6 +576,15 @@ function ChatApp({ token, user }: { token: string; user: any }) {
   // Profile modal removed; avatar now navigates to landing
   const [friendsOpen, setFriendsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // Expose a lightweight spaces cache for settings Vault section
+  useEffect(() => {
+    try {
+      (window as any).__echoVoids = voids;
+      const cache = voids.filter(v=>!String(v.id).startsWith('dm_')).map(v=>({ id: v.id, name: v.name||v.id }));
+      localStorage.setItem('__echo_spaces_cache__', JSON.stringify(cache));
+    } catch {}
+  }, [voids]);
   const [viewUserId, setViewUserId] = useState<string | null>(null);
   const [profileOpen, setProfileOpen] = useState<boolean>(false);
   const [gifOpen, setGifOpen] = useState(false);
@@ -633,19 +643,33 @@ function ChatApp({ token, user }: { token: string; user: any }) {
     try { const s = localStorage.getItem('hiddenDMs'); return s ? JSON.parse(s) : []; } catch { return []; }
   });
   useEffect(() => { try { localStorage.setItem('hiddenDMs', JSON.stringify(hiddenDms)); } catch {} }, [hiddenDms]);
+  // Hidden spaces sent to the Vault (excluded from lists)
+  const [hiddenSpaces, setHiddenSpaces] = useState<Record<string, boolean>>(() => {
+    try { const s = localStorage.getItem('hiddenSpaces'); return s ? JSON.parse(s) : {}; } catch { return {}; }
+  });
+  useEffect(() => { try { localStorage.setItem('hiddenSpaces', JSON.stringify(hiddenSpaces)); } catch {} }, [hiddenSpaces]);
+  useEffect(() => {
+    function onHidden(e: any) { try { const hs = e?.detail || {}; if (hs && typeof hs === 'object') setHiddenSpaces(hs); } catch {} }
+    (window as any).addEventListener('echo:hiddenSpaces', onHidden);
+    return () => (window as any).removeEventListener('echo:hiddenSpaces', onHidden);
+  }, []);
   // Mute spaces/DMs: suppress notifications and prevent DM pop-ups
   const [mutedSpaces, setMutedSpaces] = useState<Record<string, boolean>>(() => {
     try { const s = localStorage.getItem('mutedSpaces'); return s ? JSON.parse(s) : {}; } catch { return {}; }
   });
   useEffect(() => {
     try {
+      // Persist explicit mutes only
       localStorage.setItem('mutedSpaces', JSON.stringify(mutedSpaces));
+      // Build effective mute set = muted ∪ hidden (vaulted spaces are always quiet)
+      const effective: Record<string, boolean> = { ...mutedSpaces };
+      for (const [id, hidden] of Object.entries(hiddenSpaces)) if (hidden) effective[id] = true;
       // Inform service worker (for push suppression)
       if (navigator.serviceWorker && navigator.serviceWorker.controller) {
-        navigator.serviceWorker.controller.postMessage({ type: 'SET_MUTED_SPACES', data: mutedSpaces });
+        navigator.serviceWorker.controller.postMessage({ type: 'SET_MUTED_SPACES', data: effective });
       }
     } catch {}
-  }, [mutedSpaces]);
+  }, [mutedSpaces, hiddenSpaces]);
   // Listen for external mutedSpaces updates (from settings modal)
   useEffect(() => {
     function onMuted(e: any) { try { const ms = e?.detail || {}; if (ms && typeof ms === 'object') setMutedSpaces(ms); } catch {} }
@@ -1274,8 +1298,8 @@ function ChatApp({ token, user }: { token: string; user: any }) {
         while (list.length > 20) list.shift();
         return { ...old, [fid]: list };
       });
-      // Suppress notifications for muted spaces/DMs
-      if (mutedSpaces[voidId]) return;
+      // Suppress notifications for muted or hidden (vaulted) spaces/DMs
+      if (mutedSpaces[voidId] || hiddenSpaces[voidId]) return;
       // Notify only once per channel until visited
       if (notifiedRef.current[fid]) return;
       setNotified(prev => ({ ...prev, [fid]: true }));
@@ -1954,7 +1978,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
         {/* Draggable spaces */}
         {(() => {
           const isDm = (id:string) => String(id).startsWith('dm_');
-          const nonDm = voids.filter(v => !isDm(v.id));
+          const nonDm = voids.filter(v => !isDm(v.id) && !hiddenSpaces[v.id]);
           const dms = voids.filter(v => {
             if (!isDm(v.id)) return false;
             const unreadCount = unread[`${v.id}:chat`] || 0;
@@ -2361,7 +2385,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
             <div className="relative z-10 mt-6 max-w-5xl mx-auto">
               <div className="mb-2 text-neutral-300 font-medium text-center">Your Spaces</div>
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 justify-center mx-auto">
-                {voids.filter(v=>!String(v.id).startsWith('dm_')).map(v => {
+                {voids.filter(v=>!String(v.id).startsWith('dm_') && !hiddenSpaces[v.id]).map(v => {
                   const total = Object.keys(unread).reduce((a,k)=> k.startsWith(v.id+':') ? a + (unread[k]||0) : a, 0);
                   const badge = total>99 ? '99+' : (total||'');
                   return (
@@ -3349,25 +3373,38 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                     <div key={emoji} className="relative inline-block">
                       <button
                         onClick={() => toggleReaction(m, emoji)}
-                        onMouseEnter={() => { setHoverReaction({ messageId: m.id, emoji }); loadReactionsFor(m.id); }}
-                        onMouseLeave={() => { setHoverReaction(hr => (hr && hr.messageId === m.id && hr.emoji === emoji ? null : hr)); }}
+                        onMouseEnter={(e) => {
+                          setHoverReaction({ messageId: m.id, emoji });
+                          loadReactionsFor(m.id);
+                          try {
+                            const r = (e.currentTarget as HTMLButtonElement).getBoundingClientRect();
+                            setReactionTipPos({ x: Math.round(r.left + r.width / 2), y: Math.round(r.top) });
+                          } catch {}
+                        }}
+                        onMouseLeave={() => {
+                          setHoverReaction(hr => (hr && hr.messageId === m.id && hr.emoji === emoji ? null : hr));
+                          setReactionTipPos(null);
+                        }}
                         className={`px-2 py-0.5 rounded-full border text-sm ${v.mine ? 'bg-emerald-800/50 border-emerald-700' : 'bg-neutral-800/60 border-neutral-700'}`}
                       >
                         <span className="mr-1">{emoji}</span>{v.count}
                       </button>
-                      {hoverReaction && hoverReaction.messageId === m.id && hoverReaction.emoji === emoji && (
-                        <div className="absolute left-1/2 -translate-x-1/2 -top-1.5 -translate-y-full z-50 pointer-events-none w-52 max-w-[13rem] rounded-md border border-neutral-700 bg-neutral-900 text-neutral-200 text-xs shadow-xl p-2">
+                      {hoverReaction && hoverReaction.messageId === m.id && hoverReaction.emoji === emoji && reactionTipPos && (
+                        <div
+                          className="fixed z-[20000] pointer-events-none rounded-md border border-neutral-700 bg-neutral-900 text-neutral-200 text-[11px] leading-4 shadow-xl p-1.5 max-w-[10rem]"
+                          style={{ left: reactionTipPos.x, top: reactionTipPos.y, transform: 'translate(-50%, -110%)' }}
+                        >
                           {(() => {
                             const info = reactionInfoByMsg[m.id]?.[emoji]?.users || [];
                             if (info.length === 0) return <div className="text-neutral-500">No details</div>;
                             return (
-                              <div className="space-y-1 max-h-60 overflow-auto">
+                              <div className="space-y-0.5 max-h-48 overflow-auto">
                                 {info.map((it, i) => {
                                   const who = (it.name && it.name.trim()) || (it.username && it.username.trim()) || (it.userId ? it.userId.slice(0,8) : 'User');
                                   return (
                                     <div key={i} className="flex items-center justify-between gap-2">
-                                      <span className="truncate max-w-[20ch]" title={who}>{who}</span>
-                                      <span className="text-neutral-400">{timeAgo(it.createdAt)}</span>
+                                      <span className="truncate max-w-[18ch]" title={who}>{who}</span>
+                                      <span className="text-neutral-400 whitespace-nowrap">{timeAgo(it.createdAt)}</span>
                                     </div>
                                   );
                                 })}
@@ -3752,6 +3789,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
         token={localStorage.getItem('token') || ''}
         userId={viewUserId || ''}
         open={!!viewUserId}
+        spaceId={currentVoidId}
         onClose={()=>setViewUserId(null)}
         onStartDm={async (uid) => {
           try {
@@ -3796,6 +3834,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
         spaceAvatarUrl={voids.find(v=>v.id===currentVoidId)?.avatarUrl || null}
         spaceHomeChannelId={(voids.find(v=>v.id===currentVoidId) as any)?.homeChannelId || null}
         channels={channels}
+        spaces={voids.map(v=>({ id: v.id, name: v.name }))}
         open={settingsOpen}
         onClose={()=>setSettingsOpen(false)}
         onRefreshSpaces={()=>socket.emit('void:list')}
@@ -3899,7 +3938,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
               </button>
             </div>
             <div className="mt-3 flex-1 overflow-auto px-2 space-y-2">
-              {voids.filter(v=>!String(v.id).startsWith('dm_')).map(v => (
+              {voids.filter(v=>!String(v.id).startsWith('dm_') && !hiddenSpaces[v.id]).map(v => (
                 <div key={v.id} className="flex items-center justify-between gap-2">
                   <button onClick={() => { switchVoid(v.id); setVoidSheetOpen(false); }}
                           className={`flex-1 px-3 py-2 rounded-md text-left border ${v.id===currentVoidId?'border-emerald-700 bg-emerald-900/30 text-emerald-200':'border-neutral-800 bg-neutral-900 text-neutral-300'}`}
@@ -3926,6 +3965,27 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                   )}
                 </div>
               ))}
+              {Object.keys(hiddenSpaces).some(id=>hiddenSpaces[id]) && (
+                <div className="mt-3">
+                  <div className="px-1 text-neutral-400 text-xs mb-1">Vault</div>
+                  {voids.filter(v=>!String(v.id).startsWith('dm_') && hiddenSpaces[v.id]).map(v => (
+                    <div key={v.id} className="flex items-center justify-between gap-2">
+                      <button onClick={() => { switchVoid(v.id); setVoidSheetOpen(false); }}
+                              className="flex-1 px-3 py-2 rounded-md text-left border border-neutral-800 bg-neutral-900 text-neutral-300">
+                        <div className="flex items-center gap-2">
+                          <div className="h-8 w-8 rounded-full overflow-hidden border border-neutral-700 bg-neutral-900 flex items-center justify-center">
+                            {v.avatarUrl ? <img src={v.avatarUrl} className="h-full w-full object-cover"/> : <span className="text-[10px] text-neutral-400">{(v.name?.[0]||'?').toUpperCase()}</span>}
+                          </div>
+                          <div className="truncate">{v.name}</div>
+                        </div>
+                      </button>
+                      <button className="shrink-0 h-10 px-2 rounded border border-emerald-700 text-emerald-200" onClick={()=>{ const next={...hiddenSpaces}; delete next[v.id]; setHiddenSpaces(next); }}>
+                        Unhide
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
             <div className="px-2 mt-2 flex items-center gap-2">
               <button className="flex-1 px-3 py-2 rounded border border-neutral-700 text-neutral-200 hover:bg-neutral-800/60" onClick={()=>{ createSpace(); setVoidSheetOpen(false); }}>New Space</button>

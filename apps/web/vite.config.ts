@@ -7,6 +7,7 @@ import { VitePWA } from 'vite-plugin-pwa';
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   const debug = env.VITE_DEBUG_BUILD === '1';
+  const disablePwa = env.VITE_DISABLE_PWA === '1';
   const filesProxyTarget = env.VITE_FILES_PROXY_TARGET || 'http://localhost:9000';
   const pwa = VitePWA({
     strategies: 'injectManifest',
@@ -27,8 +28,10 @@ export default defineConfig(({ mode }) => {
       ]
     }
   });
+  const basePlugins = [react()];
+  if (!disablePwa) basePlugins.push(pwa);
   return {
-    plugins: [react(), pwa],
+    plugins: basePlugins,
     // Prevent multiple React copies in monorepos / linked deps
     resolve: { dedupe: ['react', 'react-dom'] },
     server: {

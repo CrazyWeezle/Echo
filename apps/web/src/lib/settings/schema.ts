@@ -1,66 +1,50 @@
-// TS-first schemas for settings; can be replaced with Zod easily.
-
-export type AccountSettings = {
-  email: string;
-  twoFactorEnabled: boolean;
-};
-
-export type ProfileSettings = {
-  displayName: string;
-  avatarUrl?: string | null;
-  bannerUrl?: string | null;
-  bio?: string;
-};
-
-export type AppearanceSettings = {
-  theme: "system" | "light" | "dark";
-  accent: "emerald" | "blue" | "purple" | "rose" | "amber" | "indigo" | "cyan" | "orange";
-  density: "compact" | "comfortable";
-};
-
-export type NotificationSettings = {
-  globalMute: boolean;
-  perChannelDefault: "all" | "mentions" | "none";
-  desktop: boolean;
-  mobile: boolean;
-  digest: "off" | "daily" | "weekly";
-};
-
-export type PrivacySettings = {
-  profileVisibility: "everyone" | "friends" | "private";
-  dmPermissions: "everyone" | "friends" | "none";
-  readReceipts: boolean;
-};
-
-export type DevicesSettings = Record<string, unknown>; // server-driven
-export type IntegrationsSettings = {
-  githubConnected?: boolean;
-  notionConnected?: boolean;
-};
-
-export type AdvancedSettings = {
-  developerLogs: boolean;
-};
+// Settings model used by the Settings UI. These are client-side preferences
+// until server endpoints are implemented.
 
 export type SettingsModel = {
-  account: AccountSettings;
-  profile: ProfileSettings;
-  appearance: AppearanceSettings;
-  notifications: NotificationSettings;
-  privacy: PrivacySettings;
-  devices: DevicesSettings;
-  integrations: IntegrationsSettings;
-  advanced: AdvancedSettings;
+  account: {
+    email: string;
+    twoFactorEnabled: boolean;
+  };
+  profile: {
+    // Reserved for future profile settings in UI; most profile fields
+    // are edited directly via /users/me today
+  };
+  appearance: {
+    theme: 'system' | 'light' | 'dark';
+    accent: 'emerald' | 'blue' | 'purple' | 'rose' | 'amber' | 'indigo' | 'cyan' | 'orange';
+    density: 'compact' | 'comfortable';
+  };
+  notifications: {
+    globalMute: boolean;
+    perChannelDefault: 'all' | 'mentions' | 'none';
+    desktop: boolean;
+    mobile: boolean;
+    digest: 'off' | 'daily' | 'weekly';
+  };
+  privacy: {
+    profileVisibility: 'everyone' | 'friends' | 'private';
+    dmPermissions: 'everyone' | 'friends' | 'none';
+    readReceipts: boolean;
+  };
+  devices: {
+    // Placeholder for device/session UI
+  };
+  integrations: {
+    // Placeholder for integration prefs
+  };
+  advanced: {
+    developerLogs: boolean;
+  };
 };
 
 export const defaultSettings: SettingsModel = {
-  account: { email: "", twoFactorEnabled: false },
-  profile: { displayName: "", avatarUrl: null, bannerUrl: null, bio: "" },
-  appearance: { theme: "system", accent: "emerald", density: "comfortable" },
-  notifications: { globalMute: false, perChannelDefault: "all", desktop: true, mobile: true, digest: "off" },
-  privacy: { profileVisibility: "everyone", dmPermissions: "everyone", readReceipts: true },
+  account: { email: '', twoFactorEnabled: false },
+  profile: {},
+  appearance: { theme: 'system', accent: 'emerald', density: 'comfortable' },
+  notifications: { globalMute: false, perChannelDefault: 'mentions', desktop: true, mobile: true, digest: 'off' },
+  privacy: { profileVisibility: 'everyone', dmPermissions: 'friends', readReceipts: true },
   devices: {},
-  integrations: { githubConnected: false, notionConnected: false },
+  integrations: {},
   advanced: { developerLogs: false },
 };
-

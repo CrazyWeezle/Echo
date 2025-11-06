@@ -8,7 +8,8 @@ export type SectionId =
   | "privacy"
   | "devices"
   | "integrations"
-  | "advanced";
+  | "advanced"
+  | "vault";
 
 export type SectionItem = {
   id: SectionId;
@@ -27,9 +28,9 @@ export const SETTINGS_SECTIONS: SectionItem[] = [
   { id: "devices", label: "Devices & Sessions", icon: "laptop", keywords: ["sessions","revoke","sign out"] },
   { id: "integrations", label: "Integrations", icon: "plug", keywords: ["github","notion","connect"] },
   { id: "advanced", label: "Advanced", icon: "wrench", keywords: ["export","cache","developer"] },
+  { id: "vault", label: "Vault", icon: "lock", keywords: ["spaces","hide","mute","unhide","archive"] },
 ];
 
 export function findSection(id: string): SectionItem | undefined {
   return SETTINGS_SECTIONS.find(s => s.id === id);
 }
-

@@ -30,6 +30,9 @@ const Icons: Record<string, JSX.Element> = {
   wrench: (
     <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14.7 6.3a4 4 0 1 0-5.4 5.4l7 7a2 2 0 1 0 2.8-2.8l-7-7z"/></svg>
   ),
+  lock: (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="10" width="18" height="11" rx="2"/><path d="M7 10V7a5 5 0 0 1 10 0v3"/></svg>
+  ),
 };
 
 type SectionBridge = {
@@ -47,6 +50,7 @@ import PrivacySection from "./sections/Privacy";
 import DevicesSection from "./sections/Devices";
 import IntegrationsSection from "./sections/Integrations";
 import AdvancedSection from "./sections/Advanced";
+import VaultSection from "./sections/Vault";
 
 const SectionMap: Record<SectionId, (p: { data: SettingsModel; bridge: SectionBridge }) => JSX.Element> = {
   account: ({ data, bridge }) => <AccountSection data={data} bridge={bridge} />,
@@ -57,6 +61,7 @@ const SectionMap: Record<SectionId, (p: { data: SettingsModel; bridge: SectionBr
   devices: ({ data, bridge }) => <DevicesSection data={data} bridge={bridge} />,
   integrations: ({ data, bridge }) => <IntegrationsSection data={data} bridge={bridge} />,
   advanced: ({ data, bridge }) => <AdvancedSection data={data} bridge={bridge} />,
+  vault: ({ data, bridge }) => <VaultSection data={data} bridge={bridge} />,
 };
 
 function usePathSection(): [SectionId, (s: SectionId) => void] {
