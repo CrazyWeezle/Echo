@@ -38,6 +38,8 @@ type Msg = {
 type KanbanItem = { id: string; content: string; pos: number; done?: boolean };
 type KanbanList = { id: string; name: string; pos: number; items: KanbanItem[] };
 type FormQuestion = { id: string; prompt: string; kind?: string; pos: number };
+
+// (Lightbox component removed; using inline overlay near the end of ChatApp render)
 type FormState = { questions: FormQuestion[]; answers: Record<string, string>; answersByUser?: Record<string, Record<string, string>> };
 type Channel = { id: string; name: string; voidId: string; type?: 'text' | 'voice' | 'announcement' | 'kanban' | 'form' | 'habit' | 'gallery' | string; linkedGalleryId?: string | null };
 type VoidWS = { id: string; name: string; avatarUrl?: string | null };
@@ -152,6 +154,30 @@ function ChatApp({ token, user }: { token: string; user: any }) {
   const [reactionInfoByMsg, setReactionInfoByMsg] = useState<Record<string, Record<string, { users: { userId: string; name: string; createdAt?: string }[] }>>>({});
   const [hoverReaction, setHoverReaction] = useState<{ messageId: string; emoji: string } | null>(null);
   const [reactionTipPos, setReactionTipPos] = useState<{ x: number; y: number } | null>(null);
+  const [seenTip, setSeenTip] = useState<{ x: number; y: number; ids: string[] } | null>(null);
+  const [imagePreview, setImagePreview] = useState<{ url: string; name?: string } | null>(null);
+  const [imagePreviewVisible, setImagePreviewVisible] = useState(false);
+
+  useEffect(() => {
+    if (imagePreview) {
+      const id = requestAnimationFrame(() => setImagePreviewVisible(true));
+      return () => cancelAnimationFrame(id);
+    } else {
+      setImagePreviewVisible(false);
+    }
+  }, [imagePreview]);
+
+  function closeImagePreview() {
+    setImagePreviewVisible(false);
+    setTimeout(() => setImagePreview(null), 180);
+  }
+
+  useEffect(() => {
+    if (!imagePreview) return;
+    function onKey(e: KeyboardEvent) { if (e.key === 'Escape') closeImagePreview(); }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [imagePreview]);
 
   async function loadReactionsFor(messageId: string) {
     if (reactionInfoByMsg[messageId]) return;
@@ -3314,9 +3340,15 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                       {m.attachments.map((a, i) => (
                         <div key={i} className="relative border border-neutral-800 rounded overflow-hidden bg-neutral-950 max-w-full">
                           {a.contentType?.startsWith('image/') ? (
-                            <a href={hidden ? undefined : a.url} target={hidden ? undefined : "_blank"} rel={hidden ? undefined : "noreferrer"} className="block max-w-full">
+                            <button
+                              type="button"
+                              disabled={hidden}
+                              onClick={() => { if (!hidden) setImagePreview({ url: a.url, name: a.name }); }}
+                              className="block max-w-full bg-transparent p-0 m-0 cursor-zoom-in"
+                              title={hidden ? undefined : 'Open preview'}
+                            >
                               <img src={a.url} alt={a.name || 'image'} className={`max-h-32 max-w-full object-cover ${hidden ? 'blur-sm brightness-50' : ''}`} />
-                            </a>
+                            </button>
                           ) : (
                             <a href={hidden ? undefined : a.url} target={hidden ? undefined : "_blank"} rel={hidden ? undefined : "noreferrer"} className="px-2 py-1 inline-flex items-center gap-2 text-sm text-emerald-300 hover:underline">
                               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M21.44 11.05l-8.49 8.49a5 5 0 0 1-7.07-7.07l8.49-8.49a3.5 3.5 0 0 1 4.95 4.95l-8.49 8.49a2 2 0 1 1-2.83-2.83l8.49-8.49"/></svg>
@@ -3420,7 +3452,16 @@ function ChatApp({ token, user }: { token: string; user: any }) {
               </div>
               {showSeen && (
                 <div className="mt-1 flex justify-end">
-                  <div className="group relative flex gap-1">
+                  <div
+                    className="group relative flex gap-1"
+                    onMouseEnter={(e) => {
+                      try {
+                        const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                        setSeenTip({ x: Math.round(r.right), y: Math.round(r.top), ids: byIds });
+                      } catch {}
+                    }}
+                    onMouseLeave={() => setSeenTip(null)}
+                  >
                     {(() => {
                       const ids = byIds.slice(-8); // show last 8 viewers inline
                       return ids.map(uid => {
@@ -3434,12 +3475,15 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                         );
                       });
                     })()}
-                    {/* Hover panel with full list */}
-                    <div className="absolute top-full right-0 mt-2 hidden group-hover:block z-10">
-                      <div className="pointer-events-auto min-w-[180px] max-w-[260px] max-h-48 overflow-auto rounded-md border border-neutral-800 bg-neutral-900/95 shadow-lg p-2">
+                    {/* Hover panel rendered as fixed to float above composer */}
+                    {seenTip && (
+                      <div
+                        className="fixed z-[30000] pointer-events-none rounded-md border border-neutral-800 bg-neutral-900/95 shadow-lg p-2 min-w-[180px] max-w-[260px] max-h-48 overflow-auto"
+                        style={{ left: seenTip.x, top: seenTip.y, transform: 'translate(-8px, -110%)' }}
+                      >
                         <div className="text-[10px] uppercase tracking-wide text-neutral-500 mb-1">Seen by</div>
                         <ul className="text-sm space-y-1">
-                          {byIds.map(uid => {
+                          {seenTip.ids.map(uid => {
                             const mem = members.find(mm => mm.id === uid);
                             const name = mem?.name || mem?.username || uid.slice(0,8);
                             const src = mem?.avatarUrl || '';
@@ -3454,7 +3498,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                           })}
                         </ul>
                       </div>
-                    </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -3769,6 +3813,19 @@ function ChatApp({ token, user }: { token: string; user: any }) {
       {/* Close main content column */}
       </div>
 
+
+      {/* Image Lightbox */}
+      {imagePreview && (
+        <div className="fixed inset-0 z-[40000] flex items-center justify-center" onClick={closeImagePreview}>
+          <div className={`absolute inset-0 bg-black/70 transition-opacity duration-200 ${imagePreviewVisible ? 'opacity-100' : 'opacity-0'}`} />
+          <div className={`relative max-w-[90vw] max-h-[85vh] rounded-2xl overflow-hidden border border-neutral-800 shadow-2xl bg-neutral-950 transition-all duration-200 ease-out transform ${imagePreviewVisible ? 'opacity-100 scale-100' : 'opacity-0 scale-95'}`} onClick={(e)=>e.stopPropagation()}>
+            <img src={imagePreview.url} alt={imagePreview.name || 'image'} className="block max-h-[85vh] max-w-[90vw] object-contain" />
+            <button className="absolute top-2 right-2 h-9 w-9 rounded-full bg-black/50 text-neutral-200 border border-neutral-700 hover:bg-black/70 flex items-center justify-center" onClick={closeImagePreview} aria-label="Close">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+            </button>
+          </div>
+        </div>
+      )}
       <FriendsModal
         token={localStorage.getItem('token') || ''}
         open={friendsOpen}
@@ -4152,6 +4209,8 @@ function ChatApp({ token, user }: { token: string; user: any }) {
     </div>
   );
 }
+
+
 
 
 
