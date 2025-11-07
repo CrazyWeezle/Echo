@@ -1,0 +1,143 @@
+name: ECHO-DEV
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: echo-dev-postgres
+    environment:
+      POSTGRES_USER: echo
+      POSTGRES_PASSWORD: echo
+      POSTGRES_DB: echo
+    ports:
+      - "5432:5432"
+    volumes:
+      - echo_dev_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB -h localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:latest
+    container_name: echo-dev-minio
+    command: server /data --console-address ":9001"
+    env_file:
+      - env/minio.env
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - echo_dev_minio_data:/data
+    restart: unless-stopped
+
+  minio-mc:
+    image: minio/mc:latest
+    container_name: echo-dev-minio-mc
+    depends_on:
+      - minio
+    env_file:
+      - env/minio.env
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+          i=0;
+          until /usr/bin/mc alias set local http://minio:9000 $${MINIO_ROOT_USER} $${MINIO_ROOT_PASSWORD}; do
+            i=$$((i+1)); echo 'Waiting for MinIO...'; sleep 2;
+            if [ $$i -gt 60 ]; then echo 'Timeout waiting for MinIO'; exit 1; fi;
+          done;
+          /usr/bin/mc mb -p local/$${S3_BUCKET} || true
+          /usr/bin/mc anonymous set download local/$${S3_BUCKET} || true
+          /usr/bin/mc admin config set local api \
+            cors_allow_origin='http://localhost:3000,http://localhost:5173' \
+            cors_allow_methods='GET,PUT,HEAD,OPTIONS' \
+            cors_allow_headers='*' || true
+          /usr/bin/mc admin service restart local || true
+          echo 'MinIO bucket ready'
+    restart: on-failure
+
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: echo-dev-mailhog
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+    restart: unless-stopped
+
+  adminer:
+    image: adminer:latest
+    container_name: echo-dev-adminer
+    environment:
+      ADMINER_DEFAULT_SERVER: db
+    depends_on:
+      - db
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+  api-dev:
+    image: node:20-alpine
+    container_name: echo-dev-api
+    working_dir: /repo
+    command: >
+      sh -lc "
+        corepack enable &&
+        corepack prepare pnpm@10.19.0 --activate &&
+        pnpm install --filter ./apps/api --no-frozen-lockfile &&
+        NODE_ENV=development PORT=5000 pnpm --filter ./apps/api exec node -- --watch src/main.js
+      "
+    env_file:
+      - env/api.env
+      - env/minio.env
+    environment:
+      PORT: "5000"
+      # Important: connect to the db service, not localhost inside container
+      DATABASE_URL: postgresql://echo:echo@db:5432/echo
+      CI: "true"
+    volumes:
+      - ..:/repo
+      - api_node_modules:/repo/apps/api/node_modules
+    ports:
+      - "5000:5000"
+    depends_on:
+      db:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    restart: unless-stopped
+
+  web-dev:
+    image: node:20-alpine
+    container_name: echo-dev-web
+    working_dir: /repo
+    command: >
+      sh -lc "
+        corepack enable &&
+        corepack prepare pnpm@10.19.0 --activate &&
+        pnpm install --filter ./apps/web --no-frozen-lockfile &&
+        pnpm --filter ./apps/web run dev
+      "
+    env_file:
+      - env/web.env
+    environment:
+      VITE_DISABLE_PWA: "1"
+      CI: "true"
+      CHOKIDAR_USEPOLLING: "true"
+    volumes:
+      - ..:/repo
+      - web_node_modules:/repo/apps/web/node_modules
+    ports:
+      - "3000:3000"
+    depends_on:
+      api-dev:
+        condition: service_started
+    restart: unless-stopped
+
+volumes:
+  echo_dev_pg_data:
+  echo_dev_minio_data:
+  api_node_modules:
+  web_node_modules:
