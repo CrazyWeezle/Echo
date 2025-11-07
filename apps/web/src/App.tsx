@@ -13,6 +13,7 @@ import InputModal from "./components/InputModal";
 const GifPicker = lazy(() => import("./components/GifPicker"));
 const EmojiPanel = lazy(() => import("./components/EmojiPanel"));
 import UnifiedSettingsModal from "./components/UnifiedSettingsModal";
+import UserQuickSettings from "./components/UserQuickSettings";
 import ToastHost from "./components/ToastHost";
 import ConfirmHost from "./components/ConfirmHost";
 import UserRow from "./components/people/UserRow";
@@ -107,6 +108,12 @@ function ChatApp({ token, user }: { token: string; user: any }) {
       return String(v).startsWith('dm_') ? "" : v;
     } catch { return ""; }
   });
+
+  // Spaces drag/animation state
+  const [dragSpaceId, setDragSpaceId] = useState<string | null>(null);
+  const [reorderedSpaceId, setReorderedSpaceId] = useState<string | null>(null);
+  const [dragHoverIndex, setDragHoverIndex] = useState<number | null>(null);
+  const [dragStartIndex, setDragStartIndex] = useState<number | null>(null);
   const [channels, setChannels] = useState<Channel[]>([]);
   // Cache channel types across spaces so favorites can render correctly
   const [channelTypeById, setChannelTypeById] = useState<Record<string, string>>(() => {
@@ -612,6 +619,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
   // Profile modal removed; avatar now navigates to landing
   const [friendsOpen, setFriendsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [userQuickOpen, setUserQuickOpen] = useState(false);
 
   // Expose a lightweight spaces cache for settings Vault section
   useEffect(() => {
@@ -2020,7 +2028,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
           </button>
         </div>
         {/* Scrollable spaces (DMs included with a close control; hidden DMs reappear on unread) */}
-        <div className="mt-3 flex-1 overflow-auto flex flex-col items-center gap-3">
+        <div className="mt-3 flex-1 overflow-auto flex flex-col items-center gap-3 pb-24">
         {/* Draggable spaces */}
         {(() => {
           const isDm = (id:string) => String(id).startsWith('dm_');
@@ -2037,17 +2045,55 @@ function ChatApp({ token, user }: { token: string; user: any }) {
             return (ia === -1 ? 1e9 : ia) - (ib === -1 ? 1e9 : ib);
           });
           const dmOrdered = [...dms].sort((a,b) => (a.name||'').localeCompare(b.name||''));
-          return ordered.concat(dmOrdered).map(v => {
+          return ordered.concat(dmOrdered).map((v, idx) => {
           const hasUnread = Object.keys(unread).some(k => k.startsWith(`${v.id}:`) && (unread[k]||0) > 0);
           const dmCount = String(v.id).startsWith('dm_') ? (unread[`${v.id}:chat`] || 0) : 0;
           return (
-            <div key={v.id} className="relative">
-              <button onClick={() => switchVoid(v.id)} title={v.name}
-                className={`relative h-10 w-10 rounded-full overflow-hidden border ${v.id===currentVoidId?'border-emerald-600 shadow-[0_0_0_2px_rgba(16,185,129,0.35)]':'border-neutral-800'} bg-neutral-900 flex items-center justify-center`}
+            <div key={v.id} className={`relative transition-transform duration-150 ease-out ${
+              (dragSpaceId && dragHoverIndex!==null && dragStartIndex!==null && v.id!==dragSpaceId)
+                ? (dragHoverIndex > dragStartIndex
+                    ? ((idx > dragStartIndex && idx <= dragHoverIndex) ? 'translate-x-1' : '')
+                    : ((idx >= dragHoverIndex && idx < dragStartIndex) ? '-translate-x-1' : ''))
+                : ''
+            }`}>
+              <button onClick={() => { switchVoid(v.id); setReorderedSpaceId(v.id); setTimeout(()=>setReorderedSpaceId(null), 260); }} title={v.name}
+                className={`relative h-10 w-10 rounded-full overflow-hidden border ${v.id===currentVoidId?'border-emerald-600 shadow-[0_0_0_2px_rgba(16,185,129,0.35)]':'border-neutral-800'} bg-neutral-900 flex items-center justify-center transition-transform duration-150 ease-out will-change-transform ${dragSpaceId===v.id?'scale-110 ring-2 ring-emerald-600 shadow-[0_12px_24px_rgba(0,0,0,0.45)] z-10':''} ${reorderedSpaceId===v.id?'anim-pop':''} hover:scale-105 active:scale-95`}
               draggable
-              onDragStart={(e) => { e.dataTransfer.setData('text/plain', v.id); }}
-              onDragOver={(e) => e.preventDefault()}
-              onDrop={(e) => { e.preventDefault(); const src = e.dataTransfer.getData('text/plain'); if (!src || src===v.id) return; setSpaceOrder((prev)=>{ const a=[...prev]; const si=a.indexOf(src); const ti=a.indexOf(v.id); if(si===-1||ti===-1){ return a;} a.splice(si,1); a.splice(ti,0,src); return a; }); }}
+              onDragStart={(e) => { e.dataTransfer.setData('text/plain', v.id); try { e.dataTransfer.effectAllowed='move'; const img = new Image(); img.src = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+tm0kAAAAASUVORK5CYII='; if (e.dataTransfer.setDragImage) e.dataTransfer.setDragImage(img, 0, 0); } catch {} setDragSpaceId(v.id); setDragStartIndex(idx); setDragHoverIndex(idx); }}
+              onDragEnd={() => { setDragSpaceId(null); setDragHoverIndex(null); setDragStartIndex(null); }}
+              onDragOver={(e) => {
+                e.preventDefault();
+                try { e.dataTransfer.dropEffect='move'; } catch {}
+                const el = (e.currentTarget as HTMLElement) || (e.target as HTMLElement | null);
+                if (!el || !el.getBoundingClientRect) return;
+                const rect = el.getBoundingClientRect();
+                const after = e.clientY > rect.top + rect.height/2;
+                const ni = after ? idx + 1 : idx;
+                if (ni !== dragHoverIndex) setDragHoverIndex(ni);
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                const src = e.dataTransfer.getData('text/plain');
+                if (!src) { setDragSpaceId(null); setDragHoverIndex(null); setDragStartIndex(null); return; }
+                setSpaceOrder((prev)=>{
+                  const a=[...prev];
+                  const si=a.indexOf(src);
+                  if (si===-1) { return a; }
+                  const tidx = a.indexOf(v.id);
+                  if (tidx===-1) { return a; }
+                  const el = (e.currentTarget as HTMLElement) || (e.target as HTMLElement | null);
+                  if (!el || !el.getBoundingClientRect) return a;
+                  const rect = el.getBoundingClientRect();
+                  const after = e.clientY > rect.top + rect.height/2;
+                  let insert = after ? tidx + 1 : tidx;
+                  const removed = a.splice(si,1)[0];
+                  if (si < insert) insert = Math.max(0, insert - 1);
+                  a.splice(insert,0,removed);
+                  return a;
+                });
+                setReorderedSpaceId(src); setTimeout(()=>setReorderedSpaceId(null), 260);
+                setDragSpaceId(null); setDragHoverIndex(null); setDragStartIndex(null);
+              }}
             >
               {v.avatarUrl ? (
                 <img src={v.avatarUrl} alt={v.name} className="h-full w-full object-cover" />
@@ -2081,26 +2127,16 @@ function ChatApp({ token, user }: { token: string; user: any }) {
             </div>
           );
         }); })()}
-        </div>
-        {/* Bottom actions: New space and Settings gear */}
-        <div className="mt-3 px-1 flex flex-col items-center gap-3">
-          <button
-            className="h-10 w-10 rounded-full border border-neutral-700 bg-neutral-900 text-neutral-300 hover:border-emerald-600"
-            title="New Space"
-            onClick={createSpace}
-          >
-            +
-          </button>
-          <button
-            className="h-10 w-10 rounded-full border border-neutral-700 bg-neutral-900 text-neutral-300 hover:border-emerald-600 flex items-center justify-center"
-            title="Space Settings"
-            onClick={() => setSettingsOpen(true)}
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
-              <circle cx="12" cy="12" r="3"/>
-              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V22a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 8 20.17a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 3 15.4 1.65 1.65 0 0 0 1.5 14H1.41a2 2 0 1 1 0-4H1.5A1.65 1.65 0 0 0 3 8.6 1.65 1.65 0 0 0 2.17 6.77l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 8 3.83 1.65 1.65 0 0 0 9.5 2.5V2.41a2 2 0 1 1 4 0V2.5A1.65 1.65 0 0 0 15.4 3a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 21 8.6c.36.5.57 1.11.5 1.77H21.5a2 2 0 1 1 0 4H21.5A1.65 1.65 0 0 0 19.4 15z"/>
-            </svg>
-          </button>
+          {/* New Space button pinned to bottom of the scrollable list so it doesn't get covered by the fixed footer */}
+          <div className="sticky bottom-2 w-full flex justify-center px-2 pt-1">
+            <button
+              className="h-10 w-10 rounded-full border border-neutral-700 bg-neutral-900 text-neutral-300 hover:border-emerald-600"
+              title="New Space"
+              onClick={createSpace}
+            >
+              +
+            </button>
+          </div>
         </div>
       </div>
       {/* Resizer before people column (disabled while People column hidden) */}
@@ -2282,16 +2318,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                 return <span className="truncate max-w-[32vw] sm:max-w-xs" style={color ? { color } : undefined}>{me?.name || user?.username}</span>;
               })()}
             </div>
-            {/* Friends and Logout moved into modals */}
-            <button className="h-9 w-9 rounded border border-neutral-700 bg-neutral-900 text-neutral-300 flex items-center justify-center"
-                    title="Friends" onClick={()=>setFriendsOpen(true)}>
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
-                <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>
-                <circle cx="9" cy="7" r="4"/>
-                <path d="M22 21v-2a4 4 0 0 0-3-3.87"/>
-                <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
-              </svg>
-            </button>
+            {/* Friends moved into bottom quick settings pill */}
           </div>
         </div>
 
@@ -3124,10 +3151,10 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                             title={hidden ? undefined : 'Open preview'}
                             aria-label={hidden ? undefined : 'Open preview'}
                           >
-                            <img src={im.url} alt={im.name||'photo'} className={`w-full h-full object-cover ${hidden ? 'blur-sm brightness-50' : ''}`} />
+                            <img src={im.url} alt={im.name||'photo'} className={`w-full h-full object-cover ${hidden ? 'blur-md brightness-50' : ''}`} />
                           </button>
                         {hidden && (
-                          <button className="absolute inset-0 flex items-center justify-center bg-neutral-950/50 text-neutral-200 text-sm font-medium" onClick={()=> setRevealedSpoilers(prev => ({ ...prev, [im.mid]: true }))}>Spoiler - tap to reveal</button>
+                          <button className="absolute inset-0 flex items-center justify-center bg-neutral-950/90 backdrop-blur-sm text-neutral-200 text-sm font-medium" onClick={()=> setRevealedSpoilers(prev => ({ ...prev, [im.mid]: true }))}>Spoiler - tap to reveal</button>
                         )}
                         {!selMode && (
                           <button
@@ -3192,10 +3219,11 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                           const ok = await askConfirm({ title: 'Delete Photos', message: `Delete ${items.length} selected photo(s)?`, confirmText: 'Delete', cancelText: 'Cancel' }); if (!ok) return;
                           try { const tok=localStorage.getItem('token')||''; await api.postAuth('/channels/gallery-attachments-delete',{ items }, tok); (setSelected as any)({}); (setSelMode as any)(false); } catch(e:any){ toast(e?.message||'Failed to delete','error'); }
                         }}>Delete Selected ({selCount})</button>
-                      </>
-                    )}
-                  </div>
-                </div>
+            </>
+          )}
+        </div>
+        {/* Footer spanning under channels removed in favor of fixed bottom-left quick settings pill */}
+      </div>
               );
             }
             if (currentChannel?.type === 'notes') {
@@ -3400,7 +3428,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                               className="block max-w-full bg-transparent p-0 m-0 cursor-zoom-in"
                               title={hidden ? undefined : 'Open preview'}
                             >
-                              <img src={a.url} alt={a.name || 'image'} className={`max-h-32 max-w-full object-cover ${hidden ? 'blur-sm brightness-50' : ''}`} />
+                              <img src={a.url} alt={a.name || 'image'} className={`max-h-32 max-w-full object-cover ${hidden ? 'blur-md brightness-50' : ''}`} />
                             </button>
                           ) : (
                             <a href={hidden ? undefined : a.url} target={hidden ? undefined : "_blank"} rel={hidden ? undefined : "noreferrer"} className="px-2 py-1 inline-flex items-center gap-2 text-sm text-emerald-300 hover:underline">
@@ -3412,7 +3440,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                       ))}
                     </div>
                     {hidden && (
-                      <button className="absolute inset-0 flex items-center justify-center bg-neutral-950/70 text-neutral-200 text-sm font-medium" onClick={() => setRevealedSpoilers(prev => ({ ...prev, [m.id]: true }))}>
+                      <button className="absolute inset-0 flex items-center justify-center bg-neutral-950/90 backdrop-blur-sm text-neutral-200 text-sm font-medium" onClick={() => setRevealedSpoilers(prev => ({ ...prev, [m.id]: true }))}>
                         Spoiler - tap to reveal
                       </button>
                     )}
@@ -4024,6 +4052,94 @@ function ChatApp({ token, user }: { token: string; user: any }) {
       Jump to present
     </button>
   )}
+
+      {/* Fixed footer pill spanning Spaces (w-16) + Channels (chanW) */}
+      {me?.userId && (
+        <div className="hidden md:block fixed bottom-0 left-0 z-40" style={{ width: `calc(4rem + ${chanW}px)` }}>
+          <div className="p-2 border-t border-neutral-800/60">
+            <div className="flex items-center gap-2 px-2 py-1.5 rounded-full border border-neutral-800 bg-neutral-900">
+              <button
+                className="flex items-center gap-2 flex-1 min-w-0"
+                onClick={() => setUserQuickOpen((v) => !v)}
+                aria-label="Open quick settings"
+                title="Quick settings"
+              >
+                <span className="relative inline-block">
+                  <img src={me?.avatarUrl || undefined} alt={me?.name || 'me'} className="h-8 w-8 rounded-full object-cover bg-neutral-800 border border-neutral-700" />
+                  {(() => {
+                    const meMem = members.find(m => m.id === me.userId);
+                    const p = String(meMem?.status || 'online');
+                    const color = p==='online' ? 'bg-emerald-500' : p==='idle' ? 'bg-amber-500' : p==='dnd' ? 'bg-red-500' : 'bg-neutral-500';
+                    return <span className={`absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border border-neutral-900 ${color}`}></span>;
+                  })()}
+                </span>
+                <div className="min-w-0">
+                  <div className="text-sm text-neutral-100 font-medium truncate">{me?.name || 'Me'}</div>
+                  <div className="text-[10px] text-neutral-400 truncate">{(() => { const u = (typeof window!=="undefined"? (JSON.parse(localStorage.getItem('user')||'{}')?.username || ''): ''); return u; })()}</div>
+                </div>
+              </button>
+              <button
+                onClick={() => setFriendsOpen(true)}
+                aria-label="Friends"
+                className="text-neutral-300 hover:text-neutral-100"
+                title="Friends"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
+                  <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>
+                  <circle cx="9" cy="7" r="4"/>
+                  <path d="M22 21v-2a4 4 0 0 0-3-3.87"/>
+                  <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+                </svg>
+              </button>
+              <button
+                onClick={() => setSettingsOpen(true)}
+                aria-label="Open settings"
+                className="text-neutral-300 hover:text-neutral-100"
+                title="Settings"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
+                  <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/>
+                  <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V22a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 8 20.17a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 3 15.4 1.65 1.65 0 0 0 1.5 14H1.41a2 2 0 1 1 0-4H1.5A1.65 1.65 0 0 0 3 8.6 1.65 1.65 0 0 0 2.17 6.77l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 8 3.83 1.65 1.65 0 0 0 9.5 2.5V2.41a2 2 0 1 1 4 0V2.5A1.65 1.65 0 0 0 15.4 3a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 21 8.6c.36.5.57 1.11.5 1.77H21.5a2 2 0 1 1 0 4H21.5A1.65 1.65 0 0 0 19.4 15z"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Inline user pill (integrated into left column footer) is rendered below in the Spaces column footer */}
+
+      {/* Quick settings popover */}
+      <UserQuickSettings
+        open={userQuickOpen}
+        name={me?.name || 'Me'}
+        username={(() => { try { return JSON.parse(localStorage.getItem('user')||'{}')?.username || ''; } catch { return ''; } })()}
+        avatarUrl={me?.avatarUrl || null}
+        presence={(() => { const meMem = members.find(m => m.id === me.userId); const p = String(meMem?.status || 'online'); return (p as any) })()}
+        onClose={() => setUserQuickOpen(false)}
+        onOpenSettings={() => { setSettingsOpen(true); setUserQuickOpen(false); }}
+        onChangePresence={async (p) => {
+          try {
+            const tok = localStorage.getItem('token') || '';
+            const u = await api.patchAuth('/users/me', { status: p }, tok);
+            setMembers(prev => prev.map(m => m.id === me.userId ? { ...m, status: u?.status || p } : m));
+            try {
+              const raw = localStorage.getItem('user');
+              const prev = raw ? JSON.parse(raw) : {};
+              localStorage.setItem('user', JSON.stringify({ ...prev, status: u?.status || p }));
+            } catch {}
+            setUserQuickOpen(false);
+          } catch (e) {
+            // no-op; leave open for another try
+          }
+        }}
+        onSwitchAccounts={() => {
+          try {
+            localStorage.removeItem('token');
+          } catch {}
+          window.location.href = '/';
+        }}
+      />
       <Suspense>
         <GifPicker
           open={gifOpen}
@@ -4262,15 +4378,3 @@ function ChatApp({ token, user }: { token: string; user: any }) {
     </div>
   );
 }
-
-
-
-
-
-
-
-
-
-
-
-
