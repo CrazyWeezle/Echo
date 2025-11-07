@@ -207,7 +207,7 @@ export default function ProfileSettingsSection({ token, onSaved, spaceId }: { to
         <div>Last seen: <span className="text-neutral-300">{lastSeen||'�'}</span></div>
       </div>
       <div className="flex items-center gap-2">
-        <button disabled={loading} className="px-3 py-2 rounded border border-emerald-700 bg-emerald-800/70 text-emerald-50 hover:bg-emerald-700/70" onClick={saveProfile}>{loading?'Saving...':'Save changes'}</button>
+        <button disabled={loading} className="px-3 py-2 rounded text-white accent-gradient shadow-soft hover:opacity-95 focus:outline-none focus:ring-2 focus:ring-emerald-500/60 disabled:opacity-60" onClick={saveProfile}>{loading?'Saving...':'Save changes'}</button>
       </div>
     </div>
   );

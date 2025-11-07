@@ -243,8 +243,7 @@ export default function UnifiedSettingsModal({
             <div className="space-y-6 fade-in">
               <div>
                 <div className="text-2xl font-semibold text-white">My Account</div>
-                <div className="mt-2 h-24 rounded-t-lg bg-teal-500/70" />
-                <div className="-mt-8 rounded-b-lg bg-neutral-950/80 border border-neutral-800 p-4">
+                <div className="mt-3">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
                       <div className="h-16 w-16 rounded-full ring-2 ring-neutral-900 overflow-hidden bg-neutral-800 border border-neutral-700">
@@ -257,7 +256,7 @@ export default function UnifiedSettingsModal({
                     </div>
                     <button className="px-3 py-1.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white text-sm" onClick={()=>setTab('profile')}>Edit User Profile</button>
                   </div>
-                  <div className="mt-4 rounded-md bg-neutral-900/80 border border-neutral-800">
+                  <div className="mt-4">
                     {[
                       { label: 'Display Name', value: name || '—', onClick: ()=>{} },
                       { label: 'Username', value: username || '—', onClick: ()=>{} },
@@ -270,7 +269,7 @@ export default function UnifiedSettingsModal({
                           <div className="text-xs uppercase text-neutral-500">{row.label}</div>
                           <div className="text-neutral-200">{row.value}</div>
                         </div>
-                        <button className="px-3 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-200 text-sm" onClick={row.onClick}>Edit</button>
+                        <button className="text-emerald-300 hover:underline text-sm" onClick={row.onClick}>Edit</button>
                       </div>
                     ))}
                   </div>
@@ -278,26 +277,18 @@ export default function UnifiedSettingsModal({
               </div>
 
               {/* Security actions */}
-              <div className="space-y-3">
-                <button className="px-4 py-2 rounded bg-teal-600 hover:bg-teal-500 text-white" onClick={()=>setTab("security")}>Change password</button>
-                <div className="flex gap-2 flex-wrap">
-                  <button
-                    className="px-4 py-2 rounded border border-red-700 text-red-300 hover:bg-red-900/20"
-                    onClick={async ()=>{
-                      const ok = await askConfirm({ title:"Deactivate Account", message:"Deactivate your account? You will be signed out.", confirmText:"Deactivate" });
-                      if (!ok) return;
-                      try { await api.postAuth("/users/deactivate", {}, token); } finally { try { localStorage.removeItem("token"); localStorage.removeItem("user"); localStorage.removeItem("me"); } catch {}; location.reload(); }
-                    }}
-                  >Deactivate account</button>
-                  <button
-                    className="px-4 py-2 rounded bg-red-600 hover:bg-red-500 text-white"
-                    onClick={async ()=>{
-                      const ok = await askConfirm({ title:"Delete Account", message:"This will permanently delete your account and all associated data. This cannot be undone.", confirmText:"Delete" });
-                      if (!ok) return;
-                      try { await api.request("/users/me", { method: "DELETE", token }); } finally { try { localStorage.removeItem("token"); localStorage.removeItem("user"); localStorage.removeItem("me"); } catch {}; location.reload(); }
-                    }}
-                  >Delete account</button>
-                </div>
+              <div className="mt-4 flex items-center gap-4 flex-wrap">
+                <button className="text-emerald-300 hover:underline text-sm" onClick={()=>setTab("security")}>
+                  Change password
+                </button>
+                <button
+                  className="text-red-400 hover:underline text-sm"
+                  onClick={async ()=>{
+                    const ok = await askConfirm({ title:"Delete Account", message:"This will permanently delete your account and all associated data. This cannot be undone.", confirmText:"Delete" });
+                    if (!ok) return;
+                    try { await api.request("/users/me", { method: "DELETE", token }); } finally { try { localStorage.removeItem("token"); localStorage.removeItem("user"); localStorage.removeItem("me"); } catch {}; location.reload(); }
+                  }}
+                >Delete account</button>
               </div>
               {/* Security actions moved to SecuritySection */}
             </div>
@@ -322,9 +313,9 @@ export default function UnifiedSettingsModal({
 
           {false && tab==='vault' && (<div />)}
           {/* Footer: place Logout at the very bottom, away from Deactivate */}
-          <div className="mt-6 pt-4 border-t border-neutral-800 flex justify-end">
+          <div className="mt-6 pt-4 border-t border-border flex justify-end">
             <button
-              className="px-3 py-2 rounded border border-neutral-700 text-neutral-200 hover:bg-neutral-800/60"
+              className="px-3 py-2 rounded glass-border hover:bg-elevated/60 text-neutral-200"
               onClick={async ()=>{ try { await fetch('/api/auth/logout', { method: 'POST' }); } catch {}; try { localStorage.removeItem('token'); localStorage.removeItem('user'); localStorage.removeItem('me'); } catch {}; location.reload(); }}
             >Log out</button>
           </div>

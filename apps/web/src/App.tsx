@@ -2066,11 +2066,11 @@ function ChatApp({ token, user }: { token: string; user: any }) {
       <ConfirmHost />
       {/* Left columns: Space icons + Channels */}
       {/* Space icons column */}
-      <div className="hidden md:flex w-16 border-r border-neutral-800/60 bg-transparent flex-col py-3 min-h-0">
+      <div className="hidden md:flex w-16 bg-panel-3 flex-col py-3 min-h-0">
         {/* Profile button at top (now navigates to landing) */}
         <div className="px-1 flex items-center justify-center">
           <button
-            className="h-10 w-10 rounded-full overflow-hidden border border-neutral-700 bg-neutral-900 flex items-center justify-center hover:border-emerald-600"
+            className="h-10 w-10 rounded-full overflow-hidden border border-transparent bg-elevated flex items-center justify-center hover:border-emerald-600"
             title="Profile"
             onClick={() => { setVoidSheetOpen(false); setChanSheetOpen(false); setUsersSheetOpen(false); if (voiceJoined) leaveVoice(); setCurrentVoidId(""); setCurrentChannelId("general"); }}
           >
@@ -2111,7 +2111,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                 : ''
             }`}>
               <button onClick={() => { switchVoid(v.id); setReorderedSpaceId(v.id); setTimeout(()=>setReorderedSpaceId(null), 260); }} title={v.name}
-                className={`relative h-10 w-10 rounded-full overflow-hidden border ${v.id===currentVoidId?'border-emerald-600 shadow-[0_0_0_2px_rgba(16,185,129,0.35)]':'border-neutral-800'} bg-neutral-900 flex items-center justify-center transition-transform duration-150 ease-out will-change-transform ${dragSpaceId===v.id?'scale-110 ring-2 ring-emerald-600 shadow-[0_12px_24px_rgba(0,0,0,0.45)] z-10':''} ${reorderedSpaceId===v.id?'anim-pop':''} hover:scale-105 active:scale-95`}
+                className={`relative h-10 w-10 rounded-full overflow-hidden border ${v.id===currentVoidId?'border-emerald-600 shadow-[0_0_0_2px_rgba(16,185,129,0.35)]':'border-transparent'} bg-elevated flex items-center justify-center transition-transform duration-150 ease-out will-change-transform ${dragSpaceId===v.id?'scale-110 ring-2 ring-emerald-600 shadow-[0_12px_24px_rgba(0,0,0,0.45)] z-10':''} ${reorderedSpaceId===v.id?'anim-pop':''} hover:scale-105 active:scale-95`}
               draggable
               onDragStart={(e) => { e.dataTransfer.setData('text/plain', v.id); try { e.dataTransfer.effectAllowed='move'; const img = new Image(); img.src = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+tm0kAAAAASUVORK5CYII='; if (e.dataTransfer.setDragImage) e.dataTransfer.setDragImage(img, 0, 0); } catch {} setDragSpaceId(v.id); setDragStartIndex(idx); setDragHoverIndex(idx); }}
               onDragEnd={() => { setDragSpaceId(null); setDragHoverIndex(null); setDragStartIndex(null); }}
@@ -2157,16 +2157,16 @@ function ChatApp({ token, user }: { token: string; user: any }) {
             </button>
             {/* Unread badges outside the cropped circle */}
             {dmCount > 0 ? (
-              <span className="absolute -top-1 -right-1 min-w-[16px] h-[16px] px-1 rounded-full bg-emerald-700 text-emerald-50 border border-neutral-900 text-[10px] flex items-center justify-center">
+              <span className="absolute -top-1 -right-1 min-w-[16px] h-[16px] px-1 rounded-full bg-emerald-700 text-emerald-50 text-[10px] flex items-center justify-center">
                 {dmCount > 99 ? '99+' : dmCount}
               </span>
             ) : hasUnread ? (
-              <span className="absolute -top-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-emerald-500 border border-neutral-900"></span>
+              <span className="absolute -top-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-emerald-500"></span>
             ) : null}
               {/* Close control only for DM spaces */}
               {String(v.id).startsWith('dm_') && (
                 <button
-                  className="absolute -top-1 -left-1 h-4 w-4 rounded-full bg-neutral-900 border border-neutral-700 text-neutral-400 hover:text-neutral-200 hover:border-neutral-500 flex items-center justify-center text-[10px]"
+                  className="absolute -top-1 -left-1 h-4 w-4 rounded-full bg-neutral-900 text-neutral-400 hover:text-neutral-200 flex items-center justify-center text-[10px]"
                   title="Hide DM from spaces"
                   onClick={(e)=>{ e.stopPropagation(); setHiddenDms(prev => prev.includes(v.id) ? prev : prev.concat(v.id)); }}
                   aria-label="Hide DM"
@@ -2184,7 +2184,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
           {/* New Space button pinned to bottom of the scrollable list so it doesn't get covered by the fixed footer */}
           <div className="sticky bottom-2 w-full flex justify-center px-2 pt-1">
             <button
-              className="h-10 w-10 rounded-full border border-neutral-700 bg-neutral-900 text-neutral-300 hover:border-emerald-600"
+              className="h-10 w-10 rounded-full border border-transparent bg-neutral-900 text-neutral-300 hover:border-emerald-600"
               title="New Space"
               onClick={createSpace}
             >
@@ -2205,8 +2205,8 @@ function ChatApp({ token, user }: { token: string; user: any }) {
 
       {/* People column (click to open profile/actions) */}
       {showPeople && (
-      <div className="hidden md:flex border-l border-neutral-800/60 bg-neutral-900/30 flex-col min-h-0 order-last" style={{ width: `${peopleW}px` }}>
-        <div className="h-12 flex items-center px-3 border-b border-neutral-800/60 font-semibold text-teal-300">People</div>
+      <div className="hidden md:flex bg-panel-1 flex-col min-h-0 order-last" style={{ width: `${peopleW}px` }}>
+        <div className="h-12 flex items-center px-3 font-semibold text-teal-300 bg-panel-0">People</div>
         <div className="flex-1 overflow-auto p-2 space-y-1">
           {members.map(m => {
             const online = globalUserIds.includes(m.id) || spaceUserIds.includes(m.id) || roomUserIds.includes(m.id);
@@ -2228,11 +2228,11 @@ function ChatApp({ token, user }: { token: string; user: any }) {
 
       {/* Channels column (resizable) - hidden on landing (no current space) */}
       {currentVoidId && (
-      <div className="hidden md:flex border-r border-neutral-800/60 bg-neutral-900/40 flex-col min-h-0" style={{ width: `${chanW}px` }}>
-        <div className="h-12 flex items-center px-3 border-b border-neutral-800/60 font-semibold text-emerald-300 truncate" title={voids.find(v=>v.id===currentVoidId)?.name || currentVoidId}>
+      <div className="hidden md:flex bg-panel-2 flex-col min-h-0" style={{ width: `${chanW}px` }}>
+        <div className="h-12 flex items-center px-3 font-semibold text-emerald-300 truncate bg-panel-0" title={voids.find(v=>v.id===currentVoidId)?.name || currentVoidId}>
           {voids.find(v=>v.id===currentVoidId)?.name || currentVoidId}
         </div>
-        <div className="p-2 border-b border-neutral-800/60 text-neutral-400 text-sm">{String(currentVoidId).startsWith('dm_') ? 'Direct Message' : 'Channels'}</div>
+        <div className="p-2 text-neutral-400 text-sm bg-panel-0">{String(currentVoidId).startsWith('dm_') ? 'Direct Message' : 'Channels'}</div>
         <div className="flex-1 overflow-auto">
           {String(currentVoidId).startsWith('dm_') ? (
             <ul className="p-2 space-y-1">
@@ -2330,56 +2330,17 @@ function ChatApp({ token, user }: { token: string; user: any }) {
 
       {/* Main column */}
       <div className="flex-1 grid grid-rows-[auto,1fr,auto,auto] min-h-0 pb-4">
-        {/* Header */}
-        <div className="h-12 w-full max-w-full flex items-center justify-between px-4 border-b border-emerald-900/40 bg-gradient-to-r from-emerald-950/60 via-teal-950/40 to-emerald-950/60 overflow-hidden md:static fixed inset-x-0 top-0 z-20 safe-top">
-          <div className="flex items-center gap-2 min-w-0">
-            {/* Mobile toggles */}
-            <button className="md:hidden h-9 w-9 rounded border border-neutral-700 bg-neutral-900 text-neutral-300 flex items-center justify-center"
-                    title="Spaces" onClick={()=>setVoidSheetOpen(true)}>
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
-                <circle cx="5" cy="12" r="2"/>
-                <circle cx="12" cy="12" r="2"/>
-                <circle cx="19" cy="12" r="2"/>
-              </svg>
-            </button>
-            {/* Mobile: use edge-swipe gestures for Channels and People; hide extra buttons to declutter */}
-            {currentVoidId ? (
-              <div className="font-semibold text-emerald-300 truncate max-w-[40vw] sm:max-w-[45vw]">#{currentChannel?.name ?? currentChannelId}</div>
-            ) : null}
-          </div>
-          <div className="flex items-center gap-3 text-sm text-neutral-300 min-w-0">
-            <div className="flex items-center gap-2 min-w-0">
-              <div className="h-7 w-7 rounded-full overflow-hidden bg-neutral-800 border border-neutral-700 flex items-center justify-center">
-                {me?.avatarUrl ? (
-                  <img src={me.avatarUrl} alt="avatar" className="h-full w-full object-cover" />
-                ) : (
-                  <span className="text-[10px] text-neutral-400">
-                    {(me?.name?.[0] || user?.username?.[0] || '?').toUpperCase()}
-                  </span>
-                )}
-              </div>
-              {(() => {
-                let color: string | undefined;
-                try {
-                  const raw = localStorage.getItem('user');
-                  const u = raw ? JSON.parse(raw) : null;
-                  if (u && u.nameColor) color = String(u.nameColor);
-                  else {
-                    const alt = localStorage.getItem('nameColor');
-                    if (alt) color = String(alt);
-                  }
-                } catch {}
-                return <span className="truncate max-w-[32vw] sm:max-w-xs" style={color ? { color } : undefined}>{me?.name || user?.username}</span>;
-              })()}
-            </div>
-            {/* Friends moved into bottom quick settings pill */}
-          </div>
+        {/* Minimal header: centered channel name only */}
+        <div className="h-10 md:h-12 w-full flex items-center justify-center px-4 bg-transparent">
+          {currentVoidId ? (
+            <div className="font-semibold text-emerald-300 truncate max-w-[70vw]">#{currentChannel?.name ?? currentChannelId}</div>
+          ) : null}
         </div>
 
         {/* Removed top channel bar; channels now in left column */}
 
         {/* Messages, Kanban, or landing */}
-        <div ref={listRef} className="overflow-auto p-4 space-y-2 bg-transparent pt-16 pb-44 md:pt-0 md:pb-8">
+        <div ref={listRef} className="overflow-auto p-4 space-y-2 bg-transparent pb-44 md:pb-8">
           {currentVoidId && currentChannel?.type === 'voice' && voiceJoined && (
             <div className="max-w-5xl mx-auto py-2">
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-6">
@@ -3529,9 +3490,9 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                   })()
                 )}
               </div>
-              <div className="mt-1 text-[10px] text-neutral-500 flex items-center justify-between">
+              <div className="pointer-events-none absolute left-2 bottom-1 text-[10px] text-neutral-400 opacity-0 group-hover:opacity-100 transition-opacity">
                 <span>{formatTime(m.createdAt)}</span>
-                {m.updatedAt && <span className="italic">edited</span>}
+                {m.updatedAt && <span className="italic ml-1">edited</span>}
               </div>
               {/* reactions */}
               <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -3682,7 +3643,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
 
         {/* Voice room or Input (hidden for Kanban/Form/Habit) */}
         {currentChannel?.type !== 'kanban' && currentChannel?.type !== 'form' && currentChannel?.type !== 'habit' && currentChannel?.type !== 'gallery' && currentChannel?.type !== 'notes' && (
-          <div className="p-3 border-t border-neutral-800/60 bg-neutral-900/40 safe-bottom md:static fixed inset-x-0 bottom-4 z-20 md:mb-4 shadow-[0_-8px_16px_rgba(0,0,0,0.35)]">
+          <div className="p-3 safe-bottom md:static fixed inset-x-0 bottom-4 z-20 md:mb-4 bg-transparent">
           {!currentVoidId ? (
             <div className="text-center text-sm text-neutral-400">Create or join a space to start chatting.</div>
           ) : currentChannel?.type === 'voice' ? (
@@ -4109,8 +4070,8 @@ function ChatApp({ token, user }: { token: string; user: any }) {
 
       {/* Fixed footer pill spanning Spaces (w-16) + Channels (chanW) */}
       {me?.userId && (
-        <div className="hidden md:block fixed bottom-0 left-0 z-40" style={{ width: `calc(4rem + ${chanW}px)` }}>
-          <div className="p-2 border-t border-neutral-800/60">
+        <div className="hidden md:block fixed bottom-6 left-0 z-40" style={{ width: `calc(4rem + ${chanW}px)` }}>
+          <div className="p-2">
             <div className="flex items-center gap-2 px-2 py-1.5 rounded-full border border-neutral-800 bg-neutral-900">
               <button
                 className="flex items-center gap-2 flex-1 min-w-0"
