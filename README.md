@@ -148,3 +148,71 @@ This repository uses the MIT License. See `LICENSE`.
 
 Contributing
 See `CONTRIBUTING.md` for guidelines on environment setup, coding standards, and submitting changes.
+## Dev vs Prod
+
+This repo includes Docker Compose stacks and one‑liner scripts for fast local development and a separate production stack (tunnel‑ready) that can run side‑by‑side without port conflicts.
+
+**Dev (Hot Reload)**
+- Start: `pnpm run dev:stack`
+- Stop: `pnpm run dev:down`
+- URLs:
+  - Web (Vite + HMR): `http://localhost:3000`
+  - API health: `http://localhost:5000/api/health`
+  - Adminer: `http://localhost:8080`
+  - Mailhog (dev email): `http://localhost:8025`
+  - MinIO console: `http://localhost:9001`
+- Stack file: `hosting/docker-compose.dev.yml`
+- Notes:
+  - Frontend proxies API and files via Vite to the dev containers.
+  - WebSocket proxy (`/socket.io`) is configured for realtime updates.
+  - PWA is disabled in dev to avoid SW cache issues.
+
+**Prod (Tunnels, No Local Ports By Default)**
+- Start (no localhost ports): `pnpm run prod:up`
+- Start with local ports (optional): `pnpm run prod:up:local`
+- Stop: `pnpm run prod:down`
+- Stack files: `hosting/docker-compose.yml` (+ optional `hosting/docker-compose.local-ports.yml`)
+- Tunnels: expose these internal services via Cloudflare Tunnel hostnames
+  - App/web: `http://web:80` (e.g., `https://app.your-domain.com`)
+  - Adminer: `http://adminer:8080`
+  - MinIO console: `http://minio:9001`
+  - (Optional) S3 API: `http://minio:9000`
+- CORS: add your app hostname to `hosting/env/api.env` `ALLOWED_ORIGINS`.
+
+**Data & Volumes**
+- Dev volumes (local machine only):
+  - Postgres: `echo-dev_echo_pg_data`
+  - MinIO: `echo-dev_echo_minio_data`
+  - Persist across `dev:down`; removed only with `down -v` or manual deletion.
+- Prod volumes (pinned):
+  - Postgres: `echo_echo_pg_data`
+  - MinIO: `echo_echo_minio_data`
+- Moving dev data between machines: export on source, import on target (optional — most keep dev datasets independent).
+
+**Common Commands**
+- Follow logs for dev services:
+  - Web: `docker logs -f echo-dev-web`
+  - API: `docker logs -f echo-dev-api`
+  - Postgres: `docker logs -f echo-dev-postgres`
+- Health checks:
+  - Dev API: `http://localhost:5000/api/health`
+  - Prod API (via tunnel): `https://<your-app-host>/api/health`
+
+**Troubleshooting**
+- Login/signup in dev shows “Request failed”:
+  - Restart dev: `pnpm run dev:down && pnpm run dev:stack`
+  - Ensure API is up: `http://localhost:5000/api/health`
+  - Check web dev logs for proxy errors and API logs for stack traces.
+- UI not updating after creating a space in dev:
+  - WebSocket proxy is enabled at `/socket.io`; restart dev if you changed env.
+- Port conflicts:
+  - Dev uses localhost ports; prod defaults to no local ports. Use `prod:up:local` only when needed.
+- Browser caching (prod only):
+  - Prod uses PWA; if behavior seems stale, hard refresh or unregister the service worker in DevTools.
+
+**Files/Configs Referenced**
+- Dev stack: `hosting/docker-compose.dev.yml`
+- Prod stack: `hosting/docker-compose.yml`
+- Local ports override (prod): `hosting/docker-compose.local-ports.yml`
+- Web dev config (proxy): `apps/web/vite.config.ts`
+- Env files: `hosting/env/*.env`

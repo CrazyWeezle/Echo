@@ -132,7 +132,20 @@ export async function signUpload(params: { filename: string; contentType: string
         try { msg = (await res.json())?.message ?? msg; } catch {}
         throw new Error(msg);
     }
-    return res.json();
+    const data = await res.json();
+    // Defensive normalization: ensure publicUrl is an absolute/same-origin path
+    try {
+        let pub = data?.publicUrl as string | undefined;
+        const key = (data?.key as string | undefined) || '';
+        const hasProtoOrRoot = typeof pub === 'string' && /^(https?:)?\//.test(pub);
+        if (!hasProtoOrRoot) {
+            const cleanKey = String(key || pub || '').replace(/^\/+/, '');
+            pub = `/files/echo-app/${cleanKey}`;
+        }
+        return { ...data, publicUrl: pub };
+    } catch {
+        return data;
+    }
 }
 
 // Convenience helpers for push device registration

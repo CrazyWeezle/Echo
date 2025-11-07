@@ -99,6 +99,12 @@ services:
       NODE_ENV: development
       # Allow local web origin during dev
       ALLOWED_ORIGINS: http://localhost:3000
+      # Make public file URLs browser-accessible via Vite's /files proxy
+      STORAGE_PUBLIC_BASE: /files/echo-app
+      # Use direct presigned MinIO URL for PUT uploads (avoid proxy chunking issues)
+      STORAGE_USE_FILES_PROXY: "false"
+      # Sign URLs with a host the browser can reach from your machine
+      STORAGE_S3_ENDPOINT: http://localhost:9000
       # Dev mail settings to Mailhog
       SMTP_HOST: mailhog
       SMTP_PORT: 1025
@@ -139,6 +145,8 @@ services:
       VITE_FILES_PROXY_TARGET: http://minio:9000
       # Encourage the app to use same-origin API endpoints in dev
       VITE_API_URL: /api
+      # Avoid loading GIPHY web components from CDN; use REST fallback
+      VITE_GIPHY_FORCE_FALLBACK: "1"
     volumes:
       - ..:/repo
       - web_node_modules:/repo/apps/web/node_modules

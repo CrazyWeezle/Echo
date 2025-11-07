@@ -44,7 +44,8 @@ export default defineConfig(({ mode }) => {
           target: filesProxyTarget,
           changeOrigin: true,
           secure: false,
-          rewrite: (path) => path.replace(/^\/files/, '/'),
+          // Ensure exactly one leading slash and no double slashes
+          rewrite: (path) => '/' + path.replace(/^\/+files\/+/, '').replace(/^\/+/, ''),
         },
         // Proxy API so web dev works without setting VITE_API_URL
         '/api': {
