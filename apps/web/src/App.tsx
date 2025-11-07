@@ -70,6 +70,8 @@ export default function App() {
 // --- Authenticated app: all your previous logic lives here unconditionally ---
 function ChatApp({ token, user }: { token: string; user: any }) {
   const [status, setStatus] = useState<"connecting" | "connected" | "error" | "disconnected">("connecting");
+  // Default-enable in-app notifications on first run
+  useEffect(() => { try { if (localStorage.getItem('notifEnabled') == null) localStorage.setItem('notifEnabled','1'); } catch {} }, []);
 
   // identity
   const [me, setMe] = useState<{ userId?: string; name?: string; avatarUrl?: string | null }>(() => getLocalUser());
@@ -123,9 +125,11 @@ function ChatApp({ token, user }: { token: string; user: any }) {
   const [currentChannelId, setCurrentChannelId] = useState<string>(() => {
     try { return localStorage.getItem('currentChannelId') || "general"; } catch { return "general"; }
   });
-  // Track current void id in a ref to avoid race in socket handlers
+  // Track current ids in refs to avoid race in async/socket handlers
   const currentVoidIdRef = useRef<string>(currentVoidId);
   useEffect(() => { currentVoidIdRef.current = currentVoidId; }, [currentVoidId]);
+  const currentChannelIdRef = useRef<string>(currentChannelId);
+  useEffect(() => { currentChannelIdRef.current = currentChannelId; }, [currentChannelId]);
   // One-shot guard so we only auto-redirect away from DMs on first load
   const initialSpaceSetRef = useRef<boolean>(false);
 
@@ -355,6 +359,32 @@ function ChatApp({ token, user }: { token: string; user: any }) {
   // Persist current selection so refresh restores the view
   useEffect(() => { try { localStorage.setItem('currentVoidId', currentVoidId); } catch {} }, [currentVoidId]);
   useEffect(() => { try { localStorage.setItem('currentChannelId', currentChannelId); } catch {} }, [currentChannelId]);
+  // --- Focus/visibility heartbeat to improve server push routing (presence-aware)
+  useEffect(() => {
+    const emitFocus = () => {
+      try {
+        const focused = (document.visibilityState === 'visible') && document.hasFocus();
+        const vid = currentVoidIdRef.current;
+        const cid = currentChannelIdRef.current ? `${vid}:${currentChannelIdRef.current}` : '';
+        socket.emit('client:focus', { focused, voidId: vid, channelId: cid });
+      } catch {}
+    };
+    const onFocus = () => emitFocus();
+    const onBlur = () => emitFocus();
+    const onVis = () => emitFocus();
+    window.addEventListener('focus', onFocus);
+    window.addEventListener('blur', onBlur);
+    document.addEventListener('visibilitychange', onVis);
+    const t = setInterval(emitFocus, 30000);
+    // Initial emit
+    setTimeout(emitFocus, 0);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      window.removeEventListener('blur', onBlur);
+      document.removeEventListener('visibilitychange', onVis);
+      clearInterval(t);
+    };
+  }, []);
   // Load and refresh friends list for DM actions and badges
   async function refreshFriends() {
     try {
@@ -363,6 +393,11 @@ function ChatApp({ token, user }: { token: string; user: any }) {
       const map: Record<string, boolean> = {};
       (r.friends || []).forEach((f: any) => { map[f.id] = true; });
       setFriendIds(map);
+      try {
+        const rq = await api.getAuth('/friends/requests', tok);
+        const incoming = Array.isArray(rq?.incoming) ? rq.incoming.length : 0;
+        setFriendReqCount(incoming || 0);
+      } catch {}
     } catch {}
   }
   useEffect(() => { refreshFriends(); }, []);
@@ -371,6 +406,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
     socket.on('friends:update', onFU);
     return () => { socket.off('friends:update', onFU); };
   }, []);
+  // moved below where friendsOpen is declared to avoid TDZ
 
   // Resizable columns (desktop)
   const [chanW, setChanW] = useState<number>(() => {
@@ -384,7 +420,21 @@ function ChatApp({ token, user }: { token: string; user: any }) {
   useEffect(() => { try { localStorage.setItem('chanW', String(chanW)); } catch {} }, [chanW]);
   useEffect(() => { try { localStorage.setItem('peopleW', String(peopleW)); } catch {} }, [peopleW]);
 
-  
+  // Reconnect sockets immediately when network comes back
+  useEffect(() => {
+    const onOnline = () => { try { if (!socket.connected) connectSocket(); } catch {} };
+    window.addEventListener('online', onOnline);
+    return () => window.removeEventListener('online', onOnline);
+  }, []);
+
+  // React quickly to connection type changes (e.g., Wi‑Fi ↔ LTE)
+  useEffect(() => {
+    const conn: any = (navigator as any).connection || (navigator as any).mozConnection || (navigator as any).webkitConnection;
+    if (!conn || !conn.addEventListener) return;
+    const onChange = () => { try { if (!socket.connected) connectSocket(); } catch {} };
+    conn.addEventListener('change', onChange);
+    return () => { try { conn.removeEventListener('change', onChange); } catch {} };
+  }, []);
 
   function startDrag(which: 'chan' | 'people', clientX: number) {
     const startX = clientX;
@@ -617,7 +667,6 @@ function ChatApp({ token, user }: { token: string; user: any }) {
   }, [text]);
   const [replyTo, setReplyTo] = useState<Msg | null>(null);
   // Profile modal removed; avatar now navigates to landing
-  const [friendsOpen, setFriendsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [userQuickOpen, setUserQuickOpen] = useState(false);
 
@@ -662,6 +711,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
   const [showJump, setShowJump] = useState(false);
   const [unreadMarkerByChan, setUnreadMarkerByChan] = useState<Record<string, string | null>>({});
   const [friendIds, setFriendIds] = useState<Record<string, boolean>>({});
+  const [friendReqCount, setFriendReqCount] = useState<number>(0);
   const [friendRingEnabled, setFriendRingEnabled] = useState<boolean>(() => {
     try {
       const raw = localStorage.getItem('user');
@@ -682,6 +732,10 @@ function ChatApp({ token, user }: { token: string; user: any }) {
       return fallback || '#34d399';
     } catch { return '#34d399'; }
   });
+  // Friends modal open state
+  const [friendsOpen, setFriendsOpen] = useState(false);
+  // Clear unseen badge when opening the Friends modal
+  useEffect(() => { if (friendsOpen) setFriendReqCount(0); }, [friendsOpen]);
   // DM icons can be hidden from the Spaces column (still available under Direct Messages)
   const [hiddenDms, setHiddenDms] = useState<string[]>(() => {
     try { const s = localStorage.getItem('hiddenDMs'); return s ? JSON.parse(s) : []; } catch { return []; }
@@ -1362,7 +1416,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
       setNotified(prev => ({ ...prev, [fid]: true }));
       try {
         const soundEnabled = (localStorage.getItem('soundEnabled') || '1') === '1';
-        const notifEnabled = (localStorage.getItem('notifEnabled') || '0') === '1';
+        const notifEnabled = (localStorage.getItem('notifEnabled') || '1') === '1';
         // Only play sound when not actively viewing/focused
         const inBackground = (document.visibilityState === 'hidden' || !document.hasFocus());
         if (soundEnabled && inBackground) {
@@ -4081,7 +4135,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
               <button
                 onClick={() => setFriendsOpen(true)}
                 aria-label="Friends"
-                className="text-neutral-300 hover:text-neutral-100"
+                className="relative text-neutral-300 hover:text-neutral-100"
                 title="Friends"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
@@ -4090,6 +4144,11 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                   <path d="M22 21v-2a4 4 0 0 0-3-3.87"/>
                   <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
                 </svg>
+                {friendReqCount > 0 && (
+                  <span className="absolute -top-2 -right-2 min-w-[16px] h-[16px] px-1 rounded-full bg-emerald-600 text-emerald-50 border border-neutral-900 text-[10px] flex items-center justify-center">
+                    {friendReqCount > 99 ? '99+' : friendReqCount}
+                  </span>
+                )}
               </button>
               <button
                 onClick={() => setSettingsOpen(true)}

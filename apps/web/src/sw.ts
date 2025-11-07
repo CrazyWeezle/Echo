@@ -6,6 +6,17 @@ declare let self: ServiceWorkerGlobalScope & { __WB_MANIFEST: any };
 // @ts-ignore
 precacheAndRoute(self.__WB_MANIFEST || []);
 
+// Ensure the new service worker activates immediately and takes control,
+// reducing the chance of mixed old/new bundles after a deploy
+self.addEventListener('install', (event: any) => {
+  try { self.skipWaiting(); } catch {}
+});
+self.addEventListener('activate', (event: any) => {
+  event.waitUntil((async () => {
+    try { await self.clients.claim(); } catch {}
+  })());
+});
+
 self.addEventListener('push', (event: any) => {
   try {
     const data = event.data ? JSON.parse(event.data.text()) : {};

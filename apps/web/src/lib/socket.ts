@@ -27,17 +27,18 @@ const PLATFORM = (() => {
 
 export const socket: Socket = io(base, {
     autoConnect: false,
-    // Allow websocket with HTTP polling fallback for tunnel/proxy quirks
-    transports: ["websocket", "polling"],
+    // Prefer pure WebSocket for lowest latency; skip HTTP polling upgrade
+    transports: ["websocket"],
+    upgrade: false,
     path: "/socket.io",
     withCredentials: true,
     auth: { token: localStorage.getItem('token') || undefined, platform: PLATFORM },
-    // Make reconnection more resilient over tunnels
+    // Make reconnection more resilient
     reconnection: true,
     reconnectionAttempts: Infinity,
-    reconnectionDelay: 500,
-    reconnectionDelayMax: 4000,
-    timeout: 20000,
+    reconnectionDelay: 300,
+    reconnectionDelayMax: 2000,
+    timeout: 15000,
 });
 
 // ---- lifecycle helpers ----
