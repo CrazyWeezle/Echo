@@ -81,25 +81,34 @@ services:
   api-dev:
     image: node:20-alpine
     container_name: echo-dev-api
-    working_dir: /repo
+    working_dir: /repo/apps/api
     command: >
       sh -lc "
         corepack enable &&
         corepack prepare pnpm@10.19.0 --activate &&
         pnpm install --filter ./apps/api --no-frozen-lockfile &&
-        NODE_ENV=development PORT=5000 pnpm --filter ./apps/api exec node -- --watch src/main.js
+        NODE_ENV=development PORT=5000 node --watch src/main.js
       "
     env_file:
-      - env/api.env
       - env/minio.env
     environment:
       PORT: "5000"
       # Important: connect to the db service, not localhost inside container
       DATABASE_URL: postgresql://echo:echo@db:5432/echo
       CI: "true"
+      NODE_ENV: development
+      # Allow local web origin during dev
+      ALLOWED_ORIGINS: http://localhost:3000
+      # Dev mail settings to Mailhog
+      SMTP_HOST: mailhog
+      SMTP_PORT: 1025
+      SMTP_SECURE: "false"
+      FROM_EMAIL: dev@localhost
+      PUBLIC_WEB_URL: http://localhost:3000
     volumes:
       - ..:/repo
       - api_node_modules:/repo/apps/api/node_modules
+      - root_node_modules:/repo/node_modules
     ports:
       - "5000:5000"
     depends_on:
@@ -126,9 +135,14 @@ services:
       VITE_DISABLE_PWA: "1"
       CI: "true"
       CHOKIDAR_USEPOLLING: "true"
+      VITE_API_PROXY_TARGET: http://api-dev:5000
+      VITE_FILES_PROXY_TARGET: http://minio:9000
+      # Encourage the app to use same-origin API endpoints in dev
+      VITE_API_URL: /api
     volumes:
       - ..:/repo
       - web_node_modules:/repo/apps/web/node_modules
+      - root_node_modules:/repo/node_modules
     ports:
       - "3000:3000"
     depends_on:
@@ -141,3 +155,4 @@ volumes:
   echo_dev_minio_data:
   api_node_modules:
   web_node_modules:
+  root_node_modules:

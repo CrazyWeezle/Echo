@@ -9,6 +9,7 @@ export default defineConfig(({ mode }) => {
   const debug = env.VITE_DEBUG_BUILD === '1';
   const disablePwa = env.VITE_DISABLE_PWA === '1';
   const filesProxyTarget = env.VITE_FILES_PROXY_TARGET || 'http://localhost:9000';
+  const apiProxyTarget = env.VITE_API_PROXY_TARGET || 'http://localhost:5000';
   const pwa = VitePWA({
     strategies: 'injectManifest',
     srcDir: 'src',
@@ -47,9 +48,16 @@ export default defineConfig(({ mode }) => {
         },
         // Proxy API so web dev works without setting VITE_API_URL
         '/api': {
-          target: 'http://localhost:5000',
+          target: apiProxyTarget,
           changeOrigin: true,
           secure: false,
+        },
+        // Proxy Socket.IO (websocket) to API for realtime updates in dev
+        '/socket.io': {
+          target: apiProxyTarget,
+          changeOrigin: true,
+          secure: false,
+          ws: true,
         },
       },
     },

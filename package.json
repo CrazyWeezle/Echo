@@ -8,8 +8,11 @@
     "dev": "pnpm -r --filter ./apps/api --filter ./apps/web --parallel --stream dev",
     "dev:web": "pnpm --filter ./apps/web dev",
     "dev:api": "pnpm --filter ./apps/api dev",
-    "up:deps": "docker compose -f hosting/docker-compose.yml up -d db minio minio-mc",
-    "dev:stack": "pnpm run up:deps && pnpm run dev"
+    "dev:stack": "docker compose -p echo-dev -f hosting/docker-compose.dev.yml up",
+    "dev:down": "docker compose -p echo-dev -f hosting/docker-compose.dev.yml down",
+    "prod:up": "docker compose --env-file hosting/.env -p echo-stable -f hosting/docker-compose.yml up -d",
+    "prod:up:local": "docker compose --env-file hosting/.env -p echo-stable -f hosting/docker-compose.yml -f hosting/docker-compose.local-ports.yml up -d",
+    "prod:down": "docker compose -p echo-stable -f hosting/docker-compose.yml down"
   },
   "keywords": [],
   "author": "",
