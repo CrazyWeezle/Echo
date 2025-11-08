@@ -13,6 +13,7 @@ import InputModal from "./components/InputModal";
 const GifPicker = lazy(() => import("./components/GifPicker"));
 const EmojiPanel = lazy(() => import("./components/EmojiPanel"));
 import UnifiedSettingsModal from "./components/UnifiedSettingsModal";
+import CreateSpaceModal from "./components/CreateSpaceModal";
 import UserQuickSettings from "./components/UserQuickSettings";
 import ToastHost from "./components/ToastHost";
 import ConfirmHost from "./components/ConfirmHost";
@@ -178,6 +179,8 @@ function ChatApp({ token, user }: { token: string; user: any }) {
   const [seenTip, setSeenTip] = useState<{ x: number; y: number; ids: string[] } | null>(null);
   const [imagePreview, setImagePreview] = useState<{ url: string; name?: string } | null>(null);
   const [imagePreviewVisible, setImagePreviewVisible] = useState(false);
+  const [imagePreviewList, setImagePreviewList] = useState<{ url: string; name?: string }[]>([]);
+  const [imagePreviewIndex, setImagePreviewIndex] = useState<number>(0);
 
   useEffect(() => {
     if (imagePreview) {
@@ -192,6 +195,33 @@ function ChatApp({ token, user }: { token: string; user: any }) {
     setImagePreviewVisible(false);
     setTimeout(() => setImagePreview(null), 180);
   }
+
+  // Navigate within lightbox when a list is present
+  useEffect(() => {
+    if (!imagePreview) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        if (imagePreviewList.length > 0) {
+          const next = (imagePreviewIndex + 1) % imagePreviewList.length;
+          setImagePreviewIndex(next);
+          setImagePreview(imagePreviewList[next] || null);
+        }
+      } else if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        if (imagePreviewList.length > 0) {
+          const prev = (imagePreviewIndex - 1 + imagePreviewList.length) % imagePreviewList.length;
+          setImagePreviewIndex(prev);
+          setImagePreview(imagePreviewList[prev] || null);
+        }
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        closeImagePreview();
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [imagePreview, imagePreviewIndex, imagePreviewList]);
 
   useEffect(() => {
     if (!imagePreview) return;
@@ -555,6 +585,29 @@ function ChatApp({ token, user }: { token: string; user: any }) {
     setQuick(fid, ((quickTextByFav[fid] || '') + emoji));
     setQuickPickerFor(null);
   }
+  // Favorite emojis from Personalization
+  const defaultFavEmojis = ['😀','😂','😍','👍','🎉','🔥'];
+  function getFavEmojis(): string[] {
+    try {
+      const raw = localStorage.getItem('favEmojis');
+      const arr = raw ? JSON.parse(raw) : null;
+      if (Array.isArray(arr) && arr.length === 6 && arr.every(x => typeof x === 'string')) return arr as string[];
+    } catch {}
+    return defaultFavEmojis;
+  }
+  const [favEmojis, setFavEmojis] = useState<string[]>(getFavEmojis());
+  useEffect(() => {
+    function refresh(){ setFavEmojis(getFavEmojis()); }
+    // Custom event fired by settings when favorites change
+    window.addEventListener('favEmojis:updated' as any, refresh);
+    // Cross-tab/local changes
+    const onStorage = (e: StorageEvent) => { if (e.key === 'favEmojis') refresh(); };
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.removeEventListener('favEmojis:updated' as any, refresh);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, []);
   async function quickSend(fid: string) {
     const text = (quickTextByFav[fid] || '').trim();
     if (!text) return;
@@ -622,6 +675,23 @@ function ChatApp({ token, user }: { token: string; user: any }) {
 
   // emoji picker for composer (full panel with categories + recents)
   const [composerPickerOpen, setComposerPickerOpen] = useState(false);
+  // Gallery selection & pagination state per channel
+  const [galSelModeByChan, setGalSelModeByChan] = useState<Record<string, boolean>>({});
+  const [galSelectedByChan, setGalSelectedByChan] = useState<Record<string, Record<string, boolean>>>({});
+  const [galVisibleCountByChan, setGalVisibleCountByChan] = useState<Record<string, number>>({});
+  const [imgLoadedByUrl, setImgLoadedByUrl] = useState<Record<string, boolean>>({});
+  // App update indicator (from service worker)
+  const [updateAvailable, setUpdateAvailable] = useState<boolean>(()=>{ try { return localStorage.getItem('updateAvailable')==='1'; } catch { return false; } });
+  useEffect(() => {
+    function onAvail(){ setUpdateAvailable(true); }
+    function onStorage(e: StorageEvent){ if (e.key === 'updateAvailable') setUpdateAvailable(e.newValue==='1'); }
+    window.addEventListener('app:update-available' as any, onAvail);
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.removeEventListener('app:update-available' as any, onAvail);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, []);
   const EMOJI_CATEGORIES: Record<string, string[]> = {
     'Smileys': [
       '??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??','??'
@@ -994,18 +1064,35 @@ function ChatApp({ token, user }: { token: string; user: any }) {
     setVoiceSilenced((prev) => { const n = { ...prev }; delete n[peerId]; return n; });
   }
 
-  async function createSpace() {
-    const nm = await askInput({ title: 'Create Space', label: 'Space name', placeholder: 'My Team' });
-    if (!nm) return;
+  const [createSpaceOpen, setCreateSpaceOpen] = useState(false);
+  function createSpace() {
+    setCreateSpaceOpen(true);
+  }
+  async function handleCreateSpace(payload: { name: string; channels: { key: string; name: string; type: string }[]; homeKey: string }) {
     try {
-      const res = await api.postAuth('/spaces', { name: nm }, token);
-      const sid = res.id;
+      const res = await api.postAuth('/spaces', { name: payload.name }, token);
+      const sid = String(res.id);
+      const created: Record<string, { id: string; name: string }> = {};
+      for (const ch of payload.channels) {
+        try {
+          const cres = await api.postAuth('/channels', { spaceId: sid, name: ch.name, type: ch.type }, token);
+          created[ch.key] = { id: String(cres.id), name: ch.name };
+        } catch (e: any) {
+          toast(e?.message || `Failed to create channel ${ch.name}`, 'error');
+        }
+      }
+      const home = created[payload.homeKey] || created['general'];
+      if (home) {
+        try { await api.patchAuth('/spaces', { spaceId: sid, homeChannelId: home.id }, token); } catch {}
+      }
       socket.emit('void:list');
       setCurrentVoidId(sid);
-      setCurrentChannelId('general');
+      const gotoChannelId = (home?.id) || `${sid}:general`;
+      setCurrentChannelId(home?.name || 'general');
       socket.emit('void:switch', { voidId: sid });
       socket.emit('channel:list', { voidId: sid });
-      socket.emit('channel:switch', { voidId: sid, channelId: `${sid}:general` });
+      socket.emit('channel:switch', { voidId: sid, channelId: gotoChannelId });
+      setCreateSpaceOpen(false);
     } catch (e: any) {
       toast(e?.message || 'Failed to create space', 'error');
     }
@@ -1653,16 +1740,22 @@ function ChatApp({ token, user }: { token: string; user: any }) {
     setText(""); setPendingUploads([]); setReplyTo(null); setSpoiler(false); sendTypingFalse();
   }
 
-  // Quick reaction bar: take last used emojis with sensible fallbacks
+  // Quick reaction bar: prefer user favorites (Personalization), fallback to recents
   function getQuickEmojis(): string[] {
+    try {
+      const favRaw = localStorage.getItem('favEmojis');
+      const fav = favRaw ? JSON.parse(favRaw) : null;
+      if (Array.isArray(fav) && fav.length === 6 && fav.every((x:any) => typeof x === 'string' && x.trim())) {
+        return fav as string[];
+      }
+    } catch {}
     try {
       const raw = localStorage.getItem('emojiRecent');
       const list: string[] = raw ? JSON.parse(raw) : [];
-      // Filter out corrupted placeholders like '??' from older builds
       const valid = list.filter((ch) => typeof ch === 'string' && ch.trim() && ch !== '??' && ch !== '?');
-      const fallback = ['\uD83D\uDC4D', '\u2764\uFE0F', '\uD83D\uDE02']; // ?? ?? ??
+      const fallback = ['\uD83D\uDC4D', '\u2764\uFE0F', '\uD83D\uDE02'];
       const uniq = Array.from(new Set([...valid.slice(-5).reverse(), ...fallback]));
-      return uniq.slice(0, 3);
+      return uniq.slice(0, 6);
     } catch { return ['\uD83D\uDC4D', '\u2764\uFE0F', '\uD83D\uDE02']; }
   }
 
@@ -2596,13 +2689,24 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                             const img = atts.find((a:any)=>{ const t=String(a?.contentType||'').toLowerCase(); const u=String(a?.url||'').toLowerCase(); return t.startsWith('image/') || /\.(png|jpe?g|webp)(\?.*)?$/.test(u); });
                             if (img) { frame = { url: img.url, name: img.name }; break; }
                           }
+                          // Read favorites prefs for gallery widget
+                          const galFit = (()=>{ try { return localStorage.getItem('fav.gallery.fit') || 'contain-blur'; } catch { return 'contain-blur'; } })();
+                          const galHover = (()=>{ try { return localStorage.getItem('fav.gallery.hover') || 'subtle'; } catch { return 'subtle'; } })();
+                          const hoverCls = galHover==='subtle' ? 'transition-transform duration-300 group-hover:scale-[1.01]' : '';
                           return (
                             <button key={fid} className="relative rounded-xl border border-neutral-800 bg-neutral-950 overflow-hidden group"
                                     onClick={()=>{ switchVoid(vId); const shortId = cId.includes(':') ? cId.split(':')[1] : cId; switchChannel(shortId); }}
                                     title={`${vName} / #${cName}`}>
                               <div className="relative w-full pt-[66%]">
                                 {frame ? (
-                                  <img src={frame.url} alt={frame.name||'image'} className="absolute inset-0 w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.02]" />
+                                  galFit==='contain-blur' ? (
+                                    <>
+                                      <img src={frame.url} alt="" aria-hidden="true" className="absolute inset-0 w-full h-full object-cover scale-110 blur-md opacity-60" />
+                                      <img src={frame.url} alt={frame.name||'image'} className={`absolute inset-0 w-full h-full object-contain ${hoverCls}`} />
+                                    </>
+                                  ) : (
+                                    <img src={frame.url} alt={frame.name||'image'} className={`absolute inset-0 w-full h-full object-cover ${hoverCls}`} />
+                                  )
                                 ) : (
                                   <div className="absolute inset-0 flex items-center justify-center text-neutral-500">No images yet</div>
                                 )}
@@ -3107,11 +3211,16 @@ function ChatApp({ token, user }: { token: string; user: any }) {
               }
               // Newest-first at top of page
               images.reverse();
-              // Selection state for bulk delete
-              const [selMode, setSelMode] = (function(){ try { return (window as any)._galSelMode ??= [false, (v:boolean)=>{ (window as any)._galSelMode[0]=v; }]; } catch { return [false, (_:boolean)=>{}] as any; } })();
-              const [selected, setSelected] = (function(){ try { return (window as any)._galSelected ??= [{}, (up:any)=>{ (window as any)._galSelected[0]=typeof up==='function'? up((window as any)._galSelected[0]): up; }]; } catch { return [{} as Record<string, boolean>, (_:any)=>{}] as any; } })();
+              // Selection state & pagination (per-channel)
+              const gid = fq(currentVoidId, currentChannelId);
+              const selMode = !!galSelModeByChan[gid];
+              const selected = galSelectedByChan[gid] || {} as Record<string, boolean>;
+              function setSelMode(v: boolean){ setGalSelModeByChan(old => ({ ...old, [gid]: v })); }
+              function setSelected(up: any){ setGalSelectedByChan(old => ({ ...old, [gid]: typeof up === 'function' ? up(old[gid] || {}) : up })); }
               function keyOf(im: {mid:string; url:string}){ return `${im.mid}__${encodeURIComponent(im.url)}`; }
-              const selCount = Object.values(selected as any).filter(Boolean).length;
+              const selCount = Object.values(selected).filter(Boolean).length;
+              const visible = Math.max(24, galVisibleCountByChan[gid] || 24);
+              const list = images.slice(0, visible);
               return (
                 <div className="min-h-full">
                   <div className="mb-3 flex items-center gap-2">
@@ -3137,78 +3246,63 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                   </div>
                   <input ref={galleryFileRef} type="file" accept="image/png,image/jpeg" multiple className="hidden" onChange={(e)=> addGalleryFiles((e.target as HTMLInputElement).files)} />
                   <div
-                    className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4 p-2 overflow-visible"
+                    className="p-2 overflow-visible"
                     onDragOver={(e)=>{ e.preventDefault(); }}
                     onDrop={(e)=>{ e.preventDefault(); const files = e.dataTransfer?.files; if (files && files.length>0) addGalleryFiles(files); }}
                   >
-                    {/* Always show an add tile */}
-                    <button
-                      type="button"
-                      className="relative block w-full pt-[125%] overflow-hidden rounded border border-neutral-800 bg-neutral-950 hover:bg-neutral-900/70 text-neutral-300"
-                      onClick={() => galleryFileRef.current?.click()}
-                      title="Add photos"
-                      aria-label="Add photos"
-                    >
-                      <span className="absolute inset-0 flex items-center justify-center">
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-8 w-8">
-                          <path d="M12 5v14M5 12h14"/>
-                        </svg>
-                      </span>
-                    </button>
-                    {/* Existing images */}
-                    {(() => {
-                      const imagesOrdered = images.slice().reverse();
-                      return imagesOrdered.map((im, i) => {
-                      const hidden = !!im.spoiler && !revealedSpoilers[im.mid];
-                      return (
-                      <div key={i} className="relative group overflow-visible">
-                        <div className={`block w-full pt-[125%] overflow-hidden rounded-xl border ${ (selected as any)[keyOf(im)] ? 'border-emerald-600 ring-1 ring-emerald-700' : 'border-neutral-800/80'} bg-neutral-950 shadow-md hover:shadow-lg transition-shadow` }>
-                          <button
-                            type="button"
-                            disabled={selMode || hidden}
-                            onClick={() => { if (!selMode && !hidden) setImagePreview({ url: im.url, name: im.name }); }}
-                            className="absolute inset-0 cursor-zoom-in"
-                            title={hidden ? undefined : 'Open preview'}
-                            aria-label={hidden ? undefined : 'Open preview'}
-                          >
-                            <img src={im.url} alt={im.name||'photo'} className={`w-full h-full object-cover ${hidden ? 'blur-md brightness-50' : ''}`} />
-                          </button>
-                        {hidden && (
-                          <button className="absolute inset-0 flex items-center justify-center bg-neutral-950/90 backdrop-blur-sm text-neutral-200 text-sm font-medium" onClick={()=> setRevealedSpoilers(prev => ({ ...prev, [im.mid]: true }))}>Spoiler - tap to reveal</button>
-                        )}
-                        {!selMode && (
-                          <button
-                            className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity px-2 py-1 rounded-md bg-neutral-900/85 border border-neutral-700 text-neutral-300 hover:text-red-300 hover:border-red-600 backdrop-blur-sm"
-                            title="Delete photo"
-                            aria-label="Delete photo"
-                            onClick={async (e)=>{
-                              e.preventDefault();
-                              const ok = await askConfirm({ title: 'Delete Photo', message: 'Remove this photo from gallery?', confirmText: 'Delete', cancelText: 'Cancel' });
-                              if (!ok) return;
-                              try {
-                                const tok = localStorage.getItem('token')||'';
-                                await api.postAuth('/channels/gallery-attachment-delete', { messageId: im.mid, url: im.url }, tok);
-                              } catch (e:any) {
-                                toast(e?.message||'Failed to delete','error');
-                              }
-                            }}
-                          >
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M3 6h18"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
-                          </button>
-                        )}
-                        {selMode && (
-                          <button
-                            className={`absolute top-2 left-2 px-2 py-0.5 rounded-full border text-xs ${ (selected as any)[keyOf(im)] ? 'bg-emerald-700/70 border-emerald-600 text-emerald-50' : 'bg-neutral-900/70 border-neutral-700 text-neutral-300'}`}
-                            onClick={(e)=>{ e.preventDefault(); (setSelected as any)((prev:Record<string,boolean>)=>({ ...prev, [keyOf(im)]: !prev[keyOf(im)] })); }}
-                            title={(selected as any)[keyOf(im)] ? 'Deselect' : 'Select'}
-                          >
-                            {(selected as any)[keyOf(im)] ? 'Selected' : 'Select'}
-                          </button>
-                        )}
-                        </div>
-                        {/* Click-to-preview replaces hover pop-out */}
+                    <div className="columns-2 sm:columns-3 md:columns-4 gap-4">
+                      {/* Add tile */}
+                      <div className="mb-4 break-inside-avoid">
+                        <button
+                          type="button"
+                          className="relative block w-full overflow-hidden rounded border border-neutral-800 bg-neutral-950 hover:bg-neutral-900/70 text-neutral-300"
+                          style={{ aspectRatio: '4 / 3' }}
+                          onClick={() => galleryFileRef.current?.click()}
+                          title="Add photos"
+                          aria-label="Add photos"
+                        >
+                          <span className="absolute inset-0 flex items-center justify-center">
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-8 w-8">
+                              <path d="M12 5v14M5 12h14"/>
+                            </svg>
+                          </span>
+                        </button>
                       </div>
-                    )}); })()}
+                    {/* Existing images (masonry) */}
+                    {list.map((im, i) => {
+                      const hidden = !!im.spoiler && !revealedSpoilers[im.mid];
+                      const loaded = !!imgLoadedByUrl[im.url];
+                      return (
+                        <div key={`${im.mid}-${i}`} className="mb-4 break-inside-avoid relative group">
+                          <div className={`relative overflow-hidden rounded-xl border ${ (selected as any)[keyOf(im)] ? 'border-emerald-600 ring-1 ring-emerald-700' : 'border-neutral-800/80'} bg-neutral-950 shadow-md transition-transform transition-shadow duration-200 ease-out group-hover:shadow-xl group-hover:-translate-y-0.5 group-hover:scale-[1.01]`}>
+                            <button
+                              type="button"
+                              disabled={selMode || hidden}
+                              onClick={() => { if (!selMode && !hidden) { const idx = images.findIndex(x => x.url === im.url); setImagePreviewList(images.map(x => ({ url: x.url, name: x.name }))); setImagePreviewIndex(idx >= 0 ? idx : 0); setImagePreview({ url: im.url, name: im.name }); } }}
+                              className="block w-full cursor-zoom-in"
+                              title={hidden ? undefined : 'Open preview'}
+                              aria-label={hidden ? undefined : 'Open preview'}
+                            >
+                              <img src={im.url} alt={im.name||'photo'} className={`w-full h-auto transition-all duration-500 ease-out ${hidden ? 'blur-md brightness-50' : loaded ? 'opacity-100 scale-100' : 'opacity-0 scale-[1.02] blur-md'}`} onLoad={()=> setImgLoadedByUrl(prev => prev[im.url] ? prev : ({ ...prev, [im.url]: true }))} />
+                            </button>
+                            {hidden && (
+                              <button className="absolute inset-0 flex items-center justify-center bg-neutral-950/90 backdrop-blur-sm text-neutral-200 text-sm font-medium" onClick={()=> setRevealedSpoilers(prev => ({ ...prev, [im.mid]: true }))}>Spoiler - tap to reveal</button>
+                            )}
+                            {!selMode && (
+                              <button className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity px-2 py-1 rounded-md bg-neutral-900/85 border border-neutral-700 text-neutral-300 hover:text-red-300 hover:border-red-600 backdrop-blur-sm" title="Delete photo" aria-label="Delete photo" onClick={async (e)=>{ e.preventDefault(); const ok = await askConfirm({ title: 'Delete Photo', message: 'Remove this photo from gallery?', confirmText: 'Delete', cancelText: 'Cancel' }); if (!ok) return; try { const tok = localStorage.getItem('token')||''; await api.postAuth('/channels/gallery-attachment-delete', { messageId: im.mid, url: im.url }, tok); } catch (e:any) { toast(e?.message||'Failed to delete','error'); } }}>
+                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M3 6h18"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+                              </button>
+                            )}
+                            {selMode && (
+                              <button className={`absolute top-2 left-2 px-2 py-0.5 rounded-full border text-xs ${ (selected as any)[keyOf(im)] ? 'bg-emerald-700/70 border-emerald-600 text-emerald-50' : 'bg-neutral-900/70 border-neutral-700 text-neutral-300'}`} onClick={(e)=>{ e.preventDefault(); setSelected((prev:Record<string,boolean>)=>({ ...prev, [keyOf(im)]: !prev[keyOf(im)] })); }} title={(selected as any)[keyOf(im)] ? 'Deselect' : 'Select'}>
+                                {(selected as any)[keyOf(im)] ? 'Selected' : 'Select'}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                    </div>
                     {/* If few images, pad with add placeholders to make it feel populated */}
                     {Array.from({ length: Math.max(0, 4 - Math.min(images.length, 4)) }).map((_, idx) => (
                       <button
@@ -3226,18 +3320,23 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                         </span>
                       </button>
                     ))}
+                    {images.length > list.length && (
+                      <div className="mt-3 flex items-center justify-center">
+                        <button className="px-3 py-1.5 rounded border border-neutral-700 text-neutral-200 hover:bg-neutral-800/60" onClick={()=> setGalVisibleCountByChan(old => ({ ...old, [gid]: (old[gid] || 24) + 24 }))}>Load more</button>
+                      </div>
+                    )}
                   </div>
                   <div className="mt-3 flex items-center gap-2">
                     {!selMode ? (
-                      <button className="px-2 py-1 rounded border border-neutral-700 text-neutral-200 hover:bg-neutral-800/60" onClick={()=>{ (setSelMode as any)(true); (setSelected as any)({}); }}>Select</button>
+                      <button className="px-2 py-1 rounded border border-neutral-700 text-neutral-200 hover:bg-neutral-800/60" onClick={()=>{ setSelMode(true); setSelected({}); }}>Select</button>
                     ) : (
                       <>
-                        <button className="px-2 py-1 rounded border border-neutral-700 text-neutral-200 hover:bg-neutral-800/60" onClick={()=>{ (setSelMode as any)(false); (setSelected as any)({}); }}>Cancel</button>
+                        <button className="px-2 py-1 rounded border border-neutral-700 text-neutral-200 hover:bg-neutral-800/60" onClick={()=>{ setSelMode(false); setSelected({}); }}>Cancel</button>
                         <button disabled={selCount===0} className="px-2 py-1 rounded border border-red-800 text-red-300 hover:bg-red-900/30 disabled:opacity-50" onClick={async()=>{
                           const items = Object.entries(selected as any).filter(([k,v])=>v).map(([k])=>{ const [mid, urlEnc]=k.split('__'); return { messageId: mid, url: decodeURIComponent(urlEnc) }; });
                           if (items.length===0) return;
                           const ok = await askConfirm({ title: 'Delete Photos', message: `Delete ${items.length} selected photo(s)?`, confirmText: 'Delete', cancelText: 'Cancel' }); if (!ok) return;
-                          try { const tok=localStorage.getItem('token')||''; await api.postAuth('/channels/gallery-attachments-delete',{ items }, tok); (setSelected as any)({}); (setSelMode as any)(false); } catch(e:any){ toast(e?.message||'Failed to delete','error'); }
+                          try { const tok=localStorage.getItem('token')||''; await api.postAuth('/channels/gallery-attachments-delete',{ items }, tok); setSelected({}); setSelMode(false); } catch(e:any){ toast(e?.message||'Failed to delete','error'); }
                         }}>Delete Selected ({selCount})</button>
             </>
           )}
@@ -3370,10 +3469,14 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                 ))}
                 <button
                   ref={pickerFor === m.id ? reactionBtnRef : undefined}
-                  className="px-1.5 py-0.5 rounded hover:bg-neutral-800 text-neutral-300"
+                  className="p-1 rounded hover:bg-neutral-800 text-neutral-300"
                   onClick={() => setPickerFor(pickerFor === m.id ? null : m.id)}
                   aria-label="More reactions" title="More reactions"
-                >...</button>
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+                    <path d="M6 9l6 6 6-6"/>
+                  </svg>
+                </button>
                 <button className="p-1 rounded hover:bg-neutral-800 text-neutral-300" onClick={() => setReplyTo(m)} aria-label="Reply" title="Reply">
                   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M10 19l-7-7 7-7"/><path d="M3 12h12a 6 6 0 0 1 6 6v3"/></svg>
                 </button>
@@ -3390,15 +3493,12 @@ function ChatApp({ token, user }: { token: string; user: any }) {
               </div>
               )}
               {editingId !== m.id && pickerFor === m.id && (
-                <div ref={reactionMenuRef} className="absolute top-8 right-1 z-50 p-2 rounded-md border border-neutral-700 bg-neutral-900 shadow-lg flex flex-wrap gap-1">
-                  {REACTION_EMOJIS.map(e => (
-                    <button
-                      key={e}
-                      className="px-2 py-1 rounded hover:bg-neutral-800"
-                      onClick={() => { toggleReaction(m, e); setPickerFor(null); }}
-                    >{e}</button>
-                  ))}
-                </div>
+                <Suspense fallback={null}>
+                  <EmojiPanel
+                    onSelect={(native: string) => { if (native) toggleReaction(m, native); }}
+                    onClose={() => setPickerFor(null)}
+                  />
+                </Suspense>
               )}
               <div className="flex items-center justify-between text-xs text-neutral-400">
                 <div>
@@ -3921,6 +4021,25 @@ function ChatApp({ token, user }: { token: string; user: any }) {
           <div className={`absolute inset-0 bg-black/70 transition-opacity duration-200 ${imagePreviewVisible ? 'opacity-100' : 'opacity-0'}`} />
           <div className={`relative max-w-[90vw] max-h-[85vh] rounded-2xl overflow-hidden border border-neutral-800 shadow-2xl bg-neutral-950 transition-all duration-200 ease-out transform ${imagePreviewVisible ? 'opacity-100 scale-100' : 'opacity-0 scale-95'}`} onClick={(e)=>e.stopPropagation()}>
             <img src={imagePreview.url} alt={imagePreview.name || 'image'} className="block max-h-[85vh] max-w-[90vw] object-contain" />
+            {/* Nav buttons */}
+            {imagePreviewList.length > 1 && (
+              <>
+                <button
+                  className="absolute left-2 top-1/2 -translate-y-1/2 h-10 w-10 rounded-full bg-black/40 text-neutral-200 border border-neutral-700 hover:bg-black/60 flex items-center justify-center"
+                  onClick={() => { const prev = (imagePreviewIndex - 1 + imagePreviewList.length) % imagePreviewList.length; setImagePreviewIndex(prev); setImagePreview(imagePreviewList[prev]); }}
+                  aria-label="Previous"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5"><path d="M15 18l-6-6 6-6"/></svg>
+                </button>
+                <button
+                  className="absolute right-2 top-1/2 -translate-y-1/2 h-10 w-10 rounded-full bg-black/40 text-neutral-200 border border-neutral-700 hover:bg-black/60 flex items-center justify-center"
+                  onClick={() => { const next = (imagePreviewIndex + 1) % imagePreviewList.length; setImagePreviewIndex(next); setImagePreview(imagePreviewList[next]); }}
+                  aria-label="Next"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5"><path d="M9 18l6-6-6-6"/></svg>
+                </button>
+              </>
+            )}
             <button className="absolute top-2 right-2 h-9 w-9 rounded-full bg-black/50 text-neutral-200 border border-neutral-700 hover:bg-black/70 flex items-center justify-center" onClick={closeImagePreview} aria-label="Close">
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
             </button>
@@ -4049,6 +4168,12 @@ function ChatApp({ token, user }: { token: string; user: any }) {
         }}
       />
 
+      <CreateSpaceModal
+        open={createSpaceOpen}
+        onCancel={() => setCreateSpaceOpen(false)}
+        onSubmit={handleCreateSpace}
+      />
+
   <InputModal
         open={inputOpen}
         title={inputCfg.title}
@@ -4119,13 +4244,16 @@ function ChatApp({ token, user }: { token: string; user: any }) {
               <button
                 onClick={() => setSettingsOpen(true)}
                 aria-label="Open settings"
-                className="text-neutral-300 hover:text-neutral-100"
+                className="relative text-neutral-300 hover:text-neutral-100"
                 title="Settings"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
                   <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/>
                   <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V22a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 8 20.17a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 3 15.4 1.65 1.65 0 0 0 1.5 14H1.41a2 2 0 1 1 0-4H1.5A1.65 1.65 0 0 0 3 8.6 1.65 1.65 0 0 0 2.17 6.77l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 8 3.83 1.65 1.65 0 0 0 9.5 2.5V2.41a2 2 0 1 1 4 0V2.5A1.65 1.65 0 0 0 15.4 3a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 21 8.6c.36.5.57 1.11.5 1.77H21.5a2 2 0 1 1 0 4H21.5A1.65 1.65 0 0 0 19.4 15z"/>
                 </svg>
+                {updateAvailable && (
+                  <span className="absolute -top-2 -right-2 h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-neutral-900" />
+                )}
               </button>
             </div>
           </div>

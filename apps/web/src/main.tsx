@@ -24,12 +24,25 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
       });
       return;
     }
-    // Force reload when a new SW takes control to avoid mixed old/new chunks
-    navigator.serviceWorker.addEventListener('controllerchange', () => {
-      if ((window as any).__sw_reloading__) return;
-      (window as any).__sw_reloading__ = true;
-      location.reload();
-    });
+    // Notify app when a new version is available and let UI drive the refresh
+    function markUpdateAvailable() {
+      try { localStorage.setItem('updateAvailable', '1'); } catch {}
+      try { window.dispatchEvent(new CustomEvent('app:update-available')); } catch {}
+    }
+    navigator.serviceWorker.getRegistration().then((reg) => {
+      if (!reg) return;
+      if (reg.waiting) markUpdateAvailable();
+      reg.addEventListener('updatefound', () => {
+        const sw = reg.installing;
+        if (!sw) return;
+        sw.addEventListener('statechange', () => {
+          if (sw.state === 'installed' && navigator.serviceWorker.controller) {
+            // New content available
+            markUpdateAvailable();
+          }
+        });
+      });
+    }).catch(()=>{});
   } catch {}
 })();
 

@@ -1,8 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
+import EmojiPanel from './EmojiPanel';
 import ColorPicker from './ui/ColorPicker';
 import CloseButton from './CloseButton';
 import { api } from '../lib/api';
 import ProfileSettingsSection from './settings/ProfileSettingsSection';
+import FavoritesSettingsSection from './settings/FavoritesSettingsSection';
 import NotificationsSection from './settings/NotificationsSection';
 import SecuritySection from './settings/SecuritySection';
 import SpaceGeneralSection from './settings/SpaceGeneralSection';
@@ -74,10 +76,11 @@ export default function UnifiedSettingsModal({
     }
     return out;
   }
-  const [tab, setTab] = useState<'account'|'profile'|'notifications'|'personalization'|'security'|'spaces'|'space-general'|'space-channels'|'space-members'|'space-invites'|'vault'|'dm-info'>(() => {
+  const [tab, setTab] = useState<'account'|'profile'|'notifications'|'personalization'|'landing'|'security'|'spaces'|'space-general'|'space-channels'|'space-members'|'space-invites'|'vault'|'dm-info'>(() => {
     try {
       const t = localStorage.getItem('settingsTab');
-      if (t === 'account' || t === 'profile' || t === 'notifications' || t === 'personalization' || t === 'security' || t === 'spaces' || t === 'space-general' || t === 'space-channels' || t === 'space-members' || t === 'space-invites' || t === 'vault' || t === 'dm-info') return t as any;
+      if (t === 'favorites') return 'landing' as any;
+      if (t === 'account' || t === 'profile' || t === 'notifications' || t === 'personalization' || t === 'landing' || t === 'security' || t === 'spaces' || t === 'space-general' || t === 'space-channels' || t === 'space-members' || t === 'space-invites' || t === 'vault' || t === 'dm-info') return t as any;
     } catch {}
     return 'account';
   });
@@ -94,6 +97,21 @@ export default function UnifiedSettingsModal({
   });
   useEffect(() => { try { localStorage.setItem('spacesHubSelected', spacesHubSelected || ''); } catch {} }, [spacesHubSelected]);
   useEffect(() => { try { localStorage.setItem('spacesHubTab', spacesHubTab); } catch {} }, [spacesHubTab]);
+
+  // Favorite emojis (used by quick emoji pickers across the app)
+  const defaultFavEmojis = ['😀','😂','😍','👍','🎉','🔥'];
+  const [favEmojis, setFavEmojis] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem('favEmojis');
+      const arr = raw ? JSON.parse(raw) : [];
+      if (Array.isArray(arr) && arr.every(e => typeof e === 'string') && arr.length === 6) return arr as string[];
+    } catch {}
+    return defaultFavEmojis;
+  });
+  useEffect(() => {
+    try { localStorage.setItem('favEmojis', JSON.stringify(favEmojis.slice(0,6))); } catch {}
+    try { window.dispatchEvent(new CustomEvent('favEmojis:updated')); } catch {}
+  }, [favEmojis]);
 
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
@@ -165,7 +183,8 @@ export default function UnifiedSettingsModal({
             <div className="text-xs uppercase tracking-wide text-neutral-400 px-1 pb-1">User Settings</div>
           <button className={`w-full text-left px-3 py-2 rounded-md transition-colors ${tab==='account'?'accent-bg-soft accent-text ring-1 ring-[var(--echo-accent)]':'text-neutral-300 hover:bg-neutral-800/60'}`} onClick={()=>setTab('account')}>Account</button>
           <button className={`w-full text-left px-3 py-2 rounded-md transition-colors ${tab==='notifications'?'accent-bg-soft accent-text ring-1 ring-[var(--echo-accent)]':'text-neutral-300 hover:bg-neutral-800/60'}`} onClick={()=>setTab('notifications')}>Notifications</button>
-            <button className={`w-full text-left px-3 py-2 rounded-md transition-colors ${tab==='personalization'?'accent-bg-soft accent-text ring-1 ring-[var(--echo-accent)]':'text-neutral-300 hover:bg-neutral-800/60'}`} onClick={()=>setTab('personalization')}>Personalization</button>
+          <button className={`w-full text-left px-3 py-2 rounded-md transition-colors ${tab==='personalization'?'accent-bg-soft accent-text ring-1 ring-[var(--echo-accent)]':'text-neutral-300 hover:bg-neutral-800/60'}`} onClick={()=>setTab('personalization')}>Personalization</button>
+          <button className={`w-full text-left px-3 py-2 rounded-md transition-colors ${tab==='landing'?'accent-bg-soft accent-text ring-1 ring-[var(--echo-accent)]':'text-neutral-300 hover:bg-neutral-800/60'}`} onClick={()=>setTab('landing')}>Landing Page</button>
             <button className={`w-full text-left px-3 py-2 rounded-md transition-colors ${tab==='security'?'accent-bg-soft accent-text ring-1 ring-[var(--echo-accent)]':'text-neutral-300 hover:bg-neutral-800/60'}`} onClick={()=>setTab('security')}>Security</button>
           <div className="text-xs uppercase tracking-wide text-neutral-500 px-1 pt-3 pb-1">Spaces</div>
           <button className={`w-full text-left px-3 py-2 rounded-md transition-colors ${tab==='spaces'?'accent-bg-soft accent-text ring-1 ring-[var(--echo-accent)]':'text-neutral-300 hover:bg-neutral-800/60'}`} onClick={()=>setTab('spaces')}>Spaces</button>
@@ -181,7 +200,7 @@ export default function UnifiedSettingsModal({
         <div className="flex-1 p-4 md:p-6 space-y-5 overflow-auto min-h-0">
           {/* Mobile tab bar */}
           <div className="md:hidden sticky top-0 z-10 -mx-4 px-4 py-2 bg-neutral-900/90 backdrop-blur border-b border-neutral-800 flex gap-2 overflow-auto">
-            {(['account','notifications','personalization','security','spaces'] as const).map(t => (
+            {(['account','notifications','personalization','landing','security','spaces'] as const).map(t => (
               <button key={t} className={`px-3 py-1 rounded-full text-sm border ${tab===t ? 'accent-border accent-bg-soft accent-text' : 'border-neutral-700 text-neutral-300'}`} onClick={()=>setTab(t)}>{t.charAt(0).toUpperCase()+t.slice(1)}</button>
             ))}
           </div>
@@ -193,6 +212,13 @@ export default function UnifiedSettingsModal({
                 <div className="text-emerald-300 font-semibold">Themes</div>
                 <p className="text-sm text-neutral-400 mb-2">Choose an accent theme. This updates brand gradients and accent colors across the app.</p>
                 <ThemeSelector />
+              </div>
+
+              {/* Favorite emojis */}
+              <div className="p-3 rounded-xl border border-neutral-800 bg-neutral-900/50">
+                <div className="text-emerald-300 font-semibold mb-1">Quick emoji</div>
+                <div className="text-sm text-neutral-400 mb-3">Pick up to six emojis that appear in quick emoji menus. Defaults provided if unset.</div>
+                <FavoriteEmojisEditor value={favEmojis} onChange={setFavEmojis} defaults={defaultFavEmojis} />
               </div>
             </div>
           )}
@@ -206,6 +232,10 @@ export default function UnifiedSettingsModal({
 
           {tab==='notifications' && (
             <NotificationsSection token={token} onSaved={(u:any)=>{ onUserSaved(u); onClose(); }} />
+          )}
+
+          {tab==='landing' && (
+            <FavoritesSettingsSection />
           )}
 
           {tab==='spaces' && (
@@ -266,7 +296,10 @@ export default function UnifiedSettingsModal({
           )}
 
           {tab==='security' && (
-            <SecuritySection token={token} />
+            <div className="space-y-5 fade-in">
+              <UpdateAvailableCard />
+              <SecuritySection token={token} />
+            </div>
           )}
 
           {tab==='dm-info' && (
@@ -402,6 +435,139 @@ function ThemeSelector() {
           <div className="mt-2 text-xs text-neutral-500">Scales most UI elements for readability.</div>
         </div>
       </div>
+    </div>
+  );
+}
+
+
+function UpdateAvailableCard() {
+  const [available, setAvailable] = useState<boolean>(() => {
+    try { return localStorage.getItem('updateAvailable') === '1'; } catch { return false; }
+  });
+  const [checking, setChecking] = useState(false);
+  useEffect(() => {
+    function onAvail(){ setAvailable(true); }
+    window.addEventListener('app:update-available' as any, onAvail);
+    return () => window.removeEventListener('app:update-available' as any, onAvail);
+  }, []);
+  async function checkForUpdates(){
+    setChecking(true);
+    try { const reg = await navigator.serviceWorker.getRegistration(); await reg?.update(); } finally { setChecking(false); }
+  }
+  const border = available ? 'border-emerald-700 bg-emerald-900/15' : 'border-neutral-800 bg-neutral-900/50';
+  const pillBg = available ? 'bg-emerald-700/30 text-emerald-300' : 'bg-neutral-700/30 text-neutral-300';
+  return (
+    <div className={`p-3 rounded-xl border ${border}`}>
+      <div className="flex items-center gap-3">
+        <div className={`h-8 w-8 rounded-full ${pillBg} flex items-center justify-center`}>
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+        </div>
+        <div className="flex-1">
+          <div className={`${available ? 'text-emerald-300' : 'text-neutral-200'} font-medium`}>{available ? 'Update available' : 'You’re up to date'}</div>
+          <div className="text-xs text-neutral-400">{available ? 'A new version is ready. Click Update to refresh.' : 'Click “Check for updates” to fetch the latest version.'}</div>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            className="px-3 py-2 rounded border border-neutral-700 text-neutral-200 hover:bg-neutral-800/60 disabled:opacity-60"
+            onClick={checkForUpdates}
+            disabled={checking}
+          >{checking ? 'Checking…' : 'Check for updates'}</button>
+          {available && (
+            <button
+              className="px-3 py-2 rounded border border-emerald-700 bg-emerald-800/70 text-emerald-50 hover:bg-emerald-700/70"
+              onClick={async ()=>{
+                try {
+                  const reg = await navigator.serviceWorker.getRegistration();
+                  if (reg?.waiting) { reg.waiting.postMessage({ type: 'SKIP_WAITING' }); }
+                } catch {}
+                try { localStorage.removeItem('updateAvailable'); } catch {}
+                location.reload();
+              }}
+            >Update</button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+function FavoriteEmojisEditor({ value, onChange, defaults }: { value: string[]; onChange: (v: string[]) => void; defaults: string[] }) {
+  const [openIndex, setOpenIndex] = useState<number | null>(null);
+  const [fullIndex, setFullIndex] = useState<number | null>(null);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    function onDown(e: MouseEvent){
+      const t = e.target as Node | null;
+      if (!t) return; if (wrapRef.current && wrapRef.current.contains(t)) return; setOpenIndex(null);
+    }
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, []);
+
+  const ensureSix = (arr: string[]) => {
+    const out = [...arr];
+    for (let i=out.length;i<6;i++) out.push(defaults[i] || '🙂');
+    return out.slice(0,6);
+  };
+  const val = ensureSix(Array.isArray(value)?value:[]);
+  const setAt = (i: number, emoji: string) => {
+    const next = [...val]; next[i] = emoji; onChange(ensureSix(next)); setOpenIndex(null);
+  };
+  const reset = () => onChange(ensureSix(defaults));
+
+  const common = [
+    '😀','😁','😂','🤣','😅','😊','😍','😘','😎','🤔','🙃','🙂',
+    '👍','👏','🙏','🔥','🎉','💯','💖','✨','✅','❌','⚡','🧠',
+  ];
+
+  return (
+    <div ref={wrapRef} className="space-y-3">
+      <div className="flex items-center gap-2">
+        {val.map((e,i) => (
+          <div key={i} className="relative">
+            <button
+              className="h-10 w-10 rounded-full border border-neutral-700 bg-neutral-950 text-xl flex items-center justify-center hover:bg-neutral-900"
+              onClick={()=> setOpenIndex(openIndex===i ? null : i)}
+              aria-label={`Pick emoji ${i+1}`}
+            >{e}</button>
+            {openIndex===i && (
+              <div className="absolute z-20 mt-2 p-2 rounded-lg border border-neutral-800 bg-neutral-900/95 shadow-xl" style={{ minWidth: 220 }}>
+                <div className="grid grid-cols-8 gap-1">
+                  {common.map(c => (
+                    <button key={c} className="h-7 w-7 rounded hover:bg-neutral-800 text-base" onClick={()=> setAt(i, c)}>{c}</button>
+                  ))}
+                </div>
+                <div className="mt-2 flex items-center gap-2">
+                  <input
+                    className="flex-1 h-9 px-2 rounded-md bg-neutral-950 text-neutral-100 border border-neutral-800 focus:outline-none accent-ring focus:ring-2"
+                    placeholder="Paste emoji"
+                    onChange={(e)=>{ const t = e.target.value; const ch = (t||'').trim(); if (ch) setAt(i, ch[0]); }}
+                  />
+                  <button
+                    className="h-9 w-9 rounded-md border border-neutral-700 text-neutral-200 hover:bg-neutral-800/60 flex items-center justify-center"
+                    onClick={()=>{ setFullIndex(i); setOpenIndex(null); }}
+                    aria-label="Open full emoji picker" title="Open full emoji picker"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+                      <path d="M12 5v14"/>
+                      <path d="M5 12h14"/>
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        ))}
+        <button className="ml-3 px-2 py-1 rounded border border-neutral-700 text-neutral-200 hover:bg-neutral-800/60" onClick={reset}>Reset</button>
+      </div>
+      <div className="text-xs text-neutral-500">Changes save automatically.</div>
+      {fullIndex!==null && (
+        <EmojiPanel
+          onSelect={(native)=>{ if (typeof native === 'string' && native) setAt(fullIndex, native); }}
+          onClose={()=> setFullIndex(null)}
+        />
+      )}
     </div>
   );
 }

@@ -79,6 +79,8 @@ self.addEventListener('message', (event: any) => {
       (self as any).__mutedSpaces = data || {};
       caches.open('echo-prefs').then(cache => cache.put('/__echo_muted__', new Response(JSON.stringify((self as any).__mutedSpaces))))
         .catch(()=>{});
+    } else if (type === 'SKIP_WAITING') {
+      try { self.skipWaiting(); } catch {}
     }
   } catch {}
 });
