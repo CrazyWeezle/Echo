@@ -16,6 +16,8 @@ export default defineConfig(({ mode }) => {
     filename: 'sw.ts',
     registerType: 'autoUpdate',
     injectRegister: 'auto',
+    // Enable service worker in dev so Web Push can be tested locally
+    devOptions: { enabled: true },
     manifest: {
       name: 'ECHO',
       short_name: 'ECHO',

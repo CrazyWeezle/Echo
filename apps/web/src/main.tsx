@@ -46,6 +46,24 @@ window.addEventListener('orientationchange', setViewportUnit);
 try {
   const saved = localStorage.getItem('theme') || 'emerald';
   document.documentElement.setAttribute('data-theme', saved);
+  const accent = localStorage.getItem('accent');
+  if (accent) {
+    document.documentElement.style.setProperty('--echo-accent', accent);
+    document.documentElement.style.setProperty('--accent', accent);
+    // naive contrast pick
+    const rgb = accent.replace('#','');
+    const r=parseInt(rgb.slice(0,2),16), g=parseInt(rgb.slice(2,4),16), b=parseInt(rgb.slice(4,6),16);
+    const l = 0.299*r + 0.587*g + 0.114*b;
+    const fg = l > 150 ? '#061a13' : '#ffffff';
+    document.documentElement.style.setProperty('--echo-accent-fg', fg);
+    // secondary accent for gradients
+    const lighten=(v:number)=>Math.min(255, Math.round(v*1.15));
+    const h=(n:number)=>n.toString(16).padStart(2,'0');
+    const lite = `#${h(lighten(r))}${h(lighten(g))}${h(lighten(b))}`;
+    document.documentElement.style.setProperty('--accent-2', lite);
+  }
+  const uiScale = parseFloat(localStorage.getItem('uiScale')||'1') || 1;
+  document.documentElement.style.fontSize = `${Math.round(16*uiScale)}px`;
 } catch {}
 
 

@@ -91,8 +91,10 @@ export default function FriendsModal({ token, open, onClose, onStartDm, onlineId
                 // treat invisible as offline
                 label = 'Offline'; dot = 'bg-neutral-600';
               }
-const showLastOnline = (()=>{ try { return localStorage.getItem('showLastOnline') !== '0'; } catch { return true; } })();
-              const _ago = (showLastOnline && !isOnline && (f as any).lastSeen) ? (function(ts){ try { const d=new Date(ts); const s=Math.floor((Date.now()-d.getTime())/1000); if(s<60) return s+'s ago'; const m=Math.floor(s/60); if(m<60) return m+'m ago'; const h=Math.floor(m/60); if(h<24) return h+'h ago'; const dd=Math.floor(h/24); if(dd<7) return dd+'d ago'; return d.toLocaleString(); } catch { return ''; } })(f.lastSeen) : '';
+              // Respect the other user's preference if provided by the API (`shareLastOnline`),
+              // otherwise default to showing last seen for others (viewer preference does not hide it).
+              const subjectAllowsLast = (f as any)?.shareLastOnline !== false;
+              const _ago = (subjectAllowsLast && !isOnline && (f as any).lastSeen) ? (function(ts){ try { const d=new Date(ts); const s=Math.floor((Date.now()-d.getTime())/1000); if(s<60) return s+'s ago'; const m=Math.floor(s/60); if(m<60) return m+'m ago'; const h=Math.floor(m/60); if(h<24) return h+'h ago'; const dd=Math.floor(h/24); if(dd<7) return dd+'d ago'; return d.toLocaleString(); } catch { return ''; } })(f.lastSeen) : '';
               return (
               <div key={f.id} className="flex items-center justify-between p-2">
                 <div className="flex items-center gap-3 min-w-0">

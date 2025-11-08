@@ -90,10 +90,15 @@ function ChatApp({ token, user }: { token: string; user: any }) {
   useEffect(() => {
     function onMsg(e: MessageEvent) {
       try {
-        if (e.data && e.data.type === 'OPEN_CHANNEL' && e.data.data?.channelId) {
-          const rid = String(e.data.data.channelId);
+        const m = e.data || {};
+        if (m.type === 'OPEN_CHANNEL' && m.data?.channelId) {
+          const rid = String(m.data.channelId);
           const [voidId, short] = rid.split(':');
           if (voidId && short) { setCurrentVoidId(voidId); setCurrentChannelId(short); }
+        } else if (m.type === 'MUTE_CHANNEL' && m.data?.channelId) {
+          const rid = String(m.data.channelId);
+          const spaceId = rid.includes(':') ? rid.split(':')[0] : rid;
+          if (spaceId) setMutedSpaces(prev => ({ ...prev, [spaceId]: true }));
         }
       } catch {}
     }
@@ -4152,12 +4157,6 @@ function ChatApp({ token, user }: { token: string; user: any }) {
           } catch (e) {
             // no-op; leave open for another try
           }
-        }}
-        onSwitchAccounts={() => {
-          try {
-            localStorage.removeItem('token');
-          } catch {}
-          window.location.href = '/';
         }}
       />
       <Suspense>

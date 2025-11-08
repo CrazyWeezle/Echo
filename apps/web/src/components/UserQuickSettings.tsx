@@ -11,7 +11,6 @@ export default function UserQuickSettings({
   onClose,
   onOpenSettings,
   onChangePresence,
-  onSwitchAccounts,
 }: {
   open: boolean;
   name: string;
@@ -21,7 +20,6 @@ export default function UserQuickSettings({
   onClose: () => void;
   onOpenSettings: () => void;
   onChangePresence: (p: Presence) => void;
-  onSwitchAccounts: () => void;
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
 
@@ -99,12 +97,16 @@ export default function UserQuickSettings({
               </Item>
             </div>
           </div>
-          <Item onClick={onSwitchAccounts}>
-            <span className="flex items-center gap-2">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M9 3h6v4"/><path d="M9 21h6v-4"/><path d="M9 3L5 7l4 4"/><path d="M15 21l4-4-4-4"/></svg>
-              Switch Accounts
-            </span>
-          </Item>
+          {/* Switch Accounts removed */}
+          <div className="pt-1 border-t border-neutral-800" />
+          <button
+            className="w-full text-left px-3 py-2 rounded-md text-red-400 hover:text-red-300"
+            onClick={async () => {
+              try { await fetch('/api/auth/logout', { method: 'POST' }); } catch {}
+              try { localStorage.removeItem('token'); localStorage.removeItem('user'); localStorage.removeItem('me'); } catch {}
+              location.reload();
+            }}
+          >Log out</button>
         </div>
       </div>
     </div>

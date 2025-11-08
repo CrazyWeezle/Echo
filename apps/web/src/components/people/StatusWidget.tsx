@@ -9,10 +9,11 @@ export function StatusWidget({
   presence: 'online' | 'idle' | 'dnd' | 'offline' | 'mobile';
   activity?: string | null;
 }) {
-  // Hide entirely when user is offline/invisible per requirement
-  if (presence === 'offline') return null;
+  const hasText = !!(statusText && statusText.trim().length);
+  // Always show explicit status text if provided, even when offline.
+  if (!hasText && presence === 'offline') return null;
   const label = (() => {
-    if (statusText && statusText.trim()) return statusText.trim();
+    if (hasText) return statusText!.trim();
     if (activity && activity.trim()) return activity.trim();
     if (presence === 'online' || presence === 'mobile') return 'Available';
     if (presence === 'idle') return 'Idle';

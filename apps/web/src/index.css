@@ -91,6 +91,12 @@ body {
   background: var(--scrollbar-thumb-hover);
 }
 
+/* Accent helpers (driven by --echo-accent) */
+.accent-text { color: var(--echo-accent) !important; }
+.accent-bg-soft { background-color: color-mix(in srgb, var(--echo-accent) 18%, transparent) !important; }
+.accent-border { border-color: color-mix(in srgb, var(--echo-accent) 55%, transparent) !important; }
+.accent-ring { --tw-ring-color: var(--echo-accent) !important; }
+
 /* ECHO Settings theme tokens */
 :root {
   --echo-accent:  #10b981;
@@ -161,6 +167,11 @@ body {
   --brand-teal: #fb7185;
   --scrollbar-thumb: rgba(244,63,94,0.60);
   --scrollbar-thumb-hover: rgba(244,63,94,0.80);
+}
+
+/* Themed controls */
+input[type="checkbox"], input[type="radio"] {
+  accent-color: var(--echo-accent);
 }
 [data-theme="amber"] {
   --brand-bg-start: #2f220b; /* deep amber */

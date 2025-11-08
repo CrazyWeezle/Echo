@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import ColorPicker from './ui/ColorPicker';
 import CloseButton from './CloseButton';
 import { api } from '../lib/api';
 import ProfileSettingsSection from './settings/ProfileSettingsSection';
@@ -73,14 +74,26 @@ export default function UnifiedSettingsModal({
     }
     return out;
   }
-  const [tab, setTab] = useState<'account'|'profile'|'notifications'|'personalization'|'security'|'space-general'|'space-channels'|'space-members'|'space-invites'|'vault'|'dm-info'>(() => {
+  const [tab, setTab] = useState<'account'|'profile'|'notifications'|'personalization'|'security'|'spaces'|'space-general'|'space-channels'|'space-members'|'space-invites'|'vault'|'dm-info'>(() => {
     try {
       const t = localStorage.getItem('settingsTab');
-      if (t === 'account' || t === 'profile' || t === 'notifications' || t === 'personalization' || t === 'security' || t === 'space-general' || t === 'space-channels' || t === 'space-members' || t === 'space-invites' || t === 'vault' || t === 'dm-info') return t as any;
+      if (t === 'account' || t === 'profile' || t === 'notifications' || t === 'personalization' || t === 'security' || t === 'spaces' || t === 'space-general' || t === 'space-channels' || t === 'space-members' || t === 'space-invites' || t === 'vault' || t === 'dm-info') return t as any;
     } catch {}
     return 'account';
   });
   useEffect(() => { try { localStorage.setItem('settingsTab', tab); } catch {} }, [tab]);
+
+  // Spaces hub local state (must be inside component, not at module scope)
+  const [spacesHubSelected, setSpacesHubSelected] = useState<string>(() => {
+    try {
+      return localStorage.getItem('spacesHubSelected') || spaceId || (spaces && spaces[0]?.id) || '';
+    } catch { return spaceId || ''; }
+  });
+  const [spacesHubTab, setSpacesHubTab] = useState<'general'|'channels'|'members'|'invites'|'vault'>(() => {
+    try { return (localStorage.getItem('spacesHubTab') as any) || 'general'; } catch { return 'general'; }
+  });
+  useEffect(() => { try { localStorage.setItem('spacesHubSelected', spacesHubSelected || ''); } catch {} }, [spacesHubSelected]);
+  useEffect(() => { try { localStorage.setItem('spacesHubTab', spacesHubTab); } catch {} }, [spacesHubTab]);
 
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
@@ -150,48 +163,27 @@ export default function UnifiedSettingsModal({
         <div className="absolute top-3 right-10 hidden md:block text-[10px] uppercase tracking-wider text-neutral-500 pointer-events-none">ESC</div>
           <div className="hidden md:flex border-r border-neutral-800 p-3 flex-col min-h-0 overflow-auto bg-gradient-to-b from-neutral-900/70 to-neutral-900/40 gap-1">
             <div className="text-xs uppercase tracking-wide text-neutral-400 px-1 pb-1">User Settings</div>
-          <button className={`w-full text-left px-3 py-2 rounded-md transition-colors ${tab==='account'?'bg-white/5 text-white ring-1 ring-white/10':'text-neutral-300 hover:bg-white/5'}`} onClick={()=>setTab('account')}>My Account</button>
-          <button className={`w-full text-left px-3 py-2 rounded-md transition-colors ${tab==='profile'?'bg-emerald-900/30 text-emerald-200 ring-1 ring-emerald-800':'text-neutral-300 hover:bg-neutral-800/60'}`} onClick={()=>setTab('profile')}>Profile</button>
-          <button className={`w-full text-left px-3 py-2 rounded-md transition-colors ${tab==='notifications'?'bg-emerald-900/30 text-emerald-200 ring-1 ring-emerald-800':'text-neutral-300 hover:bg-neutral-800/60'}`} onClick={()=>setTab('notifications')}>Notifications</button>
-            <button className={`w-full text-left px-3 py-2 rounded-md transition-colors ${tab==='personalization'?'bg-emerald-900/30 text-emerald-200 ring-1 ring-emerald-800':'text-neutral-300 hover:bg-neutral-800/60'}`} onClick={()=>setTab('personalization')}>Personalization</button>
-            <button className={`w-full text-left px-3 py-2 rounded-md transition-colors ${tab==='security'?'bg-emerald-900/30 text-emerald-200 ring-1 ring-emerald-800':'text-neutral-300 hover:bg-neutral-800/60'}`} onClick={()=>setTab('security')}>Security</button>
-          <div className="text-xs uppercase tracking-wide text-neutral-500 px-1 pt-3 pb-1">Space</div>
-          {String(spaceId).startsWith('dm_') ? (
-            <button className={`w-full text-left px-3 py-2 rounded-md transition-colors ${tab==='dm-info'?'bg-emerald-900/30 text-emerald-200 ring-1 ring-emerald-800':'text-neutral-300 hover:bg-neutral-800/60'}`} onClick={()=>setTab('dm-info')}>
-              DM Info
-            </button>
-          ) : (
-            <button
-              className={`w-full text-left px-3 py-2 rounded-md transition-colors ${tab==='space-general' ? 'bg-emerald-900/30 text-emerald-200 ring-1 ring-emerald-800' : 'text-neutral-300 hover:bg-neutral-800/60'}`}
-              onClick={()=>setTab('space-general')}
-            >
-              {spaceName || 'General'}
-            </button>
-          )}
-          {!String(spaceId).startsWith('dm_') && (
-            <>
-              <button className={`w-full text left px-3 py-2 rounded-md transition-colors ${tab==='space-channels'?'bg-emerald-900/30 text-emerald-200 ring-1 ring-emerald-800':'text-neutral-300 hover:bg-neutral-800/60'}`} onClick={()=>setTab('space-channels')}>Channels</button>
-              <button className={`w-full text left px-3 py-2 rounded-md transition-colors ${tab==='space-members'?'bg-emerald-900/30 text-emerald-200 ring-1 ring-emerald-800':'text-neutral-300 hover:bg-neutral-800/60'}`} onClick={()=>setTab('space-members')}>Members</button>
-              <button className={`w-full text-left px-3 py-2 rounded-md transition-colors ${tab==='space-invites'?'bg-emerald-900/30 text-emerald-200 ring-1 ring-emerald-800':'text-neutral-300 hover:bg-neutral-800/60'}`} onClick={()=>setTab('space-invites')}>Invites</button>
-              <button className={`w-full text-left px-3 py-2 rounded-md transition-colors ${tab==='vault'?'bg-emerald-900/30 text-emerald-200 ring-1 ring-emerald-800':'text-neutral-300 hover:bg-neutral-800/60'}`} onClick={()=>setTab('vault')}>Vault</button>
-            </>
+          <button className={`w-full text-left px-3 py-2 rounded-md transition-colors ${tab==='account'?'accent-bg-soft accent-text ring-1 ring-[var(--echo-accent)]':'text-neutral-300 hover:bg-neutral-800/60'}`} onClick={()=>setTab('account')}>Account</button>
+          <button className={`w-full text-left px-3 py-2 rounded-md transition-colors ${tab==='notifications'?'accent-bg-soft accent-text ring-1 ring-[var(--echo-accent)]':'text-neutral-300 hover:bg-neutral-800/60'}`} onClick={()=>setTab('notifications')}>Notifications</button>
+            <button className={`w-full text-left px-3 py-2 rounded-md transition-colors ${tab==='personalization'?'accent-bg-soft accent-text ring-1 ring-[var(--echo-accent)]':'text-neutral-300 hover:bg-neutral-800/60'}`} onClick={()=>setTab('personalization')}>Personalization</button>
+            <button className={`w-full text-left px-3 py-2 rounded-md transition-colors ${tab==='security'?'accent-bg-soft accent-text ring-1 ring-[var(--echo-accent)]':'text-neutral-300 hover:bg-neutral-800/60'}`} onClick={()=>setTab('security')}>Security</button>
+          <div className="text-xs uppercase tracking-wide text-neutral-500 px-1 pt-3 pb-1">Spaces</div>
+          <button className={`w-full text-left px-3 py-2 rounded-md transition-colors ${tab==='spaces'?'accent-bg-soft accent-text ring-1 ring-[var(--echo-accent)]':'text-neutral-300 hover:bg-neutral-800/60'}`} onClick={()=>setTab('spaces')}>Spaces</button>
+          {String(spaceId).startsWith('dm_') && (
+            <button className={`w-full text-left px-3 py-2 rounded-md transition-colors ${tab==='dm-info'?'accent-bg-soft accent-text ring-1 ring-[var(--echo-accent)]':'text-neutral-300 hover:bg-neutral-800/60'}`} onClick={()=>setTab('dm-info')}>DM Info</button>
           )}
           <div className="mt-auto pt-2 border-t border-neutral-800"></div>
+          <button
+            className="mt-2 w-full text-left px-3 py-2 rounded-md text-red-400 hover:text-red-300"
+            onClick={async ()=>{ try { await fetch('/api/auth/logout', { method: 'POST' }); } catch {}; try { localStorage.removeItem('token'); localStorage.removeItem('user'); localStorage.removeItem('me'); } catch {}; location.reload(); }}
+          >Log out</button>
         </div>
         <div className="flex-1 p-4 md:p-6 space-y-5 overflow-auto min-h-0">
           {/* Mobile tab bar */}
           <div className="md:hidden sticky top-0 z-10 -mx-4 px-4 py-2 bg-neutral-900/90 backdrop-blur border-b border-neutral-800 flex gap-2 overflow-auto">
-            {(['account','profile','notifications','personalization','security'] as const).map(t => (
-              <button key={t} className={`px-3 py-1 rounded-full text-sm border ${tab===t ? 'border-emerald-700 bg-emerald-900/40 text-emerald-200' : 'border-neutral-700 text-neutral-300'}`} onClick={()=>setTab(t)}>{t.charAt(0).toUpperCase()+t.slice(1)}</button>
+            {(['account','notifications','personalization','security','spaces'] as const).map(t => (
+              <button key={t} className={`px-3 py-1 rounded-full text-sm border ${tab===t ? 'accent-border accent-bg-soft accent-text' : 'border-neutral-700 text-neutral-300'}`} onClick={()=>setTab(t)}>{t.charAt(0).toUpperCase()+t.slice(1)}</button>
             ))}
-            <span className="mx-2 text-neutral-600">|</span>
-            {String(spaceId).startsWith('dm_') ? (
-              <button className={`px-3 py-1 rounded-full text-sm border ${tab==='dm-info' ? 'border-emerald-700 bg-emerald-900/40 text-emerald-200' : 'border-neutral-700 text-neutral-300'}`} onClick={()=>setTab('dm-info')}>DM</button>
-            ) : (
-              ['space-general','space-channels','space-members','space-invites','vault'].map((t:any) => (
-                <button key={t} className={`px-3 py-1 rounded-full text-sm border ${tab===t ? 'border-emerald-700 bg-emerald-900/40 text-emerald-200' : 'border-neutral-700 text-neutral-300'}`} onClick={()=>setTab(t)}>{String(t).replace('space-','').replace(/^./,c=>c.toUpperCase())}</button>
-              ))
-            )}
           </div>
           {err && <div className="text-sm text-red-400">{err}</div>}
 
@@ -205,9 +197,9 @@ export default function UnifiedSettingsModal({
             </div>
           )}
 
-          {tab==='profile' && (
+          {(tab==='profile' || tab==='account') && (
             <div className="space-y-4 fade-in">
-              <div className="text-emerald-300 font-semibold">Profile</div>
+              <div className="text-emerald-300 font-semibold">Account</div>
               <ProfileSettingsSection token={token} spaceId={spaceId} onSaved={(u:any)=>{ try { if (u?.name!==undefined) setName(u.name||''); if (u?.avatarUrl!==undefined) setAvatarUrl(u.avatarUrl||null); } catch {}; onUserSaved(u); onClose(); }} />
             </div>
           )}
@@ -216,109 +208,72 @@ export default function UnifiedSettingsModal({
             <NotificationsSection token={token} onSaved={(u:any)=>{ onUserSaved(u); onClose(); }} />
           )}
 
-          {tab==='security' && (
-            <SecuritySection token={token} />
+          {tab==='spaces' && (
+            <div className="space-y-4 fade-in">
+              <div className="text-emerald-300 font-semibold">Spaces</div>
+              <div className="flex items-center gap-2">
+                <label className="text-sm text-neutral-400">Select a space</label>
+                <select className="h-9 px-3 rounded-md bg-neutral-900 text-neutral-100 border border-neutral-800 focus:outline-none accent-ring focus:ring-2"
+                        value={spacesHubSelected}
+                        onChange={(e)=>setSpacesHubSelected(e.target.value)}>
+                  {spaces && spaces.length>0 ? spaces.map(s => (
+                    <option key={s.id} value={s.id}>{s.name || s.id}</option>
+                  )) : (
+                    <option value="">No spaces</option>
+                  )}
+                </select>
+              </div>
+
+              <div className="flex items-center gap-2 flex-wrap">
+                {(['general','channels','members','invites','vault'] as const).map(st => (
+                  <button key={st}
+                          className={`px-3 py-1 rounded-full text-sm border ${spacesHubTab===st ? 'accent-border accent-bg-soft accent-text' : 'border-neutral-700 text-neutral-300'}`}
+                          onClick={()=>setSpacesHubTab(st)}>
+                    {st.charAt(0).toUpperCase()+st.slice(1)}
+                  </button>
+                ))}
+              </div>
+
+              <div>
+                {spacesHubTab==='general' && (
+                  <SpaceGeneralSection
+                    token={token}
+                    spaceId={spacesHubSelected}
+                    spaceName={spaces?.find(s=>s.id===spacesHubSelected)?.name}
+                    spaceAvatarUrl={undefined}
+                    spaceHomeChannelId={spaceHomeChannelId||undefined}
+                    channels={channels}
+                    onRefreshSpaces={onRefreshSpaces}
+                    onRefreshChannels={onRefreshChannels}
+                    onSwitchToChannel={onSwitchToChannel}
+                    onSpaceDeleted={onSpaceDeleted}
+                  />
+                )}
+                {spacesHubTab==='channels' && (
+                  <SpaceChannelsSection token={token} spaceId={spacesHubSelected} channels={channels} onRefreshChannels={onRefreshChannels} onSwitchToChannel={onSwitchToChannel} />
+                )}
+                {spacesHubTab==='members' && (
+                  <SpaceMembersSection token={token} spaceId={spacesHubSelected} />
+                )}
+                {spacesHubTab==='invites' && (
+                  <SpaceInvitesSection token={token} spaceId={spacesHubSelected} />
+                )}
+                {spacesHubTab==='vault' && (
+                  <VaultSection spaces={spaces||[]} />
+                )}
+              </div>
+            </div>
           )}
 
-          {tab==='space-general' && (
-            <SpaceGeneralSection
-              token={token}
-              spaceId={spaceId}
-              spaceName={spaceName}
-              spaceAvatarUrl={spaceAvatarUrl}
-              spaceHomeChannelId={spaceHomeChannelId||undefined}
-              channels={channels}
-              onRefreshSpaces={onRefreshSpaces}
-              onRefreshChannels={onRefreshChannels}
-              onSwitchToChannel={onSwitchToChannel}
-              onSpaceDeleted={onSpaceDeleted}
-            />
+          {tab==='security' && (
+            <SecuritySection token={token} />
           )}
 
           {tab==='dm-info' && (
             <DmInfoSection token={token} spaceId={spaceId} spaceName={spaceName} spaceAvatarUrl={spaceAvatarUrl||undefined} onSwitchToChannel={onSwitchToChannel} />
           )}
-
-          {tab==='account' && (
-            <div className="space-y-6 fade-in">
-              <div>
-                <div className="text-2xl font-semibold text-white">My Account</div>
-                <div className="mt-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className="h-16 w-16 rounded-full ring-2 ring-neutral-900 overflow-hidden bg-neutral-800 border border-neutral-700">
-                        {avatarUrl ? <img src={avatarUrl} alt="avatar" className="h-full w-full object-cover" /> : null}
-                      </div>
-                      <div>
-                        <div className="text-white font-semibold text-lg">{name || 'User'}</div>
-                        <div className="text-neutral-400 text-sm">@{username || 'unknown'}</div>
-                      </div>
-                    </div>
-                    <button className="px-3 py-1.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white text-sm" onClick={()=>setTab('profile')}>Edit User Profile</button>
-                  </div>
-                  <div className="mt-4">
-                    {[
-                      { label: 'Display Name', value: name || '—', onClick: ()=>{} },
-                      { label: 'Username', value: username || '—', onClick: ()=>{} },
-                      { label: 'Email', value: email ? maskEmail(email) : 'Add an email', onClick: ()=>{} },
-                      { label: 'Member since', value: memberSince || '-', onClick: ()=>{} },
-                      { label: 'Last seen', value: lastSeen || '-', onClick: ()=>{} },
-                    ].map((row, i) => (
-                      <div key={i} className={`flex items-center justify-between px-3 py-3 ${i>0?'border-t border-neutral-800':''}`}>
-                        <div>
-                          <div className="text-xs uppercase text-neutral-500">{row.label}</div>
-                          <div className="text-neutral-200">{row.value}</div>
-                        </div>
-                        <button className="text-emerald-300 hover:underline text-sm" onClick={row.onClick}>Edit</button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              {/* Security actions */}
-              <div className="mt-4 flex items-center gap-4 flex-wrap">
-                <button className="text-emerald-300 hover:underline text-sm" onClick={()=>setTab("security")}>
-                  Change password
-                </button>
-                <button
-                  className="text-red-400 hover:underline text-sm"
-                  onClick={async ()=>{
-                    const ok = await askConfirm({ title:"Delete Account", message:"This will permanently delete your account and all associated data. This cannot be undone.", confirmText:"Delete" });
-                    if (!ok) return;
-                    try { await api.request("/users/me", { method: "DELETE", token }); } finally { try { localStorage.removeItem("token"); localStorage.removeItem("user"); localStorage.removeItem("me"); } catch {}; location.reload(); }
-                  }}
-                >Delete account</button>
-              </div>
-              {/* Security actions moved to SecuritySection */}
-            </div>
-          )}
-          
-          {tab==='space-channels' && (
-            <SpaceChannelsSection token={token} spaceId={spaceId} channels={channels} onRefreshChannels={onRefreshChannels} onSwitchToChannel={onSwitchToChannel} />
-          )}
-
-          {tab==='space-members' && !String(spaceId).startsWith('dm_') && (
-            <SpaceMembersSection token={token} spaceId={spaceId} />
-          )}
-
-          {tab==='space-invites' && (
-            <SpaceInvitesSection token={token} spaceId={spaceId} />
-          )}
-          
-
-          {tab==='vault' && (
-            <VaultSection spaces={spaces||[]} />
-          )}
-
-          {false && tab==='vault' && (<div />)}
-          {/* Footer: place Logout at the very bottom, away from Deactivate */}
-          <div className="mt-6 pt-4 border-t border-border flex justify-end">
-            <button
-              className="px-3 py-2 rounded glass-border hover:bg-elevated/60 text-neutral-200"
-              onClick={async ()=>{ try { await fetch('/api/auth/logout', { method: 'POST' }); } catch {}; try { localStorage.removeItem('token'); localStorage.removeItem('user'); localStorage.removeItem('me'); } catch {}; location.reload(); }}
-            >Log out</button>
-          </div>
+          {false && tab==='legacy-space' && (<div />)}
+          {/* Logout moved to UserQuickSettings menu */}
         </div>
       </div>
       {/* legacy input modal removed */}
@@ -333,12 +288,49 @@ function ThemeSelector() {
   const [theme, setTheme] = useState<string>(() => {
     try { return localStorage.getItem('theme') || 'emerald'; } catch { return 'emerald'; }
   });
+  const [accentHex, setAccentHex] = useState<string>(() => {
+    try { return localStorage.getItem('accent') || getComputedStyle(document.documentElement).getPropertyValue('--echo-accent').trim() || '#22c55e'; } catch { return '#22c55e'; }
+  });
+  const [showPicker, setShowPicker] = useState(false);
+  const pickerWrapRef = useRef<HTMLDivElement|null>(null);
+  const pickerToggleRef = useRef<HTMLButtonElement|null>(null);
   useEffect(() => {
     try {
       localStorage.setItem('theme', theme);
       document.documentElement.setAttribute('data-theme', theme);
     } catch {}
   }, [theme]);
+  function applyAccent(hex: string){
+    try {
+      setAccentHex(hex);
+      localStorage.setItem('accent', hex);
+      document.documentElement.style.setProperty('--echo-accent', hex);
+      document.documentElement.style.setProperty('--accent', hex);
+      const rgb = hex.replace('#','');
+      const r=parseInt(rgb.slice(0,2),16), g=parseInt(rgb.slice(2,4),16), b=parseInt(rgb.slice(4,6),16);
+      const lighten=(v:number)=>Math.min(255, Math.round(v*1.15));
+      const h=(n:number)=>n.toString(16).padStart(2,'0');
+      const lite = `#${h(lighten(r))}${h(lighten(g))}${h(lighten(b))}`;
+      document.documentElement.style.setProperty('--accent-2', lite);
+      const l = 0.299*r + 0.587*g + 0.114*b;
+      const fg = l > 150 ? '#061a13' : '#ffffff';
+      document.documentElement.style.setProperty('--echo-accent-fg', fg);
+    } catch {}
+  }
+
+  // Close accent picker on outside click
+  useEffect(() => {
+    if (!showPicker) return;
+    function onDocDown(e: MouseEvent){
+      const t = e.target as Node | null;
+      if (!t) return;
+      if (pickerWrapRef.current && pickerWrapRef.current.contains(t)) return;
+      if (pickerToggleRef.current && pickerToggleRef.current.contains(t)) return;
+      setShowPicker(false);
+    }
+    document.addEventListener('mousedown', onDocDown);
+    return () => document.removeEventListener('mousedown', onDocDown);
+  }, [showPicker]);
 
   const options = [
     { id: 'emerald', name: 'Emerald' },
@@ -373,10 +365,46 @@ function ThemeSelector() {
           </button>
         ))}
       </div>
+
+      {/* Accent color override */}
+      <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="p-3 rounded-xl border border-neutral-800 bg-neutral-900/50 relative">
+          <div className="text-sm text-neutral-300 mb-2">Accent color</div>
+          <div className="flex items-center gap-3">
+            <button ref={pickerToggleRef} className="h-8 w-8 rounded border border-neutral-700" style={{ background: accentHex }} onClick={()=>setShowPicker(p=>!p)} aria-label="Pick accent color" />
+            <input aria-label="Accent hex" className="h-9 w-28 px-2 rounded-md bg-neutral-900 text-neutral-100 border border-neutral-700 focus:outline-none accent-ring focus:ring-2" value={accentHex} onChange={(e)=>setAccentHex(e.target.value)} onBlur={()=>{ const v=accentHex.trim().toLowerCase(); if(/^#([0-9a-fA-F]{6})$/.test(v)) applyAccent(v); }} placeholder="#22c55e" />
+            <button className="px-2 py-1 rounded border border-neutral-700 text-neutral-200 hover:bg-neutral-800/60" onClick={()=>{ try { localStorage.removeItem('accent'); } catch {} const saved = (()=>{ try { return localStorage.getItem('theme') || 'emerald'; } catch { return 'emerald'; } })(); document.documentElement.style.removeProperty('--echo-accent'); document.documentElement.style.removeProperty('--echo-accent-fg'); document.documentElement.style.removeProperty('--accent'); document.documentElement.style.removeProperty('--accent-2'); document.documentElement.setAttribute('data-theme', saved); const resetHex = getComputedStyle(document.documentElement).getPropertyValue('--echo-accent').trim()||'#22c55e'; setAccentHex(resetHex); }}>Reset</button>
+          </div>
+          {showPicker && (
+            <div ref={pickerWrapRef} className="absolute z-20 mt-2" style={{ top: '100%', left: 0 }}>
+              <ColorPicker value={accentHex} onChange={applyAccent} onChangeComplete={applyAccent} swatches={["#22c55e","#3b82f6","#a855f7","#f43f5e","#f59e0b","#06b6d4","#f97316","#10b981","#ffffff"]} />
+            </div>
+          )}
+          <div className="mt-2 text-xs text-neutral-500">Overrides the theme’s accent for buttons and highlights.</div>
+        </div>
+
+        {/* UI scale */}
+        <div className="p-3 rounded-xl border border-neutral-800 bg-neutral-900/50">
+          <div className="text-sm text-neutral-300 mb-2">Interface scale</div>
+          <div className="flex items-center gap-3">
+            <input
+              type="range" min={90} max={120} step={1}
+              defaultValue={(():number=>{ try { return Math.round((parseFloat(localStorage.getItem('uiScale')||'1')||1)*100); } catch { return 100; } })()}
+              onChange={(e)=>{
+                const pct = parseInt(e.target.value,10);
+                const scale = Math.max(0.8, Math.min(1.5, pct/100));
+                try { localStorage.setItem('uiScale', String(scale)); } catch {}
+                try { document.documentElement.style.fontSize = `${Math.round(16*scale)}px`; } catch {}
+              }}
+            />
+            <span className="text-xs text-neutral-400">{`\u00D7${(parseInt(((():any=>{ try { return (localStorage.getItem('uiScale')||'1'); } catch { return '1'; } })())*100||100,10)/100).toFixed(2)}`}</span>
+          </div>
+          <div className="mt-2 text-xs text-neutral-500">Scales most UI elements for readability.</div>
+        </div>
+      </div>
     </div>
   );
 }
-
 
 
 

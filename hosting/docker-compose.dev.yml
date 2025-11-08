@@ -138,11 +138,15 @@ services:
     env_file:
       - env/web.env
     environment:
-      VITE_DISABLE_PWA: "1"
+      # Enable PWA service worker in dev so Web Push works from localhost
+      VITE_DISABLE_PWA: "0"
       CI: "true"
       CHOKIDAR_USEPOLLING: "true"
       VITE_API_PROXY_TARGET: http://api-dev:5000
       VITE_FILES_PROXY_TARGET: http://minio:9000
+      # Set your Web Push VAPID public key for desktop notifications
+      # Generate with your server or Web Push library and paste here:
+      # VITE_VAPID_PUBLIC_KEY: "<base64url_public_key>"
       # Encourage the app to use same-origin API endpoints in dev
       VITE_API_URL: /api
       # Avoid loading GIPHY web components from CDN; use REST fallback

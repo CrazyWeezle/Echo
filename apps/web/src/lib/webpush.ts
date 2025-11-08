@@ -9,27 +9,32 @@ function urlBase64ToUint8Array(base64String: string) {
   return outputArray;
 }
 
-export async function registerWebPush(accessToken: string) {
+export async function registerWebPush(accessToken: string): Promise<boolean> {
   try {
-    if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) return;
+    if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) return false;
     const pub = (import.meta as any).env.VITE_VAPID_PUBLIC_KEY as string | undefined;
-    if (!pub) return;
+    if (!pub) return false;
     const perm = await Notification.requestPermission();
-    if (perm !== 'granted') return;
+    if (perm !== 'granted') return false;
     const reg = await navigator.serviceWorker.ready;
     const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(pub) });
     await api.postAuth('/push/subscribe', { subscription: sub }, accessToken);
     localStorage.setItem('webpushEndpoint', sub.endpoint || '');
-  } catch {}
+    return true;
+  } catch {
+    return false;
+  }
 }
 
-export async function unregisterWebPush(accessToken: string) {
+export async function unregisterWebPush(accessToken: string): Promise<boolean> {
   try {
     const reg = await navigator.serviceWorker.ready;
     const sub = await reg.pushManager.getSubscription();
     const endpoint = sub?.endpoint || localStorage.getItem('webpushEndpoint') || '';
     if (sub) await sub.unsubscribe();
     if (endpoint) await api.postAuth('/push/unsubscribe', { endpoint }, accessToken);
-  } catch {}
+    return true;
+  } catch {
+    return false;
+  }
 }
-

@@ -22,7 +22,7 @@ self.addEventListener('push', (event: any) => {
     const data = event.data ? JSON.parse(event.data.text()) : {};
     const title = data.title || 'ECHO';
     const body = data.body || '';
-    const tag = data.channelId || 'echo';
+    const tag = data.tag || data.channelId || 'echo';
     const chan: string = String(data.channelId || '');
     const spaceId = chan.includes(':') ? chan.split(':')[0] : '';
     event.waitUntil((async () => {
@@ -37,11 +37,16 @@ self.addEventListener('push', (event: any) => {
       if (spaceId && muted && muted[spaceId]) return;
       const options: NotificationOptions = {
         body,
-        icon: '/brand/ECHO_logo.png',
-        badge: '/brand/ECHO_logo.png',
+        icon: data.icon || '/brand/ECHO_logo.png',
+        badge: data.badge || '/brand/ECHO_logo.png',
+        image: data.image,
         tag,
+        renotify: !!data.renotify,
+        requireInteraction: !!data.requireInteraction,
+        timestamp: data.timestamp || Date.now(),
         data,
-      };
+        actions: Array.isArray(data.actions) ? data.actions.slice(0,2).map((a:any)=>({ action: String(a.action||''), title: String(a.title||''), icon: a.icon })) : undefined,
+      } as NotificationOptions;
       await self.registration.showNotification(title, options);
     })());
   } catch {}
@@ -51,15 +56,19 @@ self.addEventListener('notificationclick', (event: any) => {
   event.notification.close();
   const data = event.notification?.data || {};
   const url = self.registration.scope || '/';
-  event.waitUntil(
-    (async () => {
-      const clientsArr = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
-      for (const client of clientsArr) {
-        if ('focus' in client) { (client as any).focus(); (client as any).postMessage({ type: 'OPEN_CHANNEL', data }); return; }
-      }
-      await self.clients.openWindow(url);
-    })()
-  );
+  const action = event.action || '';
+  event.waitUntil((async () => {
+    const clientsArr = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    const postTo = async (msg:any) => { for (const client of clientsArr) { try { (client as any).postMessage(msg); } catch {} } };
+    if (action === 'mute' && data && data.channelId) {
+      // Ask the app to mute this space/channel
+      await postTo({ type: 'MUTE_CHANNEL', data });
+    }
+    for (const client of clientsArr) {
+      if ('focus' in client) { (client as any).focus(); await postTo({ type: 'OPEN_CHANNEL', data }); return; }
+    }
+    await self.clients.openWindow(url);
+  })());
 });
 
 // Accept muted spaces updates from the app
