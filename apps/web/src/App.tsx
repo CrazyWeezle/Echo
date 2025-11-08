@@ -21,6 +21,35 @@ import UserRow from "./components/people/UserRow";
 import MemberProfileCard from "./components/MemberProfileCard";
 import { askConfirm, toast } from "./lib/ui";
 
+function FavGalleryVisual({ frames, fit, hover, rotate, seconds, pause }: { frames: { url: string; name?: string }[]; fit: 'contain-blur'|'cover'; hover: 'subtle'|'none'; rotate: boolean; seconds: number; pause: boolean }) {
+  const [idx, setIdx] = useState(0);
+  const [isHover, setIsHover] = useState(false);
+  useEffect(() => {
+    if (!rotate || !frames || frames.length <= 1) return;
+    if (pause && isHover) return;
+    const ms = Math.max(3000, Math.min(60000, (seconds||8)*1000));
+    const t = setInterval(() => { setIdx((i) => (i + 1) % frames.length); }, ms);
+    return () => clearInterval(t);
+  }, [rotate, frames?.length, seconds, pause, isHover]);
+  if (!frames || frames.length === 0) {
+    return <div className="absolute inset-0 flex items-center justify-center text-neutral-500">No images yet</div>;
+  }
+  const cur = frames[Math.max(0, Math.min(idx, frames.length-1))];
+  const hoverCls = hover==='subtle' ? 'transition-transform duration-300 group-hover:scale-[1.01]' : '';
+  return (
+    <div className="absolute inset-0" onMouseEnter={()=>setIsHover(true)} onMouseLeave={()=>setIsHover(false)}>
+      {fit==='contain-blur' ? (
+        <>
+          <img src={cur.url} alt="" aria-hidden="true" className="absolute inset-0 w-full h-full object-cover scale-110 blur-md opacity-60" />
+          <img src={cur.url} alt={cur.name||'image'} className={`absolute inset-0 w-full h-full object-contain ${hoverCls}`} />
+        </>
+      ) : (
+        <img src={cur.url} alt={cur.name||'image'} className={`absolute inset-0 w-full h-full object-cover ${hoverCls}`} />
+      )}
+    </div>
+  );
+}
+
 type Msg = {
   id: string;
   content: string;
@@ -2595,11 +2624,11 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                 })}
               </div>
               {/* Favorites Dashboard */}
-              {favorites.length > 0 && (
+              {(() => { const showFav = (()=>{ try { return localStorage.getItem('landing.showFavorites') !== '0'; } catch { return true; } })(); return showFav && favorites.length > 0; })() && (
                 <div className="relative z-10 mt-8 max-w-6xl mx-auto">
                   <div className="mb-2 text-neutral-300 font-medium text-center">Favorites Dashboard</div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-                    {favorites.slice(0, 4).map(fid => {
+                    {favorites.slice(0, (()=>{ try { const v=parseInt(localStorage.getItem('landing.maxFavorites')||'4',10); return Math.max(1, Math.min(8, isNaN(v)?4:v)); } catch { return 4; }})()).map(fid => {
                       if (fid.startsWith('klist:')) {
                         const parsed = parseListFav(fid);
                         if (!parsed) return null as any;
@@ -2680,36 +2709,29 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                         const unreadCount = unread[`${vId}:${cId}`] || 0;
                         const fqid = fq(vId, cId);
                         const ctypeKnown = channelTypeById[fqid] || (vId === currentVoidId ? channels.find(c=>c.id===cId)?.type : undefined);
-                        const hideComposer = ctypeKnown === 'kanban' || ctypeKnown === 'form' || ctypeKnown === 'habit' || !!kanbanByChan[fqid];
+                        const landingQuick = (()=>{ try { return localStorage.getItem('landing.quickComposer') !== '0'; } catch { return true; } })();
+                        const hideComposer = (ctypeKnown === 'kanban' || ctypeKnown === 'form' || ctypeKnown === 'habit' || !!kanbanByChan[fqid]) || !landingQuick;
                         if (ctypeKnown === 'gallery') {
-                          // Photo frame view for gallery favorites: show latest image only
-                          let frame: any = null;
-                          for (let i = mergedAll.length - 1; i >= 0; i--) {
+                          // Build frames list: last N images
+                          const rotateCount = (()=>{ try { const v=parseInt(localStorage.getItem('fav.gallery.rotateCount')||'5',10); return Math.max(1, Math.min(12, isNaN(v)?5:v)); } catch { return 5; } })();
+                          const frames: { url: string; name?: string }[] = [];
+                          for (let i = mergedAll.length - 1; i >= 0 && frames.length < rotateCount; i--) {
                             const atts = mergedAll[i].attachments || [];
                             const img = atts.find((a:any)=>{ const t=String(a?.contentType||'').toLowerCase(); const u=String(a?.url||'').toLowerCase(); return t.startsWith('image/') || /\.(png|jpe?g|webp)(\?.*)?$/.test(u); });
-                            if (img) { frame = { url: img.url, name: img.name }; break; }
+                            if (img) frames.push({ url: img.url, name: img.name });
                           }
                           // Read favorites prefs for gallery widget
                           const galFit = (()=>{ try { return localStorage.getItem('fav.gallery.fit') || 'contain-blur'; } catch { return 'contain-blur'; } })();
                           const galHover = (()=>{ try { return localStorage.getItem('fav.gallery.hover') || 'subtle'; } catch { return 'subtle'; } })();
-                          const hoverCls = galHover==='subtle' ? 'transition-transform duration-300 group-hover:scale-[1.01]' : '';
+                          const rotate = (()=>{ try { return localStorage.getItem('fav.gallery.rotate') !== '0'; } catch { return true; } })();
+                          const rotateSeconds = (()=>{ try { const v=parseInt(localStorage.getItem('fav.gallery.rotateSeconds')||'8',10); return Math.max(3, Math.min(60, isNaN(v)?8:v)); } catch { return 8; } })();
+                          const rotatePause = (()=>{ try { return localStorage.getItem('fav.gallery.rotatePause') !== '0'; } catch { return true; } })();
                           return (
                             <button key={fid} className="relative rounded-xl border border-neutral-800 bg-neutral-950 overflow-hidden group"
                                     onClick={()=>{ switchVoid(vId); const shortId = cId.includes(':') ? cId.split(':')[1] : cId; switchChannel(shortId); }}
                                     title={`${vName} / #${cName}`}>
                               <div className="relative w-full pt-[66%]">
-                                {frame ? (
-                                  galFit==='contain-blur' ? (
-                                    <>
-                                      <img src={frame.url} alt="" aria-hidden="true" className="absolute inset-0 w-full h-full object-cover scale-110 blur-md opacity-60" />
-                                      <img src={frame.url} alt={frame.name||'image'} className={`absolute inset-0 w-full h-full object-contain ${hoverCls}`} />
-                                    </>
-                                  ) : (
-                                    <img src={frame.url} alt={frame.name||'image'} className={`absolute inset-0 w-full h-full object-cover ${hoverCls}`} />
-                                  )
-                                ) : (
-                                  <div className="absolute inset-0 flex items-center justify-center text-neutral-500">No images yet</div>
-                                )}
+                                <FavGalleryVisual frames={frames} fit={galFit as any} hover={galHover as any} rotate={rotate} seconds={rotateSeconds} pause={rotatePause} />
                               </div>
                             </button>
                           );
@@ -4525,3 +4547,4 @@ function ChatApp({ token, user }: { token: string; user: any }) {
     </div>
   );
 }
+
