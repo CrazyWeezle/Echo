@@ -8,6 +8,7 @@ export default function FavoritesSettingsSection() {
   // Gallery widget prefs
   const [fit, setFit] = useState<string>(()=>{ try { return localStorage.getItem('fav.gallery.fit') || 'contain-blur'; } catch { return 'contain-blur'; } });
   const [hover, setHover] = useState<string>(()=>{ try { return localStorage.getItem('fav.gallery.hover') || 'subtle'; } catch { return 'subtle'; } });
+  const [transition, setTransition] = useState<string>(()=>{ try { return localStorage.getItem('fav.gallery.transition') || 'fade'; } catch { return 'fade'; } });
   const [rotate, setRotate] = useState<boolean>(()=>{ try { return localStorage.getItem('fav.gallery.rotate') !== '0'; } catch { return true; } });
   const [rotateSeconds, setRotateSeconds] = useState<number>(()=>{ try { const v=parseInt(localStorage.getItem('fav.gallery.rotateSeconds')||'8',10); return Math.max(3, Math.min(60, isNaN(v)?8:v)); } catch { return 8; } });
   const [rotateCount, setRotateCount] = useState<number>(()=>{ try { const v=parseInt(localStorage.getItem('fav.gallery.rotateCount')||'5',10); return Math.max(1, Math.min(12, isNaN(v)?5:v)); } catch { return 5; } });
@@ -18,6 +19,7 @@ export default function FavoritesSettingsSection() {
   useEffect(()=>{ try { localStorage.setItem('landing.quickComposer', quickComposer ? '1':'0'); window.dispatchEvent(new CustomEvent('landing:prefs')); } catch {} }, [quickComposer]);
   useEffect(()=>{ try { localStorage.setItem('fav.gallery.fit', fit); window.dispatchEvent(new CustomEvent('favorites:prefs')); } catch {} }, [fit]);
   useEffect(()=>{ try { localStorage.setItem('fav.gallery.hover', hover); window.dispatchEvent(new CustomEvent('favorites:prefs')); } catch {} }, [hover]);
+  useEffect(()=>{ try { localStorage.setItem('fav.gallery.transition', transition); window.dispatchEvent(new CustomEvent('favorites:prefs')); } catch {} }, [transition]);
   useEffect(()=>{ try { localStorage.setItem('fav.gallery.rotate', rotate ? '1':'0'); window.dispatchEvent(new CustomEvent('favorites:prefs')); } catch {} }, [rotate]);
   useEffect(()=>{ try { localStorage.setItem('fav.gallery.rotateSeconds', String(rotateSeconds)); window.dispatchEvent(new CustomEvent('favorites:prefs')); } catch {} }, [rotateSeconds]);
   useEffect(()=>{ try { localStorage.setItem('fav.gallery.rotateCount', String(rotateCount)); window.dispatchEvent(new CustomEvent('favorites:prefs')); } catch {} }, [rotateCount]);
@@ -76,6 +78,20 @@ export default function FavoritesSettingsSection() {
               <label className="inline-flex items-center gap-2">
                 <input type="radio" name="gal-hover" checked={hover==='none'} onChange={()=>setHover('none')} />
                 <span>None</span>
+              </label>
+            </div>
+          </div>
+
+          <div>
+            <div className="text-sm text-neutral-400 mb-1">Transition style</div>
+            <div className="flex items-center gap-3 text-sm">
+              <label className="inline-flex items-center gap-2">
+                <input type="radio" name="gal-transition" checked={transition==='fade'} onChange={()=>setTransition('fade')} />
+                <span>Fade</span>
+              </label>
+              <label className="inline-flex items-center gap-2">
+                <input type="radio" name="gal-transition" checked={transition==='snap'} onChange={()=>setTransition('snap')} />
+                <span>Snap</span>
               </label>
             </div>
           </div>

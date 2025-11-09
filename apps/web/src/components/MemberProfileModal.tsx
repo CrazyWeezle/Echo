@@ -18,12 +18,13 @@ type Profile = {
   isFriend?: boolean;
 };
 
-export default function MemberProfileModal({ token, userId, open, onClose, onStartDm }: {
+export default function MemberProfileModal({ token, userId, open, onClose, onStartDm, spaceId }: {
   token: string;
   userId: string;
   open: boolean;
+  spaceId?: string;
   onClose: () => void;
-  onStartDm: (userId: string) => void;
+  onStartDm: (userId: string) => void | Promise<void>;
 }) {
   const [u, setU] = useState<Profile | null>(null);
   const [mutuals, setMutuals] = useState<{ id: string; name?: string; username?: string; avatarUrl?: string | null }[]>([]);

@@ -5,7 +5,7 @@ services:
     build:
       context: ..
       dockerfile: hosting/Dockerfile.api
-    container_name: echo-api
+    # container_name removed to allow multiple projects side-by-side
     env_file:
       - env/api.env
       - env/minio.env
@@ -48,7 +48,7 @@ services:
         VITE_GIPHY_KEY: ${VITE_GIPHY_KEY}
         # Web Push VAPID public key for PWA subscriptions
         VITE_VAPID_PUBLIC_KEY: ${VITE_VAPID_PUBLIC_KEY}
-    container_name: echo-web
+    # container_name removed to allow multiple projects side-by-side
     # No host port publish; reachable via tunnel only
     env_file:
       - env/web.env
@@ -59,7 +59,7 @@ services:
 
   cloudflared:
     image: cloudflare/cloudflared:latest
-    container_name: echo-cloudflared
+    # container_name removed to allow multiple projects side-by-side
     # Token mode via Compose .env (hosting/.env)
     # Put TUNNEL_TOKEN=eyJ... in hosting/.env
     command: ["tunnel","--no-autoupdate","run","--token","${TUNNEL_TOKEN}"]
@@ -70,7 +70,7 @@ services:
 
   db:
     image: postgres:16-alpine
-    container_name: echo-postgres
+    # container_name removed to allow multiple projects side-by-side
     environment:
       POSTGRES_USER: echo
       POSTGRES_PASSWORD: echo
@@ -88,7 +88,7 @@ services:
 
   minio:
     image: minio/minio:latest
-    container_name: echo-minio
+    # container_name removed to allow multiple projects side-by-side
     command: server /data --console-address ":9001"
     # Local port publishing is moved to hosting/docker-compose.local-ports.yml
     env_file:
@@ -99,7 +99,7 @@ services:
 
   minio-mc:
     image: minio/mc:latest
-    container_name: echo-minio-mc
+    # container_name removed to allow multiple projects side-by-side
     depends_on:
       - minio
     env_file:
@@ -125,13 +125,13 @@ services:
 
   mailhog:
     image: mailhog/mailhog:latest
-    container_name: echo-mailhog
+    # container_name removed to allow multiple projects side-by-side
     # Local port publishing is moved to hosting/docker-compose.local-ports.yml
     restart: unless-stopped
 
   adminer:
     image: adminer:latest
-    container_name: echo-adminer
+    # container_name removed to allow multiple projects side-by-side
     environment:
       ADMINER_DEFAULT_SERVER: db
     # Local port publishing is moved to hosting/docker-compose.local-ports.yml
@@ -142,5 +142,7 @@ services:
 volumes:
   echo_pg_data:
     name: echo_echo_pg_data
+    external: true
   echo_minio_data:
     name: echo_echo_minio_data
+    external: true

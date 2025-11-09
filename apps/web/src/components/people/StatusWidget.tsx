@@ -19,7 +19,15 @@ export function StatusWidget({
     if (presence === 'idle') return 'Idle';
     return 'Offline';
   })();
-  const color = presence === 'dnd' ? 'text-red-400' : presence === 'idle' ? 'text-amber-400' : (presence === 'online' || presence==='mobile') ? 'text-emerald-400' : 'text-neutral-400';
+  const color = presence === 'dnd'
+    ? 'text-red-400'
+    : presence === 'idle'
+    ? 'text-amber-400'
+    : presence === 'mobile'
+    ? 'text-teal-400'
+    : presence === 'online'
+    ? 'text-emerald-400'
+    : 'text-neutral-400';
   return (
     <div
       className={`text-[11px] leading-4 ${color} truncate`}

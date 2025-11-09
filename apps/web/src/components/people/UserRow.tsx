@@ -14,7 +14,7 @@ export type UserRowData = {
   activityText?: string | null; // e.g., "Active 5m ago"
 };
 
-export function UserRow({ data, onClick }: { data: UserRowData; onClick?: () => void }) {
+export function UserRow({ data, onClick }: { data: UserRowData; onClick?: (e?: React.MouseEvent<HTMLButtonElement>) => void }) {
   const { name, username, avatarUrl, nameColor, status, rawStatus, online, onMobile, activityText } = data;
   const presence: 'online'|'mobile'|'idle'|'dnd'|'offline' = (rawStatus === 'invisible' || rawStatus === 'offline')
     ? 'offline'
@@ -41,7 +41,8 @@ export function UserRow({ data, onClick }: { data: UserRowData; onClick?: () => 
         <div className="relative h-8 w-8">
           {(() => {
             // No presence ring for offline or invisible
-            const ring = (presence==='online' || presence==='mobile') ? '#10b981' : (presence==='idle') ? '#f59e0b' : (presence==='dnd') ? '#ef4444' : null;
+            // Teal for mobile-online, Emerald for desktop-online
+            const ring = (presence==='mobile') ? '#14b8a6' : (presence==='online') ? '#10b981' : (presence==='idle') ? '#f59e0b' : (presence==='dnd') ? '#ef4444' : null;
             return ring ? (<span className="pointer-events-none absolute -inset-0.5 rounded-full" style={{ border: `2px solid ${ring}`, boxShadow: `0 0 10px ${ring}` }}></span>) : null;
           })()}
           <div className="h-8 w-8 rounded-full overflow-hidden bg-neutral-800 border border-neutral-700 flex items-center justify-center">

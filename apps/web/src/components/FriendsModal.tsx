@@ -6,7 +6,7 @@ type Friend = { id: string; username?: string; name?: string; avatarUrl?: string
 type IncomingReq = { id: string; fromUserId: string; fromUsername?: string; fromName?: string; fromAvatarUrl?: string | null; fromStatus?: string; createdAt?: string };
 type OutgoingReq = { id: string; toUserId: string; toUsername?: string; toName?: string; toAvatarUrl?: string | null; toStatus?: string; createdAt?: string };
 
-export default function FriendsModal({ token, open, onClose, onStartDm, onlineIds }: { token: string; open: boolean; onClose: () => void; onStartDm: (userId: string) => void; onlineIds?: string[] }) {
+export default function FriendsModal({ token, open, onClose, onStartDm, onlineIds }: { token: string; open: boolean; onClose: () => void; onStartDm: (userId: string) => void | Promise<void>; onlineIds?: string[] }) {
   const [tab, setTab] = useState<'friends' | 'requests' | 'add'>('friends');
   const [friends, setFriends] = useState<Friend[]>([]);
   const [incoming, setIncoming] = useState<IncomingReq[]>([]);

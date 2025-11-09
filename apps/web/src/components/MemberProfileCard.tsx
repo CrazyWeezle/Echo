@@ -17,7 +17,7 @@ export default function MemberProfileCard({
   open: boolean;
   anchor: { x: number; y: number } | null;
   onClose: () => void;
-  onStartDm: (userId: string) => void;
+  onStartDm: (userId: string) => void | Promise<void>;
   onOpenFull?: () => void;
 }) {
   const [u, setU] = useState<Profile | null>(null);

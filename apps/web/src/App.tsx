@@ -14,6 +14,7 @@ const GifPicker = lazy(() => import("./components/GifPicker"));
 const EmojiPanel = lazy(() => import("./components/EmojiPanel"));
 import UnifiedSettingsModal from "./components/UnifiedSettingsModal";
 import CreateSpaceModal from "./components/CreateSpaceModal";
+import FormChannelView from "./components/forms/FormChannelView";
 import UserQuickSettings from "./components/UserQuickSettings";
 import ToastHost from "./components/ToastHost";
 import ConfirmHost from "./components/ConfirmHost";
@@ -21,30 +22,63 @@ import UserRow from "./components/people/UserRow";
 import MemberProfileCard from "./components/MemberProfileCard";
 import { askConfirm, toast } from "./lib/ui";
 
-function FavGalleryVisual({ frames, fit, hover, rotate, seconds, pause }: { frames: { url: string; name?: string }[]; fit: 'contain-blur'|'cover'; hover: 'subtle'|'none'; rotate: boolean; seconds: number; pause: boolean }) {
+function FavGalleryVisual({ frames, fit, hover, rotate, seconds, pause, transition = 'fade' }: { frames: { url: string; name?: string }[]; fit: 'contain-blur'|'cover'; hover: 'subtle'|'none'; rotate: boolean; seconds: number; pause: boolean; transition?: 'fade'|'snap' }) {
   const [idx, setIdx] = useState(0);
+  const [prevIdx, setPrevIdx] = useState<number|null>(null);
   const [isHover, setIsHover] = useState(false);
+  const [fadePhase, setFadePhase] = useState<'idle'|'in'>('idle');
   useEffect(() => {
     if (!rotate || !frames || frames.length <= 1) return;
     if (pause && isHover) return;
     const ms = Math.max(3000, Math.min(60000, (seconds||8)*1000));
-    const t = setInterval(() => { setIdx((i) => (i + 1) % frames.length); }, ms);
+    const t = setInterval(() => {
+      setIdx((i) => {
+        setPrevIdx(i);
+        if (transition === 'fade') setFadePhase('in');
+        return (i + 1) % frames.length;
+      });
+    }, ms);
     return () => clearInterval(t);
-  }, [rotate, frames?.length, seconds, pause, isHover]);
+  }, [rotate, frames?.length, seconds, pause, isHover, transition]);
+  useEffect(() => {
+    if (fadePhase === 'in') {
+      const t = setTimeout(() => { setFadePhase('idle'); setPrevIdx(null); }, 500);
+      return () => clearTimeout(t);
+    }
+  }, [fadePhase]);
   if (!frames || frames.length === 0) {
     return <div className="absolute inset-0 flex items-center justify-center text-neutral-500">No images yet</div>;
   }
   const cur = frames[Math.max(0, Math.min(idx, frames.length-1))];
+  const prev = prevIdx!=null ? frames[prevIdx] : null;
   const hoverCls = hover==='subtle' ? 'transition-transform duration-300 group-hover:scale-[1.01]' : '';
   return (
     <div className="absolute inset-0" onMouseEnter={()=>setIsHover(true)} onMouseLeave={()=>setIsHover(false)}>
+      {/* Solid base fills any transparent pixels from PNGs */}
+      <div className="absolute inset-0 bg-neutral-900" />
       {fit==='contain-blur' ? (
         <>
-          <img src={cur.url} alt="" aria-hidden="true" className="absolute inset-0 w-full h-full object-cover scale-110 blur-md opacity-60" />
-          <img src={cur.url} alt={cur.name||'image'} className={`absolute inset-0 w-full h-full object-contain ${hoverCls}`} />
+          {/* Blurred backdrop to avoid letterboxing */}
+          <img src={(prev && transition==='fade') ? prev.url : cur.url} alt="" aria-hidden="true" className="absolute inset-0 w-full h-full object-cover scale-110 blur-md opacity-60 bg-neutral-900" />
+          {/* Foreground image(s) */}
+          {transition==='fade' && prev ? (
+            <>
+              <img src={prev.url} alt={prev.name||'image'} className={`absolute inset-0 w-full h-full object-contain transition-opacity duration-500 ${fadePhase==='in' ? 'opacity-0' : 'opacity-100'}`} />
+              <img src={cur.url} alt={cur.name||'image'} className={`absolute inset-0 w-full h-full object-contain transition-opacity duration-500 ${fadePhase==='in' ? 'opacity-100' : 'opacity-100'} ${hoverCls}`} />
+            </>
+          ) : (
+            <img src={cur.url} alt={cur.name||'image'} className={`absolute inset-0 w-full h-full object-contain ${hoverCls}`} />
+          )}
         </>
       ) : (
-        <img src={cur.url} alt={cur.name||'image'} className={`absolute inset-0 w-full h-full object-cover ${hoverCls}`} />
+        transition==='fade' && prev ? (
+          <>
+            <img src={prev.url} alt={prev.name||'image'} className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-500 ${fadePhase==='in' ? 'opacity-0' : 'opacity-100'} bg-neutral-900`} />
+            <img src={cur.url} alt={cur.name||'image'} className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-500 ${fadePhase==='in' ? 'opacity-100' : 'opacity-100'} ${hoverCls} bg-neutral-900`} />
+          </>
+        ) : (
+          <img src={cur.url} alt={cur.name||'image'} className={`absolute inset-0 w-full h-full object-cover ${hoverCls} bg-neutral-900`} />
+        )
       )}
     </div>
   );
@@ -68,7 +102,7 @@ type Msg = {
 };
 type KanbanItem = { id: string; content: string; pos: number; done?: boolean };
 type KanbanList = { id: string; name: string; pos: number; items: KanbanItem[] };
-type FormQuestion = { id: string; prompt: string; kind?: string; pos: number };
+type FormQuestion = { id: string; prompt: string; kind?: string; pos: number; locked?: boolean };
 
 // (Lightbox component removed; using inline overlay near the end of ChatApp render)
 type FormState = { questions: FormQuestion[]; answers: Record<string, string>; answersByUser?: Record<string, Record<string, string>> };
@@ -102,6 +136,15 @@ function ChatApp({ token, user }: { token: string; user: any }) {
   const [status, setStatus] = useState<"connecting" | "connected" | "error" | "disconnected">("connecting");
   // Default-enable in-app notifications on first run
   useEffect(() => { try { if (localStorage.getItem('notifEnabled') == null) localStorage.setItem('notifEnabled','1'); } catch {} }, []);
+  // Nudge to enable permissions on web
+  useEffect(() => {
+    try {
+      if (typeof Notification !== 'undefined') {
+        const p = Notification.permission;
+        if (p !== 'granted') setTimeout(() => toast('Enable notifications for instant alerts (browser settings)', 'info'), 1200);
+      }
+    } catch {}
+  }, []);
 
   // identity
   const [me, setMe] = useState<{ userId?: string; name?: string; avatarUrl?: string | null }>(() => getLocalUser());
@@ -114,6 +157,12 @@ function ChatApp({ token, user }: { token: string; user: any }) {
     initPush(token).catch(() => {});
     // Register Web Push (PWA) on supported Android browsers
     registerWebPush(token).catch(() => {});
+  }, [token]);
+  // Re-register push on app foreground (covers token invalidation and SW restart)
+  useEffect(() => {
+    const onFocus = () => { try { if (token) { initPush(token).catch(()=>{}); registerWebPush(token).catch(()=>{}); } } catch {} };
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
   }, [token]);
 
   // Optional: handle postMessage from SW to open channels (basic example)
@@ -190,7 +239,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
   const [roomMobileIds, setRoomMobileIds] = useState<string[]>([]);
   const [spaceMobileIds, setSpaceMobileIds] = useState<string[]>([]);
   const [globalMobileIds, setGlobalMobileIds] = useState<string[]>([]);
-  const [members, setMembers] = useState<{ id: string; name: string; username?: string; avatarUrl?: string | null; status?: string; nameColor?: string | null; role?: string }[]>([]);
+  const [members, setMembers] = useState<{ id: string; name: string; username?: string; avatarUrl?: string | null; status?: string; nameColor?: string | null; role?: string; bio?: string }[]>([]);
   const [activityByUser, setActivityByUser] = useState<Record<string, string>>({});
   const [unread, setUnread] = useState<Record<string, number>>({});
   // Throttle notifications: one per channel until user visits it.
@@ -202,7 +251,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
   const notifiedRef = useRef<Record<string, boolean>>({});
   useEffect(() => { notifiedRef.current = notified; }, [notified]);
   // Reaction hover details cache: messageId -> emoji -> items
-  const [reactionInfoByMsg, setReactionInfoByMsg] = useState<Record<string, Record<string, { users: { userId: string; name: string; createdAt?: string }[] }>>>({});
+  const [reactionInfoByMsg, setReactionInfoByMsg] = useState<Record<string, Record<string, { users: { userId: string; name?: string; username?: string; createdAt?: string }[] }>>>({});
   const [hoverReaction, setHoverReaction] = useState<{ messageId: string; emoji: string } | null>(null);
   const [reactionTipPos, setReactionTipPos] = useState<{ x: number; y: number } | null>(null);
   const [seenTip, setSeenTip] = useState<{ x: number; y: number; ids: string[] } | null>(null);
@@ -491,6 +540,15 @@ function ChatApp({ token, user }: { token: string; user: any }) {
     return () => window.removeEventListener('online', onOnline);
   }, []);
 
+  // Hint presence changes based on tab visibility
+  useEffect(() => {
+    const onVis = () => {
+      try { socket.emit('presence:visibility', { state: document.visibilityState }); } catch {}
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, []);
+
   // React quickly to connection type changes (e.g., Wi‑Fi ↔ LTE)
   useEffect(() => {
     const conn: any = (navigator as any).connection || (navigator as any).mozConnection || (navigator as any).webkitConnection;
@@ -527,9 +585,24 @@ function ChatApp({ token, user }: { token: string; user: any }) {
   const [listDrag, setListDrag] = useState<{ dragId?: string; overId?: string; pos?: 'before' | 'after' }>({});
   const [itemDrag, setItemDrag] = useState<{ dragId?: string; overId?: string; pos?: 'before' | 'after'; listId?: string }>({});
   const [formByChan, setFormByChan] = useState<Record<string, FormState>>({});
+  // Lightweight debounce for form reloads per channel
+  const formReloadTimersRef = useRef<Record<string, number>>({});
+  function scheduleFormReload(cid: string, delay = 250) {
+    try {
+      const timers = formReloadTimersRef.current;
+      if (timers[cid]) { clearTimeout(timers[cid]); }
+      timers[cid] = window.setTimeout(async () => {
+        try { await reloadForm(cid); } finally { delete timers[cid]; }
+      }, delay);
+    } catch {}
+  }
+  // Track local submission state (per-question) for the current user to show a checkmark after pressing Enter
+  const [myFormSubmitted, setMyFormSubmitted] = useState<Record<string, boolean>>({});
+  // (Removed channel-wide blind mode; using per-question lock instead)
   // Habit tracker state
   type HabitDef = { id: string; name: string; pos: number };
-  type HabitState = { defs: HabitDef[]; my: Record<string, { public: boolean; days: string[] }>; leaderboard?: { userId: string; name: string; count: number }[] };
+  // Include trackerId used by optimistic updates when toggling entries
+  type HabitState = { defs: HabitDef[]; my: Record<string, { trackerId?: string; public: boolean; days: string[] }>; leaderboard?: { userId: string; name: string; count: number }[] };
   const [habitByChan, setHabitByChan] = useState<Record<string, HabitState>>({});
   // Favorites: fully-qualified channel ids (e.g. "space123:general" or "dm_abc:chat")
   const [favorites, setFavorites] = useState<string[]>(() => {
@@ -789,6 +862,17 @@ function ChatApp({ token, user }: { token: string; user: any }) {
   const addBtnRef = useRef<HTMLButtonElement | null>(null);
   const addMenuRef = useRef<HTMLDivElement | null>(null);
   const lastTouchAtRef = useRef<number>(0);
+  // Offline outbox: queue unsent messages and flush on reconnect
+  type OutboxItem = { voidId: string; channelId: string; content: string; tempId: string; attachments: { url: string; contentType?: string; name?: string; size?: number }[]; spoiler?: boolean; replyToId?: string | null };
+  const [outbox, setOutbox] = useState<OutboxItem[]>(() => {
+    try { const s = localStorage.getItem('outbox'); return s ? JSON.parse(s) : []; } catch { return []; }
+  });
+  useEffect(() => { try { localStorage.setItem('outbox', JSON.stringify(outbox)); } catch {} }, [outbox]);
+  const heartbeatRef = useRef<number | null>(null);
+  // Composer kebab menu (mobile)
+  const [composerMenuOpen, setComposerMenuOpen] = useState(false);
+  const composerMenuBtnRef = useRef<HTMLButtonElement | null>(null);
+  const composerMenuRef = useRef<HTMLDivElement | null>(null);
   // Removed: reaction picker refs (cleanup)
 
   // Close the add menu when clicking or tapping outside, or on Escape
@@ -810,6 +894,26 @@ function ChatApp({ token, user }: { token: string; user: any }) {
       document.removeEventListener('keydown', onKey);
     };
   }, [addOpen]);
+
+  // Close composer kebab when clicking outside or on Escape
+  useEffect(() => {
+    if (!composerMenuOpen) return;
+    const onOutside = (e: Event) => {
+      const t = e.target as Node | null;
+      const insideBtn = composerMenuBtnRef.current && t ? composerMenuBtnRef.current.contains(t) : false;
+      const insideMenu = composerMenuRef.current && t ? composerMenuRef.current.contains(t) : false;
+      if (!insideBtn && !insideMenu) setComposerMenuOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setComposerMenuOpen(false); };
+    document.addEventListener('mousedown', onOutside, true);
+    document.addEventListener('touchstart', onOutside, true);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onOutside, true);
+      document.removeEventListener('touchstart', onOutside, true);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [composerMenuOpen]);
 
   // Removed: reaction picker outside/escape handling
   const [showJump, setShowJump] = useState(false);
@@ -1233,6 +1337,19 @@ function ChatApp({ token, user }: { token: string; user: any }) {
     const onConnect = () => {
       setStatus("connected");
       socket.emit("void:list");
+      // Kick off heartbeat to keep presence fresh
+      try { if (heartbeatRef.current) clearInterval(heartbeatRef.current); } catch {}
+      heartbeatRef.current = window.setInterval(() => {
+        try { socket.emit('presence:ping', { ts: Date.now() }); } catch {}
+      }, 15000);
+      // Flush any queued outbox messages
+      try {
+        setOutbox(prev => {
+          const items = [...prev];
+          for (const it of items) { try { socket.emit('message:send', it); } catch {} }
+          return prev; // Keep until ack; onNew will remove by tempId
+        });
+      } catch {}
       if (currentVoidId) {
         socket.emit("void:switch", { voidId: currentVoidId });
         socket.emit("channel:list", { voidId: currentVoidId });
@@ -1343,6 +1460,16 @@ function ChatApp({ token, user }: { token: string; user: any }) {
         setCurrentChannelId(channels[0].id);
         socket.emit("channel:switch", { voidId: currentVoidId, channelId: fq(currentVoidId, channels[0].id) });
       }
+      // Ensure special channel data is loaded after list arrives (avoids race on initial connect)
+      try {
+        const curMeta = channels.find(c => c.id === currentChannelId);
+        if (curMeta) {
+          const fqid = fq(voidId, currentChannelId);
+          if (curMeta.type === 'kanban') loadKanbanIfNeeded(fqid);
+          if (curMeta.type === 'form') loadFormIfNeeded(fqid);
+          if (curMeta.type === 'habit') loadHabitIfNeeded(fqid);
+        }
+      } catch {}
     };
 
     const onBacklog = ({ voidId, channelId, messages }: { voidId: string; channelId: string; messages: Msg[] }) => {
@@ -1358,7 +1485,8 @@ function ChatApp({ token, user }: { token: string; user: any }) {
       setKanbanByChan(old => ({ ...old, [channelId]: lists }));
     }
     function onFormState({ channelId, questions }: { channelId: string; questions: FormQuestion[] }) {
-      setFormByChan(old => ({ ...old, [channelId]: { questions, answers: (old[channelId]?.answers || {}), answersByUser: old[channelId]?.answersByUser || {} } }));
+      const cid = (channelId && channelId.includes(':')) ? channelId : fq(currentVoidIdRef.current, channelId);
+      setFormByChan(old => ({ ...old, [cid]: { questions, answers: (old[cid]?.answers || {}), answersByUser: old[cid]?.answersByUser || {} } }));
     }
 
     const onNew = ({ voidId, channelId, message, tempId }: { voidId: string; channelId: string; message: Msg; tempId?: string }) => {
@@ -1375,6 +1503,8 @@ function ChatApp({ token, user }: { token: string; user: any }) {
         }
         return { ...old, [kk]: [...list, message] };
       });
+      // Drop from outbox once server acknowledged this tempId
+      if (tempId) setOutbox(prev => prev.filter(it => it.tempId !== tempId));
       // If we are viewing this channel and window is visible, mark seen up to this message
       if (voidId === currentVoidId && channelId === fq(currentVoidId, currentChannelId) && document.visibilityState === 'visible') {
         socket.emit('read:up_to', { channelId: fq(voidId, channelId), lastMessageId: message.id });
@@ -1613,9 +1743,9 @@ function ChatApp({ token, user }: { token: string; user: any }) {
     socket.on('voice:signal', onVoiceSignal);
     // Receive live form answer updates
     const onFormAnswer = ({ channelId, questionId, userId, answer }: { channelId: string; questionId: string; userId: string; answer: string }) => {
+      const cid = (channelId && channelId.includes(':')) ? channelId : fq(currentVoidIdRef.current, channelId);
       setFormByChan(old => {
-        const cur = old[channelId];
-        if (!cur) return old;
+        const cur = old[cid] || { questions: [], answers: {}, answersByUser: {} } as FormState;
         const byUser = { ...(cur.answersByUser || {}) };
         const urec = { ...(byUser[userId] || {}) };
         urec[questionId] = answer || '';
@@ -1623,8 +1753,13 @@ function ChatApp({ token, user }: { token: string; user: any }) {
         // if it's me, also reflect in my own answers map
         const self = { ...cur.answers };
         if (me.userId && userId === me.userId) self[questionId] = answer || '';
-        return { ...old, [channelId]: { ...cur, answersByUser: byUser, answers: self } };
+        return { ...old, [cid]: { ...cur, answersByUser: byUser, answers: self } };
       });
+      if (me.userId && userId === me.userId) {
+        setMyFormSubmitted(prev => ({ ...prev, [questionId]: !!String(answer || '').trim() }));
+      }
+      // Ensure we’re fully in sync with server (covers cases where server omits some users)
+      scheduleFormReload(cid, 200);
     };
     socket.on('form:answer', onFormAnswer);
     const onUserStatus = ({ userId, status }: { userId: string; status: string }) => {
@@ -1678,6 +1813,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
       socket.off("user:notify", onSpaceNotify);
       document.removeEventListener("visibilitychange", onVis);
       disconnectSocket();
+      try { if (heartbeatRef.current) { clearInterval(heartbeatRef.current); heartbeatRef.current = null; } } catch {}
     };
   }, [currentVoidId, currentChannelId, token]);
 
@@ -1765,7 +1901,12 @@ function ChatApp({ token, user }: { token: string; user: any }) {
       const list = old[kk] ?? [];
       return { ...old, [kk]: [...list, { id: tempId, content, optimistic: true, attachments: pendingUploads, spoiler: !!spoiler, replyTo: replyTo ? { id: replyTo.id, authorId: replyTo.authorId, authorName: replyTo.authorName, authorColor: replyTo.authorColor ?? null, content: replyTo.content } : null }] };
     });
-    socket.emit("message:send", { voidId: currentVoidId, channelId: fq(currentVoidId, currentChannelId), content, tempId, attachments: pendingUploads, replyToId: replyTo?.id, spoiler: !!spoiler });
+    const payload: OutboxItem = { voidId: currentVoidId, channelId: fq(currentVoidId, currentChannelId), content, tempId, attachments: pendingUploads, replyToId: replyTo?.id || null, spoiler: !!spoiler };
+    // Queue first (durable), then attempt immediate send
+    setOutbox(prev => [...prev, payload]);
+    try {
+      socket.emit("message:send", payload);
+    } catch {}
     setText(""); setPendingUploads([]); setReplyTo(null); setSpoiler(false); sendTypingFalse();
   }
 
@@ -2054,6 +2195,46 @@ function ChatApp({ token, user }: { token: string; user: any }) {
       setFormByChan(old => ({ ...old, [fqChanId]: { questions, answers: answersObj, answersByUser } }));
     } catch {}
   }
+  async function reloadForm(fqChanId: string) {
+    try {
+      const tok = localStorage.getItem('token') || '';
+      const res = await api.getAuth(`/forms?channelId=${encodeURIComponent(fqChanId)}`, tok);
+      const questions = Array.isArray(res?.questions) ? (res.questions as FormQuestion[]) : [];
+      const incomingAnswers: Record<string, string> = {};
+      if (res?.answers && typeof res.answers === 'object') {
+        for (const [qid, v] of Object.entries(res.answers as any)) incomingAnswers[qid] = String((v as any)?.answer || '');
+      }
+      const incomingByUser: Record<string, Record<string, string>> = {};
+      if (res?.answersByUser && typeof res.answersByUser === 'object') {
+        for (const [uid, amap] of Object.entries(res.answersByUser as any)) {
+          const inner: Record<string, string> = {};
+          for (const [qid, a] of Object.entries(amap as any)) inner[qid] = String(a || '');
+          incomingByUser[String(uid)] = inner;
+        }
+      }
+      setFormByChan(old => {
+        const cur = old[fqChanId] || { questions: [], answers: {}, answersByUser: {} };
+        // Merge answers: prefer non-empty incoming, otherwise keep current
+        const mergedAnswers: Record<string, string> = { ...cur.answers };
+        for (const [qid, ans] of Object.entries(incomingAnswers)) {
+          if (String(ans || '').length > 0 || mergedAnswers[qid] == null) mergedAnswers[qid] = ans;
+        }
+        // Merge answersByUser per user per question
+        const mergedByUser: Record<string, Record<string, string>> = {};
+        const allUserIds = new Set<string>([...Object.keys(cur.answersByUser || {}), ...Object.keys(incomingByUser)]);
+        for (const uid of allUserIds) {
+          const prev = (cur.answersByUser || {})[uid] || {};
+          const inc = (incomingByUser || {})[uid] || {};
+          const rec: Record<string, string> = { ...prev };
+          for (const [qid, ans] of Object.entries(inc)) {
+            if (String(ans || '').length > 0 || rec[qid] == null) rec[qid] = ans;
+          }
+          mergedByUser[uid] = rec;
+        }
+        return { ...old, [fqChanId]: { questions, answers: mergedAnswers, answersByUser: mergedByUser } };
+      });
+    } catch {}
+  }
   async function loadHabitIfNeeded(fqChanId: string) {
     try {
       if (habitByChan[fqChanId]) return;
@@ -2186,11 +2367,50 @@ function ChatApp({ token, user }: { token: string; user: any }) {
     if (meta && meta.type === 'habit') { loadHabitIfNeeded(fqid); }
   }
 
+  // While viewing a form channel, periodically refresh answers to keep everyone in sync
+  useEffect(() => {
+    try {
+      const meta = channels.find(c => c.id === currentChannelId);
+      if (!meta || meta.type !== 'form') return;
+      const fid = fq(currentVoidId, currentChannelId);
+      // immediate refresh on entering
+      reloadForm(fid);
+      const t = window.setInterval(() => { reloadForm(fid); }, 5000);
+      return () => window.clearInterval(t);
+    } catch {}
+  }, [currentVoidId, currentChannelId, channels]);
+
   // --- Minimal UI ---
   return (
     <div className="h-app w-full flex brand-app-bg text-neutral-100 overflow-hidden">
       <ToastHost />
       <ConfirmHost />
+      {/* Mobile Top Header: current space + settings */}
+      <div className="sm:hidden fixed top-0 inset-x-0 z-40 pointer-events-none">
+        <div className="px-3 pt-[env(safe-area-inset-top)]">
+          <header className="pointer-events-auto mx-auto max-w-3xl rounded-2xl border border-white/10 bg-black/60 backdrop-blur px-3 py-2 flex items-center justify-between gap-2 shadow-lg min-h-[44px]">
+            <button
+              className="min-w-0 flex items-center gap-1.5 px-2 py-1 rounded-lg text-white/90 hover:bg-white/10 min-h-[44px]"
+              onClick={() => setVoidSheetOpen(true)}
+              aria-label="Open Spaces"
+              title="Spaces"
+            >
+              <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 9l6 6 6-6"/></svg>
+              <span className="truncate text-sm">
+                {voids.find(v=>v.id===currentVoidId)?.name || (currentVoidId || 'Select Space')}
+              </span>
+            </button>
+            <button
+              className="px-2 py-1 rounded-lg text-white/90 hover:bg-white/10 min-h-[44px]"
+              onClick={() => setSettingsOpen(true)}
+              aria-label="Open Settings"
+              title="Settings"
+            >
+              <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06A2 2 0 1 1 7.04 3.5l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V2a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c0 .66.39 1.25 1 1.51.32.14.67.21 1.02.21H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/></svg>
+            </button>
+          </header>
+        </div>
+      </div>
       {/* Left columns: Space icons + Channels */}
       {/* Space icons column */}
       <div className="hidden md:flex w-16 bg-panel-3 flex-col py-3 min-h-0">
@@ -2726,13 +2946,20 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                           const rotate = (()=>{ try { return localStorage.getItem('fav.gallery.rotate') !== '0'; } catch { return true; } })();
                           const rotateSeconds = (()=>{ try { const v=parseInt(localStorage.getItem('fav.gallery.rotateSeconds')||'8',10); return Math.max(3, Math.min(60, isNaN(v)?8:v)); } catch { return 8; } })();
                           const rotatePause = (()=>{ try { return localStorage.getItem('fav.gallery.rotatePause') !== '0'; } catch { return true; } })();
+                          const galTransition = (()=>{ try { const v=localStorage.getItem('fav.gallery.transition')||'fade'; return (v==='snap'||v==='fade')?v:'fade'; } catch { return 'fade'; } })();
                           return (
                             <button key={fid} className="relative rounded-xl border border-neutral-800 bg-neutral-950 overflow-hidden group"
                                     onClick={()=>{ switchVoid(vId); const shortId = cId.includes(':') ? cId.split(':')[1] : cId; switchChannel(shortId); }}
                                     title={`${vName} / #${cName}`}>
-                              <div className="relative w-full pt-[66%]">
-                                <FavGalleryVisual frames={frames} fit={galFit as any} hover={galHover as any} rotate={rotate} seconds={rotateSeconds} pause={rotatePause} />
-                              </div>
+                              {(() => {
+                                // Use a square tile for contain mode to reduce letterboxing on square/portrait images
+                                const padCls = (galFit === 'contain-blur') ? 'pt-[100%]' : 'pt-[66%]';
+                                return (
+                                  <div className={`relative w-full ${padCls}`}>
+                                    <FavGalleryVisual frames={frames} fit={galFit as any} hover={galHover as any} rotate={rotate} seconds={rotateSeconds} pause={rotatePause} transition={galTransition as any} />
+                                  </div>
+                                );
+                              })()}
                             </button>
                           );
                         }
@@ -3161,62 +3388,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
               </div>
             </div>
           ) : currentChannel?.type === 'form' ? (
-            <div className="min-h-full">
-              <div className="mb-3 flex items-center gap-2">
-                <button className="px-2 py-1 rounded border border-neutral-700 text-neutral-200 hover:bg-neutral-800/60" onClick={async()=>{
-                  const pr = await askInput({ title:'New Question', label:'Prompt', placeholder:'What did you ship today?' }); if(!pr) return; try { const tok=localStorage.getItem('token')||''; await api.postAuth('/forms/questions',{ channelId: fq(currentVoidId, currentChannelId), prompt: pr, kind: 'text' }, tok);} catch(e:any){ toast(e?.message||'Failed to add question','error'); }
-                }}>+ Add Question</button>
-              </div>
-              <div className="space-y-3">
-                {(() => {
-                  const fid = fq(currentVoidId, currentChannelId);
-                  const state = formByChan[fid] || { questions: [], answers: {}, answersByUser: {} };
-                  const saveAnswer = debounce(async (qid: string, val: string) => {
-                    try { const tok=localStorage.getItem('token')||''; await api.patchAuth('/forms/answers',{ questionId: qid, answer: val }, tok); } catch {}
-                  }, 300);
-                  return state.questions.map(q => (
-                    <div key={q.id} className="p-2 rounded border border-neutral-800 bg-neutral-900/50">
-                      <div className="flex items-start gap-2">
-                        <div className="flex-1 min-w-0">
-                          <div className="text-neutral-200 mb-2">{q.prompt}</div>
-                          <div className="space-y-1">
-                            {members.map(m => {
-                              const isMe = m.id === me.userId;
-                              const val = isMe ? (state.answers[q.id] ?? '') : (state.answersByUser?.[m.id]?.[q.id] ?? '');
-                              return (
-                                <div key={m.id} className="flex items-center gap-2">
-                                  <div className="w-28 shrink-0 truncate text-xs text-neutral-400">{isMe ? 'You' : (m.name || m.username)}</div>
-                                  {isMe ? (
-                                    <input
-                                      className="flex-1 p-2 rounded bg-neutral-950 text-neutral-100 border border-neutral-800"
-                                      value={val}
-                                      onChange={(e)=>{ const v=e.target.value; setFormByChan(old=>({ ...old, [fid]: { questions: state.questions, answers: { ...state.answers, [q.id]: v }, answersByUser: state.answersByUser } })); saveAnswer(q.id, v); }}
-                                      placeholder="Your answer"
-                                    />
-                                  ) : (
-                                    <div className="flex-1 p-2 rounded bg-neutral-950/40 text-neutral-200 border border-neutral-800/50 min-h-[36px]">
-                                      {val || <span className="text-neutral-500">No answer yet</span>}
-                                    </div>
-                                  )}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-1">
-                          <button className="text-xs text-neutral-400 hover:text-neutral-200" title="Rename" onClick={async()=>{ const nv=await askInput({ title:'Edit Question', initialValue:q.prompt, label:'Prompt' }); if(!nv||nv===q.prompt) return; try { const tok=localStorage.getItem('token')||''; await api.patchAuth('/forms/questions',{ questionId: q.id, prompt: nv }, tok);} catch(e:any){ toast(e?.message||'Failed to rename','error'); } }}>
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 1 1 3 3L7 19l-4 1 1-4 12.5-12.5Z"/></svg>
-                          </button>
-                          <button className="text-xs text-red-400 hover:text-red-300" title="Delete" onClick={async()=>{ const ok=await askConfirm({ title:'Delete Question', message:'Delete this question?', confirmText:'Delete' }); if(!ok) return; try{ const tok=localStorage.getItem('token')||''; await api.deleteAuth('/forms/questions',{ questionId: q.id }, tok);} catch(e:any){ toast(e?.message||'Failed to delete','error'); } }}>
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M18 6L6 18"/><path d="M6 6l12 12"/></svg>
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  ));
-                })()}
-              </div>
-            </div>
+            <FormChannelView fid={fq(currentVoidId, currentChannelId)} members={members} meId={me.userId || null} />
           ) : (
           (() => {
             if (currentChannel?.type === 'gallery') {
@@ -3770,7 +3942,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
 
         {/* Voice room or Input (hidden for Kanban/Form/Habit) */}
         {currentChannel?.type !== 'kanban' && currentChannel?.type !== 'form' && currentChannel?.type !== 'habit' && currentChannel?.type !== 'gallery' && currentChannel?.type !== 'notes' && (
-          <div className="p-3 safe-bottom md:static fixed inset-x-0 bottom-4 z-20 md:mb-4 bg-transparent">
+          <div className="p-3 md:static fixed inset-x-0 bottom-4 z-20 md:mb-4 bg-transparent pb-[env(safe-area-inset-bottom)]">
           {!currentVoidId ? (
             <div className="text-center text-sm text-neutral-400">Create or join a space to start chatting.</div>
           ) : currentChannel?.type === 'voice' ? (
@@ -4006,6 +4178,25 @@ function ChatApp({ token, user }: { token: string; user: any }) {
                     <path d="M9 9h.01M15 9h.01"/>
                   </svg>
                 </button>
+                {/* Mobile kebab: quick Settings/Spaces access */}
+                <div className="relative sm:hidden">
+                  <button
+                    ref={composerMenuBtnRef}
+                    type="button"
+                    className="shrink-0 h-9 w-9 rounded-full text-neutral-300 hover:text-neutral-100 hover:bg-neutral-800/60 flex items-center justify-center"
+                    aria-label="More"
+                    title="More"
+                    onClick={() => setComposerMenuOpen(v=>!v)}
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg>
+                  </button>
+                  {composerMenuOpen && (
+                    <div ref={composerMenuRef} className="absolute bottom-full mb-2 right-0 z-40 rounded-md border border-neutral-800 bg-neutral-900 shadow-xl p-1 w-40">
+                      <button className="w-full text-left px-2 py-1 rounded hover:bg-neutral-800 text-neutral-200" onClick={()=>{ setComposerMenuOpen(false); setVoidSheetOpen(true); }}>Spaces…</button>
+                      <button className="w-full text-left px-2 py-1 rounded hover:bg-neutral-800 text-neutral-200" onClick={()=>{ setComposerMenuOpen(false); setSettingsOpen(true); }}>Settings…</button>
+                    </div>
+                  )}
+                </div>
                 <button
                   type="button"
                   className="shrink-0 h-9 w-9 rounded-full bg-emerald-700 hover:bg-emerald-600 text-white flex items-center justify-center"
@@ -4544,6 +4735,77 @@ function ChatApp({ token, user }: { token: string; user: any }) {
           </div>
         </div>
       )}
+      {/* Spacers so top/bottom bars don't cover content on mobile */}
+      <div className="sm:hidden h-12" />
+      <div className="sm:hidden h-16" />
+
+      {/* Mobile Edge Handles for drawers */}
+      <div className="sm:hidden fixed inset-y-0 inset-x-0 pointer-events-none z-40">
+        {/* Left handle: Channels */}
+        <button
+          className={`absolute left-0 top-1/2 -translate-y-1/2 ml-1 h-16 w-8 rounded-r-full border border-white/10 bg-black/50 backdrop-blur text-white/70 hover:text-white hover:bg-white/10 pointer-events-auto ${chanSheetOpen ? 'opacity-0' : 'opacity-80'}`}
+          aria-label="Open Channels"
+          title="Channels"
+          onClick={() => setChanSheetOpen(true)}
+        >
+          <span className="sr-only">Open Channels</span>
+        </button>
+        {/* Right handle: People */}
+        {showPeople && (
+          <button
+            className={`absolute right-0 top-1/2 -translate-y-1/2 mr-1 h-16 w-8 rounded-l-full border border-white/10 bg-black/50 backdrop-blur text-white/70 hover:text-white hover:bg-white/10 pointer-events-auto ${usersSheetOpen ? 'opacity-0' : 'opacity-80'}`}
+            aria-label="Open People"
+            title="People"
+            onClick={() => setUsersSheetOpen(true)}
+          >
+            <span className="sr-only">Open People</span>
+          </button>
+        )}
+      </div>
+
+      {/* Mobile Bottom Nav: Spaces, Channels, People, Settings */}
+      <div className="sm:hidden fixed bottom-0 inset-x-0 z-40 pointer-events-none">
+        <div className="px-3 pb-[env(safe-area-inset-bottom)]">
+          <nav className="pointer-events-auto mx-auto max-w-3xl rounded-2xl border border-white/10 bg-black/60 backdrop-blur px-3 py-2 flex items-center justify-around gap-2 shadow-lg min-h-[56px]">
+            <button
+              className="flex flex-col items-center justify-center gap-0.5 px-3 py-2 rounded-lg text-white/90 hover:bg-white/10 min-w-[56px] min-h-[44px]"
+              onClick={() => setVoidSheetOpen(true)}
+              aria-label="Open Spaces"
+              title="Spaces"
+            >
+              <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="7" height="7" rx="1"/><rect x="14" y="4" width="7" height="7" rx="1"/><rect x="3" y="13" width="7" height="7" rx="1"/><rect x="14" y="13" width="7" height="7" rx="1"/></svg>
+              <span className="text-[10px]">Spaces</span>
+            </button>
+            <button
+              className="flex flex-col items-center justify-center gap-0.5 px-3 py-2 rounded-lg text-white/90 hover:bg-white/10 min-w-[56px] min-h-[44px]"
+              onClick={() => setChanSheetOpen(true)}
+              aria-label="Open Channels"
+              title="Channels"
+            >
+              <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18"/><path d="M3 12h14"/><path d="M3 18h10"/></svg>
+              <span className="text-[10px]">Channels</span>
+            </button>
+            <button
+              className="flex flex-col items-center justify-center gap-0.5 px-3 py-2 rounded-lg text-white/90 hover:bg-white/10 min-w-[56px] min-h-[44px]"
+              onClick={() => setUsersSheetOpen(true)}
+              aria-label="Open People"
+              title="People"
+            >
+              <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+              <span className="text-[10px]">People</span>
+            </button>
+            <button
+              className="flex flex-col items-center justify-center gap-0.5 px-3 py-2 rounded-lg text-white/90 hover:bg-white/10 min-w-[56px] min-h-[44px]"
+              onClick={() => setSettingsOpen(true)}
+              aria-label="Open Settings"
+              title="Settings"
+            >
+              <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06A2 2 0 1 1 7.04 3.5l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V2a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c0 .66.39 1.25 1 1.51.32.14.67.21 1.02.21H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/></svg>
+              <span className="text-[10px]">Settings</span>
+            </button>
+          </nav>
+        </div>
+      </div>
     </div>
   );
 }
