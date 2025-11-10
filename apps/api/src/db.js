@@ -149,9 +149,11 @@ export async function initDb() {
       prompt TEXT NOT NULL,
       kind TEXT DEFAULT 'text',
       pos INT NOT NULL DEFAULT 0,
+      locked BOOLEAN NOT NULL DEFAULT false,
       created_at TIMESTAMPTZ DEFAULT now()
     );
   `);
+  await pool.query(`ALTER TABLE form_questions ADD COLUMN IF NOT EXISTS locked BOOLEAN NOT NULL DEFAULT false`);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS form_answers (
       question_id UUID NOT NULL REFERENCES form_questions(id) ON DELETE CASCADE,

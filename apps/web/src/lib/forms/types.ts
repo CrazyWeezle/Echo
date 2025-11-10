@@ -18,10 +18,9 @@ export type FormPayload = {
 };
 
 export type FormEvents = {
-  state: { channelId: string; questions: FormQuestion[]; allSubmitted?: Record<string, boolean> };
+  state: { channelId: string; questions: FormQuestion[]; allSubmitted?: Record<string, boolean>; participants?: string[] };
   answer: { channelId: string; questionId: string; userId: string; answer?: string | null; hasAnswer?: boolean; savedAt?: string };
   questionCreate: { channelId: string; question: FormQuestion };
   questionUpdate: { channelId: string; question: FormQuestion };
   questionDelete: { channelId: string; questionId: string };
 };
-

@@ -28,8 +28,8 @@ export async function getKanbanState(channelId) {
 }
 
 export async function getFormQuestions(channelId) {
-  const { rows } = await pool.query('SELECT id, prompt, kind, pos FROM form_questions WHERE channel_id=$1 ORDER BY pos ASC, created_at ASC', [channelId]);
-  return rows.map(r => ({ id: r.id, prompt: r.prompt, kind: r.kind || 'text', pos: r.pos }));
+  const { rows } = await pool.query('SELECT id, prompt, kind, pos, locked FROM form_questions WHERE channel_id=$1 ORDER BY pos ASC, created_at ASC', [channelId]);
+  return rows.map(r => ({ id: r.id, prompt: r.prompt, kind: r.kind || 'text', pos: r.pos, locked: !!r.locked }));
 }
 
 export async function getBacklog(channelId, userId, limit = 50) {

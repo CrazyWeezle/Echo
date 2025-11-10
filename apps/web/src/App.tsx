@@ -1,10 +1,11 @@
 
-import { useEffect, useRef, useState, Suspense, lazy } from "react";
+import { useEffect, useRef, useState, Suspense, lazy, useCallback } from "react";
 import Login from "./pages/Login"; // match actual filename case for Linux builds
 import SettingsRoute from "./routes/settings";
 import { socket, connectSocket, disconnectSocket, getLocalUser, setLocalUser } from "./lib/socket";
 import { debounce } from "./lib/debounce";
 import { signUpload, api } from "./lib/api";
+import { getForm } from "./lib/forms/api";
 import { initPush } from "./lib/push";
 import { registerWebPush } from "./lib/webpush";
 import FriendsModal from "./components/FriendsModal";
@@ -21,6 +22,7 @@ import ConfirmHost from "./components/ConfirmHost";
 import UserRow from "./components/people/UserRow";
 import MemberProfileCard from "./components/MemberProfileCard";
 import { askConfirm, toast } from "./lib/ui";
+import { getAuthToken, setAuthToken, subscribeAuthToken } from "./lib/auth";
 
 function FavGalleryVisual({ frames, fit, hover, rotate, seconds, pause, transition = 'fade' }: { frames: { url: string; name?: string }[]; fit: 'contain-blur'|'cover'; hover: 'subtle'|'none'; rotate: boolean; seconds: number; pause: boolean; transition?: 'fade'|'snap' }) {
   const [idx, setIdx] = useState(0);
@@ -105,34 +107,48 @@ type KanbanList = { id: string; name: string; pos: number; items: KanbanItem[] }
 type FormQuestion = { id: string; prompt: string; kind?: string; pos: number; locked?: boolean };
 
 // (Lightbox component removed; using inline overlay near the end of ChatApp render)
-type FormState = { questions: FormQuestion[]; answers: Record<string, string>; answersByUser?: Record<string, Record<string, string>> };
+type FormState = {
+  questions: FormQuestion[];
+  answers: Record<string, string>;
+  answersByUser?: Record<string, Record<string, string>>;
+  allSubmitted?: Record<string, boolean>;
+  participants?: string[];
+};
 type Channel = { id: string; name: string; voidId: string; type?: 'text' | 'voice' | 'announcement' | 'kanban' | 'form' | 'habit' | 'gallery' | string; linkedGalleryId?: string | null };
 type VoidWS = { id: string; name: string; avatarUrl?: string | null };
 
 // --- Gate component: no conditional hooks here, only simple state ---
 export default function App() {
-  const [token, setToken] = useState<string | null>(() => localStorage.getItem("token"));
+  const [token, setToken] = useState<string | null>(() => getAuthToken());
   const [user, setUser]   = useState<any>(() => {
     try { const raw = localStorage.getItem("user"); return raw ? JSON.parse(raw) : null; } catch { return null; }
   });
 
+  useEffect(() => {
+    const unsub = subscribeAuthToken((next) => setToken(next));
+    return () => unsub();
+  }, []);
+
   const handleAuth = (t: string, u: any) => {
-    localStorage.setItem("token", t);
-    localStorage.setItem("user", JSON.stringify(u));
-    setToken(t);
+    setAuthToken(t);
+    try { localStorage.setItem("user", JSON.stringify(u)); } catch {}
     setUser(u);
   };
+
+  const handleTokenChange = useCallback((nextToken: string | null) => {
+    setAuthToken(nextToken);
+  }, []);
 
   // Lightweight route switch for settings
   if (location.pathname.startsWith("/settings")) {
     return token ? <SettingsRoute /> : <Login onAuth={handleAuth} />;
   }
 
-  return token ? <ChatApp token={token} user={user} /> : <Login onAuth={handleAuth} />;
+  return token ? <ChatApp token={token} user={user} onTokenChange={handleTokenChange} /> : <Login onAuth={handleAuth} />;
 }
 
 // --- Authenticated app: all your previous logic lives here unconditionally ---
-function ChatApp({ token, user }: { token: string; user: any }) {
+function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onTokenChange: (token: string | null) => void }) {
   const [status, setStatus] = useState<"connecting" | "connected" | "error" | "disconnected">("connecting");
   // Default-enable in-app notifications on first run
   useEffect(() => { try { if (localStorage.getItem('notifEnabled') == null) localStorage.setItem('notifEnabled','1'); } catch {} }, []);
@@ -1388,7 +1404,8 @@ function ChatApp({ token, user }: { token: string; user: any }) {
           const data = await res.json();
           const nt = data?.token as string | undefined;
           if (nt) {
-            localStorage.setItem('token', nt);
+            onTokenChange(nt);
+            (socket as any).auth = { ...(socket as any).auth, token: nt };
             setStatus('connecting');
             // auth will be updated by effect; reconnect shortly
             setTimeout(() => { try { connectSocket(); } catch {} }, 50);
@@ -1484,9 +1501,21 @@ function ChatApp({ token, user }: { token: string; user: any }) {
     function onKanbanState({ channelId, lists }: { channelId: string; lists: KanbanList[] }) {
       setKanbanByChan(old => ({ ...old, [channelId]: lists }));
     }
-    function onFormState({ channelId, questions }: { channelId: string; questions: FormQuestion[] }) {
+    function onFormState({ channelId, questions, allSubmitted, participants }: { channelId: string; questions: FormQuestion[]; allSubmitted?: Record<string, boolean>; participants?: string[] }) {
       const cid = (channelId && channelId.includes(':')) ? channelId : fq(currentVoidIdRef.current, channelId);
-      setFormByChan(old => ({ ...old, [cid]: { questions, answers: (old[cid]?.answers || {}), answersByUser: old[cid]?.answersByUser || {} } }));
+      setFormByChan(old => {
+        const prev = old[cid] || { questions: [], answers: {}, answersByUser: {}, allSubmitted: {}, participants: [] };
+        return {
+          ...old,
+          [cid]: {
+            questions,
+            answers: prev.answers || {},
+            answersByUser: prev.answersByUser || {},
+            allSubmitted: allSubmitted || prev.allSubmitted || {},
+            participants: Array.isArray(participants) ? participants : prev.participants,
+          },
+        };
+      });
     }
 
     const onNew = ({ voidId, channelId, message, tempId }: { voidId: string; channelId: string; message: Msg; tempId?: string }) => {
@@ -1742,17 +1771,26 @@ function ChatApp({ token, user }: { token: string; user: any }) {
     socket.on('voice:peer-left', onVoicePeerLeft);
     socket.on('voice:signal', onVoiceSignal);
     // Receive live form answer updates
-    const onFormAnswer = ({ channelId, questionId, userId, answer }: { channelId: string; questionId: string; userId: string; answer: string }) => {
+    const onFormAnswer = ({ channelId, questionId, userId, answer, hasAnswer }: { channelId: string; questionId: string; userId: string; answer?: string; hasAnswer?: boolean }) => {
       const cid = (channelId && channelId.includes(':')) ? channelId : fq(currentVoidIdRef.current, channelId);
       setFormByChan(old => {
-        const cur = old[cid] || { questions: [], answers: {}, answersByUser: {} } as FormState;
-        const byUser = { ...(cur.answersByUser || {}) };
+        const cur = old[cid] || { questions: [], answers: {}, answersByUser: {}, allSubmitted: {}, participants: [] } as FormState;
+        const byUser = { ...(cur.answersByUser || {}) } as Record<string, Record<string, string>>;
         const urec = { ...(byUser[userId] || {}) };
-        urec[questionId] = answer || '';
+        if (answer != null) {
+          urec[questionId] = answer || '';
+        } else if (hasAnswer) {
+          urec[questionId] = urec[questionId] || '';
+        } else {
+          delete urec[questionId];
+        }
         byUser[userId] = urec;
         // if it's me, also reflect in my own answers map
         const self = { ...cur.answers };
-        if (me.userId && userId === me.userId) self[questionId] = answer || '';
+        if (me.userId && userId === me.userId) {
+          if (answer != null) self[questionId] = answer || '';
+          else if (!hasAnswer) delete self[questionId];
+        }
         return { ...old, [cid]: { ...cur, answersByUser: byUser, answers: self } };
       });
       if (me.userId && userId === me.userId) {
@@ -1815,7 +1853,7 @@ function ChatApp({ token, user }: { token: string; user: any }) {
       disconnectSocket();
       try { if (heartbeatRef.current) { clearInterval(heartbeatRef.current); heartbeatRef.current = null; } } catch {}
     };
-  }, [currentVoidId, currentChannelId, token]);
+  }, [currentVoidId, currentChannelId, token, onTokenChange]);
 
   // Auto-scroll behavior per channel type
   // - text-like channels: scroll to bottom (newest)
@@ -2177,62 +2215,32 @@ function ChatApp({ token, user }: { token: string; user: any }) {
   async function loadFormIfNeeded(fqChanId: string) {
     try {
       if (formByChan[fqChanId]) return;
-      const tok = localStorage.getItem('token') || '';
-      const res = await api.getAuth(`/forms?channelId=${encodeURIComponent(fqChanId)}`, tok);
-      const questions = Array.isArray(res?.questions) ? res.questions as FormQuestion[] : [];
-      const answersObj: Record<string, string> = {};
-      if (res?.answers && typeof res.answers === 'object') {
-        for (const [qid, v] of Object.entries(res.answers as any)) { answersObj[qid] = String((v as any)?.answer || ''); }
-      }
-      const answersByUser: Record<string, Record<string, string>> = {};
-      if (res?.answersByUser && typeof res.answersByUser === 'object') {
-        for (const [uid, amap] of Object.entries(res.answersByUser as any)) {
-          const inner: Record<string, string> = {};
-          for (const [qid, a] of Object.entries(amap as any)) inner[qid] = String(a || '');
-          answersByUser[String(uid)] = inner;
-        }
-      }
-      setFormByChan(old => ({ ...old, [fqChanId]: { questions, answers: answersObj, answersByUser } }));
+      const payload = await getForm(fqChanId);
+      setFormByChan(old => ({
+        ...old,
+        [fqChanId]: {
+          questions: payload.questions || [],
+          answers: payload.myAnswers || {},
+          answersByUser: payload.answersByUser || {},
+          allSubmitted: payload.allSubmitted || {},
+          participants: payload.participants || [],
+        },
+      }));
     } catch {}
   }
   async function reloadForm(fqChanId: string) {
     try {
-      const tok = localStorage.getItem('token') || '';
-      const res = await api.getAuth(`/forms?channelId=${encodeURIComponent(fqChanId)}`, tok);
-      const questions = Array.isArray(res?.questions) ? (res.questions as FormQuestion[]) : [];
-      const incomingAnswers: Record<string, string> = {};
-      if (res?.answers && typeof res.answers === 'object') {
-        for (const [qid, v] of Object.entries(res.answers as any)) incomingAnswers[qid] = String((v as any)?.answer || '');
-      }
-      const incomingByUser: Record<string, Record<string, string>> = {};
-      if (res?.answersByUser && typeof res.answersByUser === 'object') {
-        for (const [uid, amap] of Object.entries(res.answersByUser as any)) {
-          const inner: Record<string, string> = {};
-          for (const [qid, a] of Object.entries(amap as any)) inner[qid] = String(a || '');
-          incomingByUser[String(uid)] = inner;
-        }
-      }
-      setFormByChan(old => {
-        const cur = old[fqChanId] || { questions: [], answers: {}, answersByUser: {} };
-        // Merge answers: prefer non-empty incoming, otherwise keep current
-        const mergedAnswers: Record<string, string> = { ...cur.answers };
-        for (const [qid, ans] of Object.entries(incomingAnswers)) {
-          if (String(ans || '').length > 0 || mergedAnswers[qid] == null) mergedAnswers[qid] = ans;
-        }
-        // Merge answersByUser per user per question
-        const mergedByUser: Record<string, Record<string, string>> = {};
-        const allUserIds = new Set<string>([...Object.keys(cur.answersByUser || {}), ...Object.keys(incomingByUser)]);
-        for (const uid of allUserIds) {
-          const prev = (cur.answersByUser || {})[uid] || {};
-          const inc = (incomingByUser || {})[uid] || {};
-          const rec: Record<string, string> = { ...prev };
-          for (const [qid, ans] of Object.entries(inc)) {
-            if (String(ans || '').length > 0 || rec[qid] == null) rec[qid] = ans;
-          }
-          mergedByUser[uid] = rec;
-        }
-        return { ...old, [fqChanId]: { questions, answers: mergedAnswers, answersByUser: mergedByUser } };
-      });
+      const payload = await getForm(fqChanId);
+      setFormByChan(old => ({
+        ...old,
+        [fqChanId]: {
+          questions: payload.questions || [],
+          answers: payload.myAnswers || {},
+          answersByUser: payload.answersByUser || {},
+          allSubmitted: payload.allSubmitted || {},
+          participants: payload.participants || [],
+        },
+      }));
     } catch {}
   }
   async function loadHabitIfNeeded(fqChanId: string) {

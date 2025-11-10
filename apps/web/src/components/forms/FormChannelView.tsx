@@ -1,106 +1,284 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useFormChannel } from '../../hooks/useFormChannel';
 import { askConfirm, toast } from '../../lib/ui';
 
-export default function FormChannelView({ fid, members, meId }: { fid: string; members: { id: string; name?: string; username?: string }[]; meId?: string | null }) {
+type Member = { id: string; name?: string; username?: string };
+
+export default function FormChannelView({ fid, members, meId }: { fid: string; members: Member[]; meId?: string | null }) {
   const { data, mySubmitted, allSubmitted, actions } = useFormChannel(fid, members, meId);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [pendingSubmit, setPendingSubmit] = useState<Record<string, boolean>>({});
+  const [newPrompt, setNewPrompt] = useState('');
+  const [newLocked, setNewLocked] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState('');
+  const [renaming, setRenaming] = useState(false);
+
+  const roster = useMemo(() => {
+    if (data.participants && data.participants.length > 0) {
+      const byId = new Map(members.map((m) => [m.id, m]));
+      return data.participants.map((id) => byId.get(id) || { id, username: id.slice(0, 8) });
+    }
+    return members;
+  }, [data.participants, members]);
+
+  const totalQuestions = data.questions.length;
+  const everyoneReadyCount = data.questions.filter((q) => allSubmitted(q.id)).length;
+  const myAnsweredCount = data.questions.filter((q) => !!String(data.myAnswers[q.id] || '').trim()).length;
+
+  useEffect(() => {
+    if (!editingId) return;
+    const q = data.questions.find((question) => question.id === editingId);
+    if (!q) {
+      setEditingId(null);
+      setRenameDraft('');
+    }
+  }, [data.questions, editingId]);
+
+  const handleCreateQuestion = async () => {
+    const prompt = newPrompt.trim();
+    if (!prompt) return;
+    setCreating(true);
+    try {
+      await actions.create(prompt, newLocked);
+      setNewPrompt('');
+      setNewLocked(false);
+    } catch (e: any) {
+      toast(e?.message || 'Failed to add question', 'error');
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const handleSubmitAnswer = async (qid: string) => {
+    const value = drafts[qid] ?? data.myAnswers[qid] ?? '';
+    setPendingSubmit((prev) => ({ ...prev, [qid]: true }));
+    try {
+      await actions.submit(qid, value);
+      setDrafts((prev) => {
+        const next = { ...prev };
+        delete next[qid];
+        return next;
+      });
+    } catch (e: any) {
+      toast(e?.message || 'Failed to save answer', 'error');
+    } finally {
+      setPendingSubmit((prev) => {
+        const next = { ...prev };
+        delete next[qid];
+        return next;
+      });
+    }
+  };
+
+  const startRename = (qid: string, current: string) => {
+    setEditingId(qid);
+    setRenameDraft(current);
+  };
+
+  const submitRename = async () => {
+    if (!editingId) return;
+    const next = renameDraft.trim();
+    if (!next) {
+      setEditingId(null);
+      setRenameDraft('');
+      return;
+    }
+    setRenaming(true);
+    try {
+      await actions.rename(editingId, next);
+      setEditingId(null);
+      setRenameDraft('');
+    } catch (e: any) {
+      toast(e?.message || 'Failed to rename question', 'error');
+    } finally {
+      setRenaming(false);
+    }
+  };
 
   return (
-    <div className="min-h-full">
-      <div className="mb-3 flex items-center gap-2">
-        <button
-          className="px-2 py-1 rounded border border-neutral-700 text-neutral-200 hover:bg-neutral-800/60"
-          onClick={async () => {
-            const prompt = window.prompt('Question prompt') || '';
-            if (!prompt) return;
-            const lock = await askConfirm({ title: 'Lock Answers', message: 'Hide others’ answers until everyone submits?', confirmText: 'Enable Lock', cancelText: 'No' });
-            try { await actions.create(prompt, !!lock); } catch (e: any) { toast(e?.message || 'Failed to add question', 'error'); }
-          }}
-        >
-          + Add Question
-        </button>
+    <div className="min-h-full space-y-4">
+      <div className="grid gap-3 md:grid-cols-3">
+        <StatCard label="Questions" value={totalQuestions} hint="In this form" />
+        <StatCard label="Your answers" value={totalQuestions ? `${myAnsweredCount}/${totalQuestions}` : '0'} hint="Saved responses" />
+        <StatCard label="Ready to reveal" value={totalQuestions ? `${everyoneReadyCount}/${totalQuestions}` : '0'} hint="All participants submitted" />
       </div>
 
-      <div className="space-y-3">
-        {data.questions.map(q => {
+      <div className="rounded-2xl border border-neutral-800 bg-neutral-900/70 p-4 shadow-inner shadow-black/40">
+        <h3 className="text-sm font-semibold text-neutral-200 mb-2">New question</h3>
+        <div className="flex flex-col gap-3 md:flex-row md:items-end">
+          <div className="flex-1 space-y-2">
+            <label className="text-xs uppercase tracking-wide text-neutral-400 block">Prompt</label>
+            <textarea
+              className="w-full rounded-xl border border-neutral-800 bg-neutral-950 px-3 py-2 text-sm text-neutral-50 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 resize-none"
+              rows={2}
+              placeholder="What would you like everyone to answer?"
+              value={newPrompt}
+              onChange={(e) => setNewPrompt(e.target.value)}
+            />
+            <label className="flex items-center gap-2 text-xs text-neutral-300">
+              <input type="checkbox" checked={newLocked} onChange={(e) => setNewLocked(e.target.checked)} className="accent-emerald-500" />
+              Hide answers until everyone submits
+            </label>
+          </div>
+          <button
+            className="md:w-40 rounded-xl bg-emerald-500/90 py-2 text-sm font-semibold text-emerald-950 transition hover:bg-emerald-400 disabled:opacity-60"
+            disabled={!newPrompt.trim() || creating}
+            onClick={handleCreateQuestion}
+          >
+            {creating ? 'Adding…' : 'Add Question'}
+          </button>
+        </div>
+      </div>
+
+      <div className="space-y-4">
+        {data.questions.map((q, idx) => {
           const everyoneDone = allSubmitted(q.id);
           return (
-            <div key={q.id} className="p-2 rounded border border-neutral-800 bg-neutral-900/50">
-              <div className="flex items-start gap-2">
+            <div key={q.id} className="rounded-2xl border border-neutral-800/80 bg-neutral-950/70 p-4 shadow shadow-black/40">
+              <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                 <div className="flex-1 min-w-0">
-                  <div className="text-neutral-200 mb-2 flex items-center gap-2">
-                    <span>{q.prompt}</span>
-                    {q.locked ? <span className="text-[10px] px-1.5 py-0.5 rounded-full border border-amber-700 text-amber-300">Locked</span> : null}
+                  <div className="flex flex-col gap-2">
+                    <span className="text-xs uppercase tracking-wide text-neutral-500">Question {idx + 1}</span>
+                    {editingId === q.id ? (
+                      <div className="flex flex-col gap-2 md:flex-row md:items-center">
+                        <input
+                          className="flex-1 rounded-xl border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-neutral-50 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                          value={renameDraft}
+                          onChange={(e) => setRenameDraft(e.target.value)}
+                          autoFocus
+                        />
+                        <div className="flex gap-2">
+                          <button
+                            className="rounded-lg bg-emerald-500/90 px-3 py-1 text-sm font-semibold text-emerald-950 disabled:opacity-50"
+                            disabled={!renameDraft.trim() || renaming}
+                            onClick={submitRename}
+                          >
+                            Save
+                          </button>
+                          <button
+                            className="rounded-lg border border-neutral-700 px-3 py-1 text-sm text-neutral-200 hover:bg-neutral-800/70"
+                            onClick={() => { setEditingId(null); setRenameDraft(''); }}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-lg font-medium text-neutral-50 break-words">
+                        {q.prompt}
+                      </div>
+                    )}
                   </div>
-                  <div className="space-y-1">
-                    {members.map(m => {
-                      const isMe = meId && m.id === meId;
-                      const val = isMe ? (data.myAnswers[q.id] ?? '') : (data.answersByUser?.[m.id]?.[q.id] ?? '');
-                      return (
-                        <div key={m.id} className="flex items-center gap-2">
-                          <div className="w-28 shrink-0 truncate text-xs text-neutral-400">{isMe ? 'You' : (m.name || m.username)}</div>
-                          {isMe ? (
-                            <input
-                              className="flex-1 p-2 rounded bg-neutral-950 text-neutral-100 border border-neutral-800"
-                              value={drafts[q.id] ?? val}
-                              onChange={(e)=>{ const v=e.target.value; setDrafts(prev=>({ ...prev, [q.id]: v })); }}
-                              onKeyDown={(e)=>{ if(e.key==='Enter'){ e.preventDefault(); const v=(e.currentTarget as HTMLInputElement).value; actions.submit(q.id, v).then(()=>{ setDrafts(prev=>{ const { [q.id]:_, ...rest } = prev; return rest; }); }).catch(()=>{}); (e.currentTarget as HTMLInputElement).blur(); } }}
-                              placeholder="Your answer"
-                            />
-                          ) : (
-                            <div className="flex-1 p-2 rounded bg-neutral-950/40 text-neutral-200 border border-neutral-800/50 min-h-[36px]">
-                              {(q.locked && !everyoneDone) ? (
-                                val ? <span className="text-neutral-500">Submitted (hidden until everyone submits)</span> : <span className="text-neutral-500">Hidden until everyone submits</span>
-                              ) : (
-                                val || <span className="text-neutral-500">No answer yet</span>
-                              )}
-                            </div>
-                          )}
-                          <div className="w-5 text-right">
-                            {isMe ? (
-                              mySubmitted[q.id] ? (<span title="Submitted" aria-label="Submitted" className="text-emerald-400">✓</span>) : null
+                  <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                    {q.locked ? (
+                      <span className="rounded-full border border-amber-600/60 bg-amber-500/10 px-2 py-0.5 text-amber-200">Locked</span>
+                    ) : (
+                      <span className="rounded-full border border-emerald-600/30 bg-emerald-500/10 px-2 py-0.5 text-emerald-200">Live</span>
+                    )}
+                    <span className={`rounded-full border px-2 py-0.5 ${everyoneDone ? 'border-emerald-700/70 bg-emerald-500/10 text-emerald-200' : 'border-neutral-700 bg-neutral-800 text-neutral-300'}`}>
+                      {everyoneDone ? 'Everyone submitted' : 'Waiting on responses'}
+                    </span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button className="text-xs text-neutral-400 hover:text-neutral-100" title="Rename" onClick={() => startRename(q.id, q.prompt)}>
+                    ✎
+                  </button>
+                  <button
+                    className="text-xs text-neutral-400 hover:text-neutral-100"
+                    title={q.locked ? 'Unlock responses' : 'Lock responses'}
+                    onClick={async () => {
+                      try { await actions.setLocked(q.id, !q.locked); } catch (e: any) { toast(e?.message || 'Failed to toggle lock', 'error'); }
+                    }}
+                  >
+                    {q.locked ? '🔒' : '🔓'}
+                  </button>
+                  <button
+                    className="text-xs text-red-400 hover:text-red-200"
+                    title="Delete question"
+                    onClick={async () => {
+                      const ok = await askConfirm({ title: 'Delete Question', message: 'Delete this question?', confirmText: 'Delete' });
+                      if (!ok) return;
+                      try { await actions.remove(q.id); } catch (e: any) { toast(e?.message || 'Failed to delete', 'error'); }
+                    }}
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+
+              <div className="mt-4 space-y-2">
+                {roster.map((m) => {
+                  const isMe = meId && m.id === meId;
+                  const baseVal = isMe ? (data.myAnswers[q.id] ?? '') : (data.answersByUser?.[m.id]?.[q.id] ?? '');
+                  const currentDraft = drafts[q.id] ?? baseVal;
+                  const dirty = isMe && currentDraft !== (data.myAnswers[q.id] ?? '');
+                  const pending = !!pendingSubmit[q.id];
+
+                  return (
+                    <div key={m.id} className="flex flex-col gap-2 rounded-xl border border-neutral-900/70 bg-neutral-900/50 p-3 md:flex-row md:items-center">
+                      <div className="w-full text-sm font-medium text-neutral-300 md:w-40">
+                        {isMe ? 'You' : (m.name || m.username || 'Member')}
+                      </div>
+                      {isMe ? (
+                        <div className="flex w-full flex-col gap-2 md:flex-row md:items-center">
+                          <textarea
+                            className="flex-1 rounded-xl border border-neutral-800 bg-neutral-950 px-3 py-2 text-sm text-neutral-50 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 resize-none"
+                            rows={2}
+                            value={currentDraft}
+                            onChange={(e) => setDrafts((prev) => ({ ...prev, [q.id]: e.target.value }))}
+                            placeholder="Type your answer"
+                          />
+                          <button
+                            className="w-full rounded-xl bg-emerald-500/90 px-3 py-2 text-sm font-semibold text-emerald-950 transition hover:bg-emerald-400 disabled:opacity-50 md:w-auto"
+                            disabled={!dirty || pending}
+                            onClick={() => handleSubmitAnswer(q.id)}
+                          >
+                            {pending ? 'Saving…' : 'Save'}
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex w-full items-center gap-3">
+                          <div className="flex-1 rounded-xl border border-neutral-800/60 bg-neutral-950/60 px-3 py-2 text-sm text-neutral-100 min-h-[42px]">
+                            {(q.locked && !everyoneDone) ? (
+                              <span className="text-neutral-500">Hidden until everyone submits</span>
                             ) : (
-                              String(val||'').trim() ? <span title="Answer ready" aria-label="Answer ready" className="text-emerald-400">✓</span> : null
+                              (baseVal && String(baseVal).trim().length > 0) ? baseVal : <span className="text-neutral-500">No answer yet</span>
                             )}
                           </div>
+                          {(String(baseVal || '').trim().length > 0 && (!q.locked || everyoneDone)) ? (
+                            <span className="text-emerald-400" title="Submitted">✓</span>
+                          ) : null}
                         </div>
-                      );
-                    })}
-                  </div>
-                </div>
-                <div className="flex items-center gap-1">
-                  <button className="text-xs text-neutral-400 hover:text-neutral-200" title="Rename" onClick={async()=>{
-                    const nv = window.prompt('Edit question', q.prompt) || '';
-                    if (!nv || nv === q.prompt) return;
-                    try { await actions.rename(q.id, nv); } catch (e: any) { toast(e?.message || 'Failed to rename', 'error'); }
-                  }}>
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 1 1 3 3L7 19l-4 1 1-4 12.5-12.5Z"/></svg>
-                  </button>
-                  <button className="text-xs text-neutral-400 hover:text-neutral-200" title={q.locked ? 'Unlock' : 'Lock'} onClick={async()=>{
-                    try { await actions.setLocked(q.id, !q.locked); } catch (e: any) { toast(e?.message || 'Failed to toggle lock', 'error'); }
-                  }}>
-                    {q.locked ? (
-                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-                    ) : (
-                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 9.9 1"/></svg>
-                    )}
-                  </button>
-                  <button className="text-xs text-red-400 hover:text-red-300" title="Delete" onClick={async()=>{
-                    const ok = await askConfirm({ title:'Delete Question', message:'Delete this question?', confirmText:'Delete' }); if (!ok) return;
-                    try { await actions.remove(q.id); } catch (e: any) { toast(e?.message || 'Failed to delete', 'error'); }
-                  }}>
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M18 6L6 18"/><path d="M6 6l12 12"/></svg>
-                  </button>
-                </div>
+                      )}
+                    </div>
+                  );
+                })}
+                {roster.length === 0 && (
+                  <div className="rounded-xl border border-dashed border-neutral-800 px-3 py-2 text-sm text-neutral-500">No participants yet.</div>
+                )}
               </div>
             </div>
           );
         })}
         {data.questions.length === 0 && (
-          <div className="text-neutral-500 text-sm">No questions yet</div>
+          <div className="rounded-2xl border border-dashed border-neutral-800 bg-neutral-950/60 p-6 text-center text-sm text-neutral-400">
+            No questions yet. Start by adding one above.
+          </div>
         )}
       </div>
+    </div>
+  );
+}
+
+function StatCard({ label, value, hint }: { label: string; value: string | number; hint?: string }) {
+  return (
+    <div className="rounded-2xl border border-neutral-800 bg-neutral-950/70 px-4 py-3 shadow-inner shadow-black/30">
+      <div className="text-xs uppercase tracking-wide text-neutral-500">{label}</div>
+      <div className="text-2xl font-semibold text-neutral-50">{value}</div>
+      {hint && <div className="text-xs text-neutral-500">{hint}</div>}
     </div>
   );
 }

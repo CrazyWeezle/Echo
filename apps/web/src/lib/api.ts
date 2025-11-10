@@ -1,3 +1,5 @@
+import { setAuthToken } from "./auth";
+
 export const API_URL =
     import.meta.env.VITE_API_URL ??
     import.meta.env.VITE_API_HTTP_URL ?? // backward compat
@@ -10,7 +12,7 @@ async function refreshToken(): Promise<string | null> {
         const data = await res.json();
         const t = (data as any)?.token as string | undefined;
         if (t) {
-            localStorage.setItem('token', t);
+            setAuthToken(t);
             return t;
         }
         return null;

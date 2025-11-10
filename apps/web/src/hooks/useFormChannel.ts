@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { getForm, answerQuestion as apiAnswer, createQuestion as apiCreate, updateQuestion as apiUpdate, deleteQuestion as apiDelete } from '../lib/forms/api';
 import { subscribeFormChannel } from '../lib/forms/socket';
 import type { FormPayload, FormQuestion } from '../lib/forms/types';
@@ -11,8 +11,19 @@ export function useFormChannel(fid: string, members: { id: string; name?: string
   const load = useCallback(async () => {
     if (!fid || loadingRef.current) return;
     loadingRef.current = true;
-    try { const res = await getForm(fid); setData(res); }
-    finally { loadingRef.current = false; }
+    try {
+      const res = await getForm(fid);
+      setData(res);
+      setMySubmitted(() => {
+        const map: Record<string, boolean> = {};
+        for (const [qid, value] of Object.entries(res.myAnswers || {})) {
+          map[qid] = !!String(value || '').trim();
+        }
+        return map;
+      });
+    } finally {
+      loadingRef.current = false;
+    }
   }, [fid]);
 
   useEffect(() => { load(); }, [load]);
@@ -20,8 +31,13 @@ export function useFormChannel(fid: string, members: { id: string; name?: string
   useEffect(() => {
     if (!fid) return;
     const unsub = subscribeFormChannel(fid, {
-      onState: ({ questions, allSubmitted }) => {
-        setData(prev => ({ ...prev, questions: questions || [], allSubmitted: allSubmitted || prev.allSubmitted }));
+      onState: ({ questions, allSubmitted, participants }) => {
+        setData(prev => ({
+          ...prev,
+          questions: questions || [],
+          allSubmitted: allSubmitted || prev.allSubmitted || {},
+          participants: Array.isArray(participants) ? participants : prev.participants,
+        }));
       },
       onAnswer: ({ questionId, userId, answer, hasAnswer }) => {
         setData(prev => {
@@ -29,14 +45,22 @@ export function useFormChannel(fid: string, members: { id: string; name?: string
           const row = { ...(byUser[userId] || {}) };
           if (answer != null) row[questionId] = String(answer || '');
           else if (hasAnswer) row[questionId] = row[questionId] || '';
+          else delete row[questionId];
           byUser[userId] = row;
           const mine = { ...prev.myAnswers };
-          if (meId && userId === meId && answer != null) mine[questionId] = String(answer || '');
+          if (meId && userId === meId) {
+            if (answer != null) mine[questionId] = String(answer || '');
+            else if (!hasAnswer) delete mine[questionId];
+          }
           return { ...prev, answersByUser: byUser, myAnswers: mine };
         });
         if (meId && userId === meId) setMySubmitted(prev => ({ ...prev, [questionId]: !!String(answer || '').trim() }));
       },
-      onCreate: ({ question }) => setData(prev => ({ ...prev, questions: [...prev.questions, question] })),
+      onCreate: ({ question }) => setData(prev => {
+        if (!question) return prev;
+        if (prev.questions.some(q => q.id === question.id)) return prev;
+        return { ...prev, questions: [...prev.questions, question] };
+      }),
       onUpdate: ({ question }) => setData(prev => ({ ...prev, questions: prev.questions.map(q => q.id === question.id ? question : q) })),
       onDelete: ({ questionId }) => setData(prev => ({ ...prev, questions: prev.questions.filter(q => q.id !== questionId) })),
     });
@@ -44,13 +68,16 @@ export function useFormChannel(fid: string, members: { id: string; name?: string
   }, [fid, meId]);
 
   const allSubmitted = useCallback((qid: string) => {
+    if (data.allSubmitted && qid in (data.allSubmitted || {})) {
+      return !!data.allSubmitted?.[qid];
+    }
     const participants = (data.participants && data.participants.length > 0) ? data.participants : members.map(m => m.id);
     return participants.every(uid => {
       const isMe = meId && uid === meId;
       const val = isMe ? (data.myAnswers[qid] ?? '') : (data.answersByUser?.[uid]?.[qid] ?? '');
       return String(val || '').trim().length > 0;
     });
-  }, [data.participants, data.myAnswers, data.answersByUser, members, meId]);
+  }, [data.allSubmitted, data.participants, data.myAnswers, data.answersByUser, members, meId]);
 
   const submit = useCallback(async (qid: string, text: string) => {
     await apiAnswer(qid, text);
@@ -60,7 +87,10 @@ export function useFormChannel(fid: string, members: { id: string; name?: string
 
   const create = useCallback(async (prompt: string, locked?: boolean): Promise<FormQuestion> => {
     const q = await apiCreate(fid, prompt, locked);
-    setData(prev => ({ ...prev, questions: [...prev.questions, q] }));
+    setData(prev => {
+      if (prev.questions.some(existing => existing.id === q.id)) return prev;
+      return { ...prev, questions: [...prev.questions, q] };
+    });
     return q;
   }, [fid]);
 
@@ -86,4 +116,3 @@ export function useFormChannel(fid: string, members: { id: string; name?: string
     actions: { submit, create, rename, setLocked, remove, reload: load },
   } as const;
 }
-
