@@ -119,6 +119,17 @@ type Channel = { id: string; name: string; voidId: string; type?: 'text' | 'voic
 type VoidWS = { id: string; name: string; avatarUrl?: string | null };
 type VoiceParticipant = { id: string; name: string; stream: MediaStream | null; avatar?: string | null; isSelf?: boolean; speaking?: boolean; muted?: boolean };
 
+const CHANNEL_TYPE_OPTIONS = [
+  { id: 'text', label: 'Text', desc: 'Chat threads' },
+  { id: 'voice', label: 'Voice', desc: 'Audio / video calls' },
+  { id: 'announcement', label: 'Announcement', desc: 'Read-only updates' },
+  { id: 'kanban', label: 'Kanban', desc: 'Boards & cards' },
+  { id: 'form', label: 'Form', desc: 'Collect answers' },
+  { id: 'habit', label: 'Habit', desc: 'Daily check-ins' },
+  { id: 'gallery', label: 'Gallery', desc: 'Shared images' },
+  { id: 'notes', label: 'Notes', desc: 'Long-form docs' },
+];
+
 // --- Gate component: no conditional hooks here, only simple state ---
 export default function App() {
   const [token, setToken] = useState<string | null>(() => getAuthToken());
@@ -357,6 +368,7 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
   // sheets (mobile)
   const [voidSheetOpen, setVoidSheetOpen] = useState(false);
   const [chanSheetOpen, setChanSheetOpen] = useState(false);
+  const [chanTypePickerOpen, setChanTypePickerOpen] = useState(false);
   const [usersSheetOpen, setUsersSheetOpen] = useState(false);
   // Mobile swipe gesture state (interactive drawers)
   const [swipePanel, setSwipePanel] = useState<null | 'chan' | 'users'>(null);
@@ -368,6 +380,7 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
   const chanOpenRef = useRef(false);
   const usersOpenRef = useRef(false);
   useEffect(() => { chanOpenRef.current = chanSheetOpen; }, [chanSheetOpen]);
+  useEffect(() => { if (!chanSheetOpen) setChanTypePickerOpen(false); }, [chanSheetOpen]);
   useEffect(() => { usersOpenRef.current = usersSheetOpen; }, [usersSheetOpen]);
   // Reorder state persisted locally
   const [spaceOrder, setSpaceOrder] = useState<string[]>(() => {
@@ -1366,7 +1379,7 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
     }
   }
 
-  async function createChannel() {
+  async function createChannel(preselectedType?: string) {
     if (String(currentVoidId || '').startsWith('dm_')) {
       toast('Direct Messages do not support multiple channels', 'error');
       return;
@@ -1374,10 +1387,16 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
     const nm = await askInput({ title: 'Create Channel', label: 'Channel name', placeholder: 'planning' });
     if (!nm) return;
     try {
-      // Ask for channel type
-      let ctypeRaw = await askInput({ title: 'Channel Type', label: 'Type (text, voice, announcement, kanban, form, habit, gallery, notes)', placeholder: 'text' });
-      let ctype = String(ctypeRaw || 'text').trim().toLowerCase();
       const allowed = new Set(['text','voice','announcement','kanban','form','habit','gallery','notes']);
+      let ctype = '';
+      if (preselectedType) {
+        const normalized = preselectedType.trim().toLowerCase();
+        if (allowed.has(normalized)) ctype = normalized;
+      }
+      if (!ctype) {
+        const ctypeRaw = await askInput({ title: 'Channel Type', label: 'Type (text, voice, announcement, kanban, form, habit, gallery, notes)', placeholder: 'text' });
+        ctype = String(ctypeRaw || 'text').trim().toLowerCase();
+      }
       if (!allowed.has(ctype)) ctype = 'text';
       const res = await api.postAuth('/channels', { spaceId: currentVoidId, name: nm, type: ctype }, token);
       const cid = res.id;
@@ -4609,30 +4628,6 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
         />
       </Suspense>
 
-      {/* Mobile floating action buttons (keep composer clear) */}
-      {currentVoidId && (
-        <div className="fixed bottom-4 right-4 md:hidden flex flex-col gap-3 z-30 pointer-events-none">
-          <button
-            onClick={() => { setGifOpen(true); }}
-            className="w-12 h-12 rounded-full bg-emerald-600 text-white shadow-lg shadow-emerald-900/40 flex items-center justify-center pointer-events-auto hover:bg-emerald-500"
-            title="Add GIF"
-            aria-label="Add GIF"
-          >
-            GIF
-          </button>
-          <button
-            onClick={() => setSettingsOpen(true)}
-            className="w-12 h-12 rounded-full bg-neutral-900/90 border border-neutral-700 text-neutral-100 shadow-lg shadow-black/40 flex items-center justify-center pointer-events-auto hover:bg-neutral-800"
-            title="Open settings"
-            aria-label="Open settings"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
-              <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/>
-              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V22a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 8 20.17a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 3 15.4 1.65 1.65 0 0 0 1.5 14H1.41a2 2 0 1 1 0-4H1.5A1.65 1.65 0 0 0 3 8.6 1.65 1.65 0 0 0 2.17 6.77l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 8 3.83 1.65 1.65 0 0 0 9.5 2.5V2.41a2 2 0 1 1 4 0V2.5A1.65 1.65 0 0 0 15.4 3a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 21 8.6c.36.5.57 1.11.5 1.77H21.5a2 2 0 1 1 0 4H21.5A1.65 1.65 0 0 0 19.4 15z"/>
-            </svg>
-          </button>
-        </div>
-      )}
 
       {/* Mobile: Spaces sheet */}
       {voidSheetOpen && (
@@ -4760,7 +4755,32 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
             </div>
             <div className="p-2">
               {!String(currentVoidId).startsWith('dm_') && (
-                <button className="w-full px-3 py-2 rounded border border-neutral-700 text-neutral-200 hover:bg-neutral-800/60 mb-2" onClick={()=>{ createChannel(); setChanSheetOpen(false); }}>+ Channel</button>
+                <div className="mb-2">
+                  <button
+                    className="w-full px-3 py-2 rounded border border-neutral-700 text-neutral-200 hover:bg-neutral-800/60"
+                    onClick={() => setChanTypePickerOpen((prev) => !prev)}
+                  >
+                    {chanTypePickerOpen ? 'Choose channel type' : '+ Channel'}
+                  </button>
+                  {chanTypePickerOpen && (
+                    <div className="mt-2 grid grid-cols-2 gap-2">
+                      {CHANNEL_TYPE_OPTIONS.map((opt) => (
+                        <button
+                          key={opt.id}
+                          className="text-left rounded-xl border border-neutral-800 bg-neutral-900/70 px-3 py-2 text-sm text-neutral-100 hover:border-emerald-600 hover:bg-neutral-900"
+                          onClick={async () => {
+                            setChanTypePickerOpen(false);
+                            setChanSheetOpen(false);
+                            await createChannel(opt.id);
+                          }}
+                        >
+                          <div className="font-semibold">{opt.label}</div>
+                          <div className="text-xs text-neutral-400">{opt.desc}</div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
               )}
               <ul className="space-y-1">
                 {(!String(currentVoidId).startsWith('dm_') ? channels : channels.filter(ch=>ch.id==='chat')).map(ch => (

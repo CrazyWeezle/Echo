@@ -14,6 +14,7 @@ export default function FormChannelView({ fid, members, meId }: { fid: string; m
   const [editingId, setEditingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
   const [renaming, setRenaming] = useState(false);
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
 
   const roster = useMemo(() => {
     if (data.participants && data.participants.length > 0) {
@@ -35,6 +36,18 @@ export default function FormChannelView({ fid, members, meId }: { fid: string; m
       setRenameDraft('');
     }
   }, [data.questions, editingId]);
+  useEffect(() => {
+    setCollapsed((prev) => {
+      const next = { ...prev };
+      for (const q of data.questions) {
+        if (!(q.id in next)) next[q.id] = false;
+      }
+      for (const key of Object.keys(next)) {
+        if (!data.questions.some((q) => q.id === key)) delete next[key];
+      }
+      return next;
+    });
+  }, [data.questions]);
 
   const handleCreateQuestion = async () => {
     const prompt = newPrompt.trim();
@@ -111,69 +124,80 @@ export default function FormChannelView({ fid, members, meId }: { fid: string; m
 
       <div className="rounded-2xl border border-neutral-800 bg-neutral-900/70 p-4 shadow-inner shadow-black/40">
         <h3 className="text-sm font-semibold text-neutral-200 mb-2">New question</h3>
-        <div className="flex flex-col gap-3 md:flex-row md:items-end">
-          <div className="flex-1 space-y-2">
-            <label className="text-xs uppercase tracking-wide text-neutral-400 block">Prompt</label>
-            <textarea
-              className="w-full rounded-xl border border-neutral-800 bg-neutral-950 px-3 py-2 text-sm text-neutral-50 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 resize-none"
-              rows={2}
-              placeholder="What would you like everyone to answer?"
-              value={newPrompt}
-              onChange={(e) => setNewPrompt(e.target.value)}
-            />
-            <label className="flex items-center gap-2 text-xs text-neutral-300">
-              <input type="checkbox" checked={newLocked} onChange={(e) => setNewLocked(e.target.checked)} className="accent-emerald-500" />
-              Hide answers until everyone submits
-            </label>
-          </div>
+        <label className="text-xs uppercase tracking-wide text-neutral-400 block">Prompt</label>
+        <div className="flex items-start gap-3">
+          <textarea
+            className="flex-1 rounded-xl border border-neutral-800 bg-neutral-950 px-3 py-2 text-sm text-neutral-50 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 resize-none"
+            rows={2}
+            placeholder="ex. What is one thing you like about yourself?"
+            value={newPrompt}
+            onChange={(e) => setNewPrompt(e.target.value)}
+          />
           <button
-            className="md:w-40 rounded-xl bg-emerald-500/90 py-2 text-sm font-semibold text-emerald-950 transition hover:bg-emerald-400 disabled:opacity-60"
+            className="rounded-full bg-emerald-500/90 h-12 w-12 flex items-center justify-center text-2xl text-emerald-950 transition hover:bg-emerald-400 disabled:opacity-60 shrink-0"
             disabled={!newPrompt.trim() || creating}
             onClick={handleCreateQuestion}
+            aria-label="Add question"
           >
-            {creating ? 'Adding…' : 'Add Question'}
+            {creating ? '…' : '+'}
           </button>
         </div>
+        <label className="mt-2 flex items-center gap-2 text-xs text-neutral-300">
+          <input type="checkbox" checked={newLocked} onChange={(e) => setNewLocked(e.target.checked)} className="accent-emerald-500" />
+          Hide answers until everyone submits
+        </label>
       </div>
 
       <div className="space-y-4">
         {data.questions.map((q, idx) => {
           const everyoneDone = allSubmitted(q.id);
+          const isCollapsed = !!collapsed[q.id];
           return (
             <div key={q.id} className="rounded-2xl border border-neutral-800/80 bg-neutral-950/70 p-4 shadow shadow-black/40">
               <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                 <div className="flex-1 min-w-0">
                   <div className="flex flex-col gap-2">
                     <span className="text-xs uppercase tracking-wide text-neutral-500">Question {idx + 1}</span>
-                    {editingId === q.id ? (
-                      <div className="flex flex-col gap-2 md:flex-row md:items-center">
-                        <input
-                          className="flex-1 rounded-xl border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-neutral-50 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                          value={renameDraft}
-                          onChange={(e) => setRenameDraft(e.target.value)}
-                          autoFocus
-                        />
-                        <div className="flex gap-2">
-                          <button
-                            className="rounded-lg bg-emerald-500/90 px-3 py-1 text-sm font-semibold text-emerald-950 disabled:opacity-50"
-                            disabled={!renameDraft.trim() || renaming}
-                            onClick={submitRename}
-                          >
-                            Save
-                          </button>
-                          <button
-                            className="rounded-lg border border-neutral-700 px-3 py-1 text-sm text-neutral-200 hover:bg-neutral-800/70"
-                            onClick={() => { setEditingId(null); setRenameDraft(''); }}
-                          >
-                            Cancel
-                          </button>
+                    <div className="flex items-start gap-2">
+                      <button
+                        className="mt-1 shrink-0 rounded-full border border-neutral-700 p-1 text-neutral-300 hover:bg-neutral-900/70"
+                        onClick={() => setCollapsed((prev) => ({ ...prev, [q.id]: !isCollapsed }))}
+                        aria-label={isCollapsed ? 'Expand question' : 'Collapse question'}
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={`h-4 w-4 transition-transform ${isCollapsed ? '' : 'rotate-180'}`}>
+                          <polyline points="6 9 12 15 18 9" />
+                        </svg>
+                      </button>
+                      {editingId === q.id ? (
+                        <div className="flex flex-col gap-2 md:flex-row md:items-center flex-1">
+                          <input
+                            className="flex-1 rounded-xl border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-neutral-50 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                            value={renameDraft}
+                            onChange={(e) => setRenameDraft(e.target.value)}
+                            autoFocus
+                          />
+                          <div className="flex gap-2">
+                            <button
+                              className="rounded-lg bg-emerald-500/90 px-3 py-1 text-sm font-semibold text-emerald-950 disabled:opacity-50"
+                              disabled={!renameDraft.trim() || renaming}
+                              onClick={submitRename}
+                            >
+                              Save
+                            </button>
+                            <button
+                              className="rounded-lg border border-neutral-700 px-3 py-1 text-sm text-neutral-200 hover:bg-neutral-800/70"
+                              onClick={() => { setEditingId(null); setRenameDraft(''); }}
+                            >
+                              Cancel
+                            </button>
+                          </div>
                         </div>
-                      </div>
-                    ) : (
-                      <div className="text-lg font-medium text-neutral-50 break-words">
-                        {q.prompt}
-                      </div>
-                    )}
+                      ) : (
+                        <div className="flex-1 text-lg font-medium text-neutral-50 break-words">
+                          {q.prompt}
+                        </div>
+                      )}
+                    </div>
                   </div>
                   <div className="mt-2 flex flex-wrap gap-2 text-xs">
                     {q.locked ? (
@@ -191,15 +215,6 @@ export default function FormChannelView({ fid, members, meId }: { fid: string; m
                     ✎
                   </button>
                   <button
-                    className="text-xs text-neutral-400 hover:text-neutral-100"
-                    title={q.locked ? 'Unlock responses' : 'Lock responses'}
-                    onClick={async () => {
-                      try { await actions.setLocked(q.id, !q.locked); } catch (e: any) { toast(e?.message || 'Failed to toggle lock', 'error'); }
-                    }}
-                  >
-                    {q.locked ? '🔒' : '🔓'}
-                  </button>
-                  <button
                     className="text-xs text-red-400 hover:text-red-200"
                     title="Delete question"
                     onClick={async () => {
@@ -213,6 +228,7 @@ export default function FormChannelView({ fid, members, meId }: { fid: string; m
                 </div>
               </div>
 
+              {!isCollapsed && (
               <div className="mt-4 space-y-2">
                 {roster.map((m) => {
                   const isMe = meId && m.id === meId;
@@ -236,11 +252,12 @@ export default function FormChannelView({ fid, members, meId }: { fid: string; m
                             placeholder="Type your answer"
                           />
                           <button
-                            className="w-full rounded-xl bg-emerald-500/90 px-3 py-2 text-sm font-semibold text-emerald-950 transition hover:bg-emerald-400 disabled:opacity-50 md:w-auto"
+                            className="w-10 h-10 rounded-full bg-emerald-500/90 text-emerald-950 flex items-center justify-center text-xl font-semibold transition hover:bg-emerald-400 disabled:opacity-50 md:w-10 md:h-10"
                             disabled={!dirty || pending || !q.id}
                             onClick={() => handleSubmitAnswer(q.id)}
+                            aria-label="Save answer"
                           >
-                            {pending ? 'Saving…' : 'Save'}
+                            {pending ? '…' : '✓'}
                           </button>
                         </div>
                       ) : (
@@ -264,6 +281,7 @@ export default function FormChannelView({ fid, members, meId }: { fid: string; m
                   <div className="rounded-xl border border-dashed border-neutral-800 px-3 py-2 text-sm text-neutral-500">No participants yet.</div>
                 )}
               </div>
+              )}
             </div>
           );
         })}
