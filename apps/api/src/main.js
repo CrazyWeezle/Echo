@@ -21,6 +21,7 @@ import { handleForms } from './routes/forms.js';
 import { handleHabits } from './routes/habits.js';
 import { handleMessages } from './routes/messages.js';
 import { handlePush, sendWebPushToUsers } from './routes/push.js';
+import { handleVoice } from './routes/voice.js';
 import { handleProfile } from './routes/profile.js';
 
 import { listSpaces, listChannels, getBacklog } from './services/chat.js';
@@ -96,6 +97,7 @@ const server = http.createServer(async (req, res) => {
     if (req.url.startsWith('/api/habits')) { const handled = await handleHabits(req, res, body, { io }); if (handled) return; }
     if (req.url.startsWith('/api/messages')) { const handled = await handleMessages(req, res, body, { io }); if (handled) return; }
     if (req.url.startsWith('/api/push')) { const handled = await handlePush(req, res, body, { userId: userIdFromAuth(req) }); if (handled) return; }
+    if (req.url.startsWith('/api/voice')) { const handled = await handleVoice(req, res, body, { io }); if (handled) return; }
 
     // Health check for container/platform readiness
     if (req.method === 'GET' && req.url === '/api/health') return json(res, 200, { status: 'ok' });

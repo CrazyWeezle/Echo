@@ -52,6 +52,10 @@ export default function FormChannelView({ fid, members, meId }: { fid: string; m
   };
 
   const handleSubmitAnswer = async (qid: string) => {
+    if (!qid) {
+      toast('Question reference missing.', 'error');
+      return;
+    }
     const value = drafts[qid] ?? data.myAnswers[qid] ?? '';
     setPendingSubmit((prev) => ({ ...prev, [qid]: true }));
     try {
@@ -233,7 +237,7 @@ export default function FormChannelView({ fid, members, meId }: { fid: string; m
                           />
                           <button
                             className="w-full rounded-xl bg-emerald-500/90 px-3 py-2 text-sm font-semibold text-emerald-950 transition hover:bg-emerald-400 disabled:opacity-50 md:w-auto"
-                            disabled={!dirty || pending}
+                            disabled={!dirty || pending || !q.id}
                             onClick={() => handleSubmitAnswer(q.id)}
                           >
                             {pending ? 'Saving…' : 'Save'}

@@ -1,5 +1,5 @@
 
-import { useEffect, useRef, useState, Suspense, lazy, useCallback } from "react";
+import { useEffect, useMemo, useRef, useState, Suspense, lazy, useCallback } from "react";
 import Login from "./pages/Login"; // match actual filename case for Linux builds
 import SettingsRoute from "./routes/settings";
 import { socket, connectSocket, disconnectSocket, getLocalUser, setLocalUser } from "./lib/socket";
@@ -16,6 +16,7 @@ const EmojiPanel = lazy(() => import("./components/EmojiPanel"));
 import UnifiedSettingsModal from "./components/UnifiedSettingsModal";
 import CreateSpaceModal from "./components/CreateSpaceModal";
 import FormChannelView from "./components/forms/FormChannelView";
+import HabitChannelView from "./components/habits/HabitChannelView";
 import UserQuickSettings from "./components/UserQuickSettings";
 import ToastHost from "./components/ToastHost";
 import ConfirmHost from "./components/ConfirmHost";
@@ -116,6 +117,7 @@ type FormState = {
 };
 type Channel = { id: string; name: string; voidId: string; type?: 'text' | 'voice' | 'announcement' | 'kanban' | 'form' | 'habit' | 'gallery' | string; linkedGalleryId?: string | null };
 type VoidWS = { id: string; name: string; avatarUrl?: string | null };
+type VoiceParticipant = { id: string; name: string; stream: MediaStream | null; avatar?: string | null; isSelf?: boolean; speaking?: boolean; muted?: boolean };
 
 // --- Gate component: no conditional hooks here, only simple state ---
 export default function App() {
@@ -247,15 +249,17 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
   const [roomUserIds, setRoomUserIds] = useState<string[]>([]);
   const [spaceUserIds, setSpaceUserIds] = useState<string[]>([]);
   const [globalUserIds, setGlobalUserIds] = useState<string[]>([]);
-  // Habit UI preferences (range per channel)
-  const [habitRangeByChan, setHabitRangeByChan] = useState<Record<string, number>>(() => {
-    try { const raw = localStorage.getItem('habitRangeByChan'); return raw ? JSON.parse(raw) : {}; } catch { return {}; }
-  });
-  useEffect(() => { try { localStorage.setItem('habitRangeByChan', JSON.stringify(habitRangeByChan)); } catch {} }, [habitRangeByChan]);
   const [roomMobileIds, setRoomMobileIds] = useState<string[]>([]);
   const [spaceMobileIds, setSpaceMobileIds] = useState<string[]>([]);
   const [globalMobileIds, setGlobalMobileIds] = useState<string[]>([]);
   const [members, setMembers] = useState<{ id: string; name: string; username?: string; avatarUrl?: string | null; status?: string; nameColor?: string | null; role?: string; bio?: string }[]>([]);
+  const orderedMembers = useMemo(() => {
+    return [...members].sort((a, b) => {
+      const ax = a.name || a.username || "";
+      const bx = b.name || b.username || "";
+      return ax.localeCompare(bx, undefined, { sensitivity: "base" });
+    });
+  }, [members]);
   const [activityByUser, setActivityByUser] = useState<Record<string, string>>({});
   const [unread, setUnread] = useState<Record<string, number>>({});
   // Throttle notifications: one per channel until user visits it.
@@ -615,11 +619,6 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
   // Track local submission state (per-question) for the current user to show a checkmark after pressing Enter
   const [myFormSubmitted, setMyFormSubmitted] = useState<Record<string, boolean>>({});
   // (Removed channel-wide blind mode; using per-question lock instead)
-  // Habit tracker state
-  type HabitDef = { id: string; name: string; pos: number };
-  // Include trackerId used by optimistic updates when toggling entries
-  type HabitState = { defs: HabitDef[]; my: Record<string, { trackerId?: string; public: boolean; days: string[] }>; leaderboard?: { userId: string; name: string; count: number }[] };
-  const [habitByChan, setHabitByChan] = useState<Record<string, HabitState>>({});
   // Favorites: fully-qualified channel ids (e.g. "space123:general" or "dm_abc:chat")
   const [favorites, setFavorites] = useState<string[]>(() => {
     try { const raw = localStorage.getItem('favorites'); return raw ? JSON.parse(raw) : []; } catch { return []; }
@@ -1025,11 +1024,32 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
   // Voice chat state
   const [voiceJoined, setVoiceJoined] = useState(false);
   const [voiceMuted, setVoiceMuted] = useState(false);
-  const [voicePeers, setVoicePeers] = useState<Record<string, { userId?: string; name?: string }>>({});
+  const [voicePeers, setVoicePeers] = useState<Record<string, { userId?: string; name?: string; hasVideo?: boolean }>>({});
+  const [videoEnabled, setVideoEnabled] = useState(false);
+  const [videoBusy, setVideoBusy] = useState(false);
+  const [localVideoStream, setLocalVideoStream] = useState<MediaStream | null>(null);
+  const [remoteVideoStreams, setRemoteVideoStreams] = useState<Record<string, MediaStream>>({});
   const pcMapRef = useRef(new Map<string, RTCPeerConnection>());
   const remoteStreamsRef = useRef(new Map<string, MediaStream>());
   const localStreamRef = useRef<MediaStream | null>(null);
+  const localVideoTrackRef = useRef<MediaStreamTrack | null>(null);
+  const videoSendersRef = useRef(new Map<string, RTCRtpSender>());
   const [voiceLevels, setVoiceLevels] = useState<Record<string, number>>({});
+  const [callPingOpen, setCallPingOpen] = useState(false);
+  const [callPingSelection, setCallPingSelection] = useState<Record<string, boolean>>({});
+  const [pingMessage, setPingMessage] = useState('Jump in? I am on a call!');
+  const [pingBusy, setPingBusy] = useState(false);
+  const selectedPingCount = useMemo(() => Object.values(callPingSelection).filter(Boolean).length, [callPingSelection]);
+  useEffect(() => {
+    setCallPingSelection((prev) => {
+      const allowed = new Set(orderedMembers.map((m) => m.id));
+      const next: Record<string, boolean> = {};
+      for (const [id, value] of Object.entries(prev)) {
+        if (value && allowed.has(id)) next[id] = true;
+      }
+      return next;
+    });
+  }, [orderedMembers]);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const meterNodesRef = useRef(new Map<string, { analyser: AnalyserNode; data: Uint8Array; source: MediaStreamAudioSourceNode }>());
   const meterLoopRef = useRef<number | null>(null);
@@ -1043,6 +1063,31 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
   const [needsAudioUnlock, setNeedsAudioUnlock] = useState(false);
   const [voiceVolumes, setVoiceVolumes] = useState<Record<string, number>>({});
   const [voiceSilenced, setVoiceSilenced] = useState<Record<string, boolean>>({});
+  const voiceParticipants = useMemo(() => {
+    const arr: VoiceParticipant[] = [];
+    const selfName = me?.name || user?.username || "You";
+    arr.push({
+      id: "self",
+      name: selfName,
+      stream: videoEnabled ? localVideoStream : null,
+      avatar: me?.avatarUrl || null,
+      isSelf: true,
+      speaking: (voiceLevels["self"] || 0) > 0.2,
+      muted: voiceMuted,
+    });
+    for (const [peerId, info] of Object.entries(voicePeers)) {
+      const member = members.find((mm) => mm.id === info?.userId);
+      arr.push({
+        id: peerId,
+        name: info?.name || member?.name || member?.username || "Member",
+        stream: remoteVideoStreams[peerId] || null,
+        avatar: member?.avatarUrl || null,
+        speaking: (voiceLevels[peerId] || 0) > 0.2,
+        muted: !!voiceSilenced[peerId],
+      });
+    }
+    return arr;
+  }, [voicePeers, members, localVideoStream, remoteVideoStreams, videoEnabled, me?.name, me?.avatarUrl, user?.username, voiceLevels, voiceMuted, voiceSilenced]);
 
   function startMetersLoop() {
     if (meterLoopRef.current != null) return;
@@ -1169,14 +1214,27 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
         }
       };
       pc.ontrack = (ev) => {
-        let ms = remoteStreamsRef.current.get(peerId);
-        if (!ms) { ms = new MediaStream(); remoteStreamsRef.current.set(peerId, ms); }
-        ms.addTrack(ev.track);
-        setVoicePeers((prev) => ({ ...prev }));
-        startMeter(peerId, ms);
+        if (ev.track.kind === 'audio') {
+          let ms = remoteStreamsRef.current.get(peerId);
+          if (!ms) { ms = new MediaStream(); remoteStreamsRef.current.set(peerId, ms); }
+          ms.addTrack(ev.track);
+          setVoicePeers((prev) => ({ ...prev }));
+          startMeter(peerId, ms);
+        } else if (ev.track.kind === 'video') {
+          const stream = new MediaStream([ev.track]);
+          setRemoteVideoStreams(prev => ({ ...prev, [peerId]: stream }));
+          setVoicePeers(prev => ({ ...prev, [peerId]: { ...(prev[peerId] || {}), hasVideo: true } }));
+          ev.track.onended = () => {
+            setRemoteVideoStreams(prev => { const next = { ...prev }; delete next[peerId]; return next; });
+            setVoicePeers(prev => ({ ...prev, [peerId]: { ...(prev[peerId] || {}), hasVideo: false } }));
+          };
+        }
       };
       if (localStreamRef.current) {
-        for (const track of localStreamRef.current.getAudioTracks()) pc.addTrack(track, localStreamRef.current);
+        for (const track of localStreamRef.current.getTracks()) {
+          const sender = pc.addTrack(track, localStreamRef.current);
+          if (track.kind === 'video') videoSendersRef.current.set(peerId, sender);
+        }
       }
       pcMapRef.current.set(peerId, pc);
     }
@@ -1184,9 +1242,14 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
   }
   async function createAndSendOffer(peerId: string) {
     const pc = ensurePc(peerId);
-    const offer = await pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: false } as any);
+    const offer = await pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true } as any);
     await pc.setLocalDescription(offer);
     socket.emit('voice:signal', { targetId: peerId, payload: { type: 'offer', sdp: offer.sdp } });
+  }
+  async function renegotiatePeer(peerId: string) {
+    try {
+      await createAndSendOffer(peerId);
+    } catch {}
   }
   async function handleVoiceSignal({ from, payload }: any) {
     const type = payload?.type;
@@ -1207,6 +1270,7 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
     const pc = pcMapRef.current.get(peerId);
     if (pc) { try { pc.close(); } catch {} pcMapRef.current.delete(peerId); }
     remoteStreamsRef.current.delete(peerId);
+    setRemoteVideoStreams(prev => { const next = { ...prev }; delete next[peerId]; return next; });
     stopMeter(peerId);
     setVoicePeers((prev) => { const n = { ...prev }; delete n[peerId]; return n; });
     setVoiceVolumes((prev) => { const n = { ...prev }; delete n[peerId]; return n; });
@@ -1374,7 +1438,6 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
         const meta = channels.find(c => c.id === currentChannelId);
         if (meta && meta.type === 'kanban') { loadKanbanIfNeeded(fid); }
         if (meta && meta.type === 'form') { loadFormIfNeeded(fid); }
-        if (meta && meta.type === 'habit') { loadHabitIfNeeded(fid); }
         // load members for current space
         (async () => {
           try {
@@ -1484,7 +1547,6 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
           const fqid = fq(voidId, currentChannelId);
           if (curMeta.type === 'kanban') loadKanbanIfNeeded(fqid);
           if (curMeta.type === 'form') loadFormIfNeeded(fqid);
-          if (curMeta.type === 'habit') loadHabitIfNeeded(fqid);
         }
       } catch {}
     };
@@ -1734,12 +1796,6 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
     socket.on("channel:backlog", onBacklog);
     socket.on("kanban:state", onKanbanState);
     socket.on("form:state", onFormState);
-    function onHabitState(payload: any) {
-      const { channelId, defs, my, leaderboard } = payload || {};
-      if (!channelId) return;
-      setHabitByChan(old => ({ ...old, [channelId]: { defs: defs||[], my: my||{}, leaderboard: leaderboard||[] } }));
-    }
-    socket.on('habit:state', onHabitState);
     socket.on("message:new", onNew);
     socket.on("message:seen", onSeen);
     socket.on("message:edited", onEdited);
@@ -1831,7 +1887,6 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
       socket.off("channel:backlog", onBacklog);
       socket.off("kanban:state", onKanbanState);
       socket.off("form:state", onFormState);
-      socket.off('habit:state', onHabitState);
       socket.off("message:new", onNew);
       socket.off("message:seen", onSeen);
       socket.off("message:edited", onEdited);
@@ -2243,15 +2298,6 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
       }));
     } catch {}
   }
-  async function loadHabitIfNeeded(fqChanId: string) {
-    try {
-      if (habitByChan[fqChanId]) return;
-      const tok = localStorage.getItem('token') || '';
-      const res = await api.getAuth(`/habits?channelId=${encodeURIComponent(fqChanId)}`, tok);
-      setHabitByChan(old => ({ ...old, [fqChanId]: res }));
-    } catch {}
-  }
-
   // --- Voice controls ---
   async function joinVoice() {
     if (!currentVoidId || !currentChannelId) return;
@@ -2275,9 +2321,14 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
     for (const pc of pcMapRef.current.values()) { try { pc.close(); } catch {} }
     pcMapRef.current.clear();
     remoteStreamsRef.current.clear();
+    setRemoteVideoStreams({});
+    videoSendersRef.current.clear();
     setVoicePeers({});
     if (localStreamRef.current) { for (const t of localStreamRef.current.getTracks()) { try { t.stop(); } catch {} } }
     localStreamRef.current = null;
+    if (localVideoTrackRef.current) { try { localVideoTrackRef.current.stop(); } catch {} localVideoTrackRef.current = null; }
+    setLocalVideoStream(null);
+    setVideoEnabled(false);
     stopMeter('self');
     // close audio context if any
     try { audioCtxRef.current?.close(); } catch {}
@@ -2291,6 +2342,73 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
       if (ls) ls.getAudioTracks().forEach(t => t.enabled = !nm);
       return nm;
     });
+  }
+  async function startVideo() {
+    if (!voiceJoined || videoEnabled || videoBusy) return;
+    setVideoBusy(true);
+    try {
+      const cam = await navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720 } });
+      const track = cam.getVideoTracks()[0];
+      if (!track) throw new Error('No camera');
+      localVideoTrackRef.current = track;
+      if (!localStreamRef.current) localStreamRef.current = new MediaStream();
+      localStreamRef.current.addTrack(track);
+      setLocalVideoStream(new MediaStream([track]));
+      setVideoEnabled(true);
+      for (const [peerId, pc] of pcMapRef.current.entries()) {
+        const sender = pc.addTrack(track, localStreamRef.current);
+        videoSendersRef.current.set(peerId, sender);
+        await renegotiatePeer(peerId);
+      }
+    } catch (e) {
+      toast('Camera permission denied or unavailable', 'error');
+    } finally {
+      setVideoBusy(false);
+    }
+  }
+  async function stopVideo() {
+    const track = localVideoTrackRef.current;
+    if (!track) return;
+    try { track.stop(); } catch {}
+    localVideoTrackRef.current = null;
+    if (localStreamRef.current) {
+      try { localStreamRef.current.removeTrack(track); } catch {}
+    }
+    setLocalVideoStream(null);
+    setVideoEnabled(false);
+    for (const [peerId, pc] of pcMapRef.current.entries()) {
+      const sender = videoSendersRef.current.get(peerId);
+      if (sender) {
+        try { pc.removeTrack(sender); } catch {}
+        videoSendersRef.current.delete(peerId);
+        await renegotiatePeer(peerId);
+      }
+    }
+  }
+  async function toggleVideo() {
+    if (!voiceJoined) {
+      toast('Join the call before toggling video', 'info');
+      return;
+    }
+    if (videoEnabled) await stopVideo();
+    else await startVideo();
+  }
+  async function sendCallPing() {
+    if (!currentVoidId || !currentChannelId) return;
+    setPingBusy(true);
+    try {
+      const tok = localStorage.getItem('token') || '';
+      const ids = Object.entries(callPingSelection).filter(([, v]) => v).map(([id]) => id);
+      const text = pingMessage.trim();
+      await api.postAuth('/voice/ping', { spaceId: currentVoidId, channelId: fq(currentVoidId, currentChannelId), memberIds: ids, message: text }, tok);
+      toast(ids.length ? `Pinged ${ids.length} member${ids.length === 1 ? '' : 's'}` : 'Pinged everyone online', 'success');
+      setCallPingOpen(false);
+      setCallPingSelection({});
+    } catch (e: any) {
+      toast(e?.message || 'Failed to ping members', 'error');
+    } finally {
+      setPingBusy(false);
+    }
   }
 
   function formatTime(ts?: string) {
@@ -2372,7 +2490,6 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
     const meta = channels.find(c => c.id === id);
     if (meta && meta.type === 'kanban') { loadKanbanIfNeeded(fqid); }
     if (meta && meta.type === 'form') { loadFormIfNeeded(fqid); }
-    if (meta && meta.type === 'habit') { loadHabitIfNeeded(fqid); }
   }
 
   // While viewing a form channel, periodically refresh answers to keep everyone in sync
@@ -2696,100 +2813,112 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
 
         {/* Messages, Kanban, or landing */}
         <div ref={listRef} className="overflow-auto p-4 space-y-2 bg-transparent pb-44 md:pb-8">
-          {currentVoidId && currentChannel?.type === 'voice' && voiceJoined && (
-            <div className="max-w-5xl mx-auto py-2">
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-6">
-                {(() => {
-                  const list: { id: string; name: string }[] = [];
-                  list.push({ id: 'self', name: me?.name || user?.username || 'You' });
-                  for (const [pid, info] of Object.entries(voicePeers)) {
-                    list.push({ id: pid, name: info?.name || 'User' });
-                  }
-                  return list.map(p => {
-                    const lvl = Math.min(1, Math.max(0, voiceLevels[p.id] || 0));
-                    const deg = Math.max(12, Math.round(lvl * 360));
-                    const speaking = lvl > 0.2;
-                    const mem = p.id==='self' ? { avatarUrl: me?.avatarUrl || null } : members.find(mm => mm.id === (voicePeers[p.id]?.userId || '')) || {} as any;
-                    const avatar = mem?.avatarUrl || null;
-                    const initial = (p.id==='self' ? (me?.name || user?.username || 'You') : p.name || 'U').trim()[0]?.toUpperCase() || 'U';
-                    const vol = voiceVolumes[p.id] ?? 1;
-                    const mutedLocal = p.id==='self' ? voiceMuted : !!voiceSilenced[p.id];
-                    return (
-                      <div key={p.id} className={`rounded-xl border border-neutral-800 bg-neutral-950/50 p-4 flex flex-col items-center min-h-[360px] ${speaking ? 'shadow-[0_0_0_2px_rgba(16,185,129,0.15)]' : ''}`}>
-                        <div className="relative">
-                          <div className="h-16 w-16 rounded-full p-[2px]" style={{ background: `conic-gradient(rgb(16 185 129) ${deg}deg, rgb(38 38 38) 0deg)` }}>
-                            <div className={`h-full w-full rounded-full overflow-hidden ${speaking ? 'bg-neutral-900/80' : 'bg-neutral-900/60'}`}>
-                              {avatar ? (
-                                <img src={avatar} alt={p.name || 'avatar'} className="h-full w-full object-cover" />
-                              ) : (
-                                <div className="h-full w-full flex items-center justify-center text-base">
-                                  <span className="text-neutral-200">{p.id==='self' ? (voiceMuted ? '??' : initial) : initial}</span>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                          {p.id==='self' && voiceMuted && (
-                            <span className="absolute -bottom-1 -right-1 h-5 w-5 rounded-full bg-neutral-900 border border-neutral-700 text-red-400 flex items-center justify-center" title="Muted"> 
-                              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5"><path d="M13.5 14.5V9.4a3.4 3.4 0 0 0-5.7-2.4L5 9H2v6h3l2.8 2.8a3.4 3.4 0 0 0 5.7-2.4Z"/><path d="m14 9 7-7"/></svg>
-                            </span>
-                          )}
-                        </div>
-                        <div className="mt-2 text-neutral-200 text-sm truncate max-w-[14ch]">{p.id==='self' ? (voiceMuted ? 'You (muted)' : 'You') : p.name}</div>
-                        <div className="mt-3 flex flex-col items-center gap-3 w-full">
-                          <div className="relative h-[240px] flex items-center justify-center w-full">
-                            <input
-                              type="range"
-                              min="0"
-                              max="1"
-                              step="0.01"
-                              value={vol}
-                              onChange={(e)=>{
-                                const v = Number(e.target.value);
-                                setVoiceVolumes(prev => ({ ...prev, [p.id]: v }));
-                                const el = audioElsRef.current.get(p.id);
-                                if (el) el.volume = v;
-                              }}
-                              className="accent-emerald-500"
-                              style={{ transform: 'rotate(-90deg)', width: '220px', height: '28px', transformOrigin: 'center' }}
-                              aria-label={`Volume for ${p.name||'user'}`}
-                            />
-                          </div>
-                          <button
-                            className={`px-2 py-1 rounded border text-xs inline-flex items-center justify-center ${mutedLocal ? 'border-red-700 bg-red-900/40 text-red-200' : 'border-neutral-700 text-neutral-300 hover:bg-neutral-800/60'}`}
-                            onClick={() => {
-                              if (p.id==='self') { toggleMute(); }
-                              else {
-                                setVoiceSilenced(prev => {
-                                  const val = !prev[p.id];
-                                  const next = { ...prev, [p.id]: val };
-                                  const el = audioElsRef.current.get(p.id);
-                                  if (el) el.muted = val;
-                                  return next;
-                                });
-                              }
+          {currentVoidId && currentChannel?.type === "voice" && (
+            <div className="max-w-5xl mx-auto py-4 space-y-4">
+              {voiceJoined ? (
+                <>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {voiceParticipants.map((p) => (
+                      <VoiceTile key={p.id} participant={p} />
+                    ))}
+                  </div>
+                  <div className="flex flex-wrap items-center justify-center gap-3 text-sm text-neutral-200">
+                    <button
+                      className="px-4 py-2 rounded-full border border-neutral-700 bg-neutral-950/70 hover:bg-neutral-900/60"
+                      onClick={toggleMute}
+                    >
+                      {voiceMuted ? "Unmute" : "Mute"}
+                    </button>
+                    <button
+                      className="px-4 py-2 rounded-full border border-neutral-700 bg-neutral-950/70 hover:bg-neutral-900/60 disabled:opacity-60"
+                      onClick={toggleVideo}
+                      disabled={videoBusy}
+                    >
+                      {videoBusy ? "Loading..." : videoEnabled ? "Stop Video" : "Start Video"}
+                    </button>
+                    <button
+                      className="px-4 py-2 rounded-full border border-neutral-700 bg-neutral-950/70 hover:bg-neutral-900/60"
+                      onClick={() => {
+                        setDevicesOpen((v) => !v);
+                        if (!devicesOpen) refreshDevices();
+                      }}
+                    >
+                      Devices
+                    </button>
+                    <button
+                      className="px-4 py-2 rounded-full border border-blue-800 text-blue-100 bg-blue-900/20 hover:bg-blue-900/40"
+                      onClick={() => setCallPingOpen(true)}
+                    >
+                      Ping Members
+                    </button>
+                    <button
+                      className="px-4 py-2 rounded-full border border-red-800 text-red-100 bg-red-900/20 hover:bg-red-900/40"
+                      onClick={leaveVoice}
+                    >
+                      Leave
+                    </button>
+                  </div>
+                  {devicesOpen && (
+                    <div className="rounded-2xl border border-neutral-800 bg-neutral-950/60 p-4 text-sm text-neutral-200 space-y-3">
+                      <div className="font-semibold text-neutral-100">Device Settings</div>
+                      <div className="flex flex-wrap gap-4">
+                        <label className="flex flex-col gap-1 min-w-[180px]">
+                          <span className="text-xs uppercase tracking-wide text-neutral-500">Microphone</span>
+                          <select
+                            className="bg-neutral-900 border border-neutral-700 rounded-lg px-2 py-1 text-neutral-50"
+                            value={selectedInputId ?? ""}
+                            onChange={async (e) => {
+                              const id = e.target.value;
+                              setSelectedInputId(id);
+                              await switchMicrophone(id);
                             }}
-                            title={mutedLocal ? 'Unmute' : 'Mute'}
-                            aria-label={mutedLocal ? 'Unmute' : 'Mute'}
                           >
-                            {mutedLocal ? (
-                              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 text-red-400">
-                                <path d="M13.5 14.5V9.4a3.4 3.4 0 0 0-5.7-2.4L5 9H2v6h3l2.8 2.8a3.4 3.4 0 0 0 5.7-2.4Z"/>
-                                <path d="m14 9 7-7"/>
-                              </svg>
-                            ) : (
-                              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
-                                <path d="M11 5 6 9H2v6h4l5 4V5Z"/>
-                                <path d="M19 12a4 4 0 0 0-4-4"/>
-                                <path d="M19 12a4 4 0 0 1-4 4"/>
-                              </svg>
-                            )}
-                          </button>
-                        </div>
+                            <option value="">System default</option>
+                            {inputs.map((d) => (
+                              <option key={d.deviceId} value={d.deviceId}>
+                                {d.label || d.deviceId}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="flex flex-col gap-1 min-w-[180px]">
+                          <span className="text-xs uppercase tracking-wide text-neutral-500">Output</span>
+                          <select
+                            className="bg-neutral-900 border border-neutral-700 rounded-lg px-2 py-1 text-neutral-50"
+                            value={selectedOutputId ?? ""}
+                            onChange={(e) => {
+                              const id = e.target.value || null;
+                              setSelectedOutputId(id);
+                            }}
+                          >
+                            <option value="">System default</option>
+                            {outputs.map((d) => (
+                              <option key={d.deviceId} value={d.deviceId}>
+                                {d.label || d.deviceId}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
                       </div>
-                    );
-                  });
-                })()}
-              </div>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="rounded-3xl border border-neutral-800 bg-gradient-to-br from-neutral-950/80 to-neutral-900/60 p-8 text-center space-y-4">
+                  <div className="text-2xl font-semibold text-neutral-50">Start a call in #{currentChannel?.name || "voice"}</div>
+                  <p className="text-neutral-400 max-w-xl mx-auto">
+                    Hop into the channel to begin a voice or video call. Share the link or ping teammates so they know you're waiting.
+                  </p>
+                  <div className="flex flex-wrap gap-3 justify-center">
+                    <button className="px-5 py-3 rounded-full bg-emerald-600 text-emerald-50 shadow-lg shadow-emerald-900/40" onClick={joinVoice}>
+                      Join Call
+                    </button>
+                    <button className="px-5 py-3 rounded-full border border-neutral-700 text-neutral-200 hover:bg-neutral-800/60" onClick={() => setCallPingOpen(true)}>
+                      Ping Members
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
           {!currentVoidId ? (
@@ -3097,123 +3226,7 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
               </div>
             </div>
           ) : currentChannel?.type === 'habit' ? (
-            <div className="min-h-full">
-              {(() => {
-                const fid = fq(currentVoidId, currentChannelId);
-                const st = habitByChan[fid];
-                const defs = st?.defs || [];
-                const mine = st?.my || {};
-                // Day window selector: 7, 14, 30 (default 14)
-                const range = Math.max(7, Math.min(30, habitRangeByChan[fid] || 14));
-                const today = new Date();
-                const days: string[] = [];
-                const fmt = (d: Date) => {
-                  const y = d.getFullYear();
-                  const m = String(d.getMonth()+1).padStart(2,'0');
-                  const dd = String(d.getDate()).padStart(2,'0');
-                  return `${y}-${m}-${dd}`; // local date (YYYY-MM-DD)
-                };
-                for (let i=(range||14)-1; i>=0; i--) { const d=new Date(); d.setDate(today.getDate()-i); days.push(fmt(d)); }
-                return (
-                  <div className="space-y-4">
-                    <div className="flex items-center justify-between">
-                      <div className="text-emerald-300 font-semibold">Daily Tracker</div>
-                      <div className="flex items-center gap-2 text-xs text-neutral-400">
-                        <span>Range</span>
-                        <select className="bg-neutral-900 border border-neutral-700 rounded px-2 py-1 text-neutral-200" value={range}
-                                onChange={(e)=>{ try { const v=parseInt((e.target as HTMLSelectElement).value,10); setHabitRangeByChan(prev=>({ ...prev, [fid]: (v===7||v===14||v===30)?v:14 })); } catch{} }}>
-                          <option value="7">7 days</option>
-                          <option value="14">14 days</option>
-                          <option value="30">30 days</option>
-                        </select>
-                      </div>
-                      <button className="px-2 py-1 rounded border border-neutral-700 text-neutral-200 hover:bg-neutral-800/60" onClick={async()=>{
-                        const nm = await askInput({ title:'New Task', label:'Task name', placeholder:'Drink water' });
-                        if (!nm) return; try{ const tok=localStorage.getItem('token')||''; await api.postAuth('/habits/defs',{ channelId: fid, name: nm }, tok);}catch(e:any){ toast(e?.message||'Failed to add','error'); }
-                      }}>+ Add Task</button>
-                    </div>
-                    <div className="rounded border border-neutral-800 bg-neutral-900/50 p-2">
-                      <div className="text-sm text-neutral-300 mb-1">Leaderboard (last 7 days)</div>
-                      <div className="flex flex-wrap gap-2 text-sm">
-                        {(st?.leaderboard||[]).map((r,i)=>(<span key={r.userId} className="px-2 py-1 rounded border border-neutral-700 bg-neutral-800/40">{i+1}. {r.name}: {r.count}</span>))}
-                        {(st?.leaderboard||[]).length===0 && <span className="text-neutral-500 text-sm">No data yet</span>}
-                      </div>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-3">
-                      {defs.map(d => {
-                        const opted = !!mine[d.id];
-                        const pub = opted ? !!mine[d.id].public : true;
-                        return (
-                          <div key={d.id} className="px-2 py-1 rounded border border-neutral-700 bg-neutral-900/40 flex items-center gap-2">
-                            <label className="flex items-center gap-1">
-                              <input type="checkbox" checked={opted} onChange={async(e)=>{ try{ const tok=localStorage.getItem('token')||''; if(e.target.checked) await api.postAuth('/habits/opt',{ habitId:d.id, isPublic: pub }, tok); else await api.deleteAuth('/habits/opt',{ habitId:d.id }, tok);}catch{}}} />
-                              <span className="text-neutral-200 text-sm">{d.name}</span>
-                            </label>
-                            {opted && (
-                              <label className="flex items-center gap-1 text-xs text-neutral-400">
-                                <input type="checkbox" checked={pub} onChange={async(e)=>{ try{ const tok=localStorage.getItem('token')||''; await api.postAuth('/habits/opt',{ habitId:d.id, isPublic: e.target.checked }, tok);}catch{}}} /> Public
-                              </label>
-                            )}
-                            {/* Remove task (available to space owners; currently always visible) */}
-                            <button className="ml-1 px-2 py-0.5 rounded border border-red-800 text-red-300 hover:bg-red-900/30 text-xs" title="Remove task" onClick={async()=>{
-                              const ok = await askConfirm({ title:'Remove Task', message:`Remove task "${d.name}" for this channel?`, confirmText:'Remove' });
-                              if (!ok) return;
-                              try {
-                                const tok = localStorage.getItem('token') || '';
-                                await api.deleteAuth('/habits/defs', { habitId: d.id }, tok);
-                              } catch (e) { toast((e as any)?.message || 'Failed to remove', 'error'); }
-                            }}>
-                              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
-                                <line x1="18" y1="6" x2="6" y2="18" />
-                                <line x1="6" y1="6" x2="18" y2="18" />
-                              </svg>
-                            </button>
-                          </div>
-                        );
-                      })}
-                      {defs.length===0 && <div className="text-neutral-500 text-sm">No habits yet</div>}
-                    </div>
-                    <div className="overflow-auto">
-                      <table className="min-w-[640px] w-full text-sm border-separate border-spacing-y-1">
-                        <thead>
-                          <tr>
-                            <th className="text-left text-neutral-300 px-2">Habit</th>
-                            {days.map(d => (<th key={d} className="text-[11px] text-neutral-400 px-2">{d.slice(5)}</th>))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {defs.filter(d=>!!mine[d.id]).map(d => (
-                            <tr key={d.id} className="bg-neutral-900/50">
-                              <td className="px-2 py-1 text-neutral-200">
-                                {d.name}
-                                {(() => {
-                                  try {
-                                    const set = new Set((mine[d.id]?.days||[]));
-                                    let streak = 0; const cur = new Date();
-                                    for (;;) { const key = fmt(cur); if (set.has(key)) { streak++; cur.setDate(cur.getDate()-1); } else break; }
-                                    return streak > 0 ? <span className="ml-2 text-[11px] text-emerald-400">Streak: {streak}</span> : null;
-                                  } catch { return null; }
-                                })()}
-                              </td>
-                              {days.map(dy => {
-                                const done = !!mine[d.id].days?.includes(dy);
-                                return (
-                                  <td key={dy} className="px-2 py-1 text-center">
-                                    <input type="checkbox" className="accent-emerald-500" checked={done} onChange={async(e)=>{ try{ const tok=localStorage.getItem('token')||''; const tid = habitByChan[fid]?.my?.[d.id]?.trackerId || ''; await api.postAuth('/habits/entry',{ trackerId: tid, defId: d.id, day: dy, done: e.target.checked }, tok); // optimistic update
-                                      setHabitByChan(old=>{ const st=old[fid]; if(!st) return old; const my={ ...(st.my||{}) }; const cur={ trackerId: tid || my[d.id]?.trackerId, public: !!(my[d.id]?.public), days: [ ...(my[d.id]?.days||[]) ] }; const idx=cur.days.indexOf(dy); if(e.target.checked){ if(idx===-1) cur.days.push(dy);} else { if(idx!==-1) cur.days.splice(idx,1);} my[d.id]=cur; return { ...old, [fid]: { ...st, my } }; });
-                                    }catch{}}} />
-                                  </td>
-                                );
-                              })}
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                );
-              })()}
-            </div>
+            <HabitChannelView fid={fq(currentVoidId, currentChannelId)} members={members} meId={me.userId || null} askInput={askInput} />
           ) : currentChannel?.type === 'kanban' ? (
             <div className="min-h-full">
               <div className="mb-3 flex items-center gap-2">
@@ -4508,6 +4521,83 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
           }
         }}
       />
+      {callPingOpen && (
+        <div className="fixed inset-0 z-[5000] flex items-center justify-center px-4">
+          <div className="absolute inset-0 bg-black/70" onClick={() => { if (!pingBusy) setCallPingOpen(false); }} />
+          <div className="relative w-full max-w-md rounded-2xl border border-neutral-800 bg-neutral-950 p-5 shadow-2xl space-y-4">
+            <div className="space-y-1">
+              <div className="text-lg font-semibold text-neutral-100">Ping teammates</div>
+              <p className="text-sm text-neutral-400">Let members know you're waiting in #{currentChannel?.name || 'voice'}.</p>
+            </div>
+            <div className="max-h-56 overflow-auto rounded-2xl border border-neutral-900 divide-y divide-neutral-900 bg-neutral-950/80">
+              {orderedMembers.length === 0 ? (
+                <div className="px-3 py-4 text-sm text-neutral-500">No space members yet.</div>
+              ) : (
+                orderedMembers.map((m) => {
+                  const checked = !!callPingSelection[m.id];
+                  return (
+                    <label key={m.id} className="flex items-center gap-3 px-3 py-2 text-sm text-neutral-100">
+                      <input
+                        type="checkbox"
+                        className="accent-emerald-500"
+                        checked={checked}
+                        onChange={() => setCallPingSelection((prev) => ({ ...prev, [m.id]: !checked }))}
+                      />
+                      <span className="truncate">{m.name || m.username || 'Member'}</span>
+                    </label>
+                  );
+                })
+              )}
+            </div>
+            <div className="flex items-center justify-between text-xs text-neutral-400">
+              <span>{selectedPingCount ? `${selectedPingCount} selected` : 'No selection — will ping everyone'}</span>
+              {orderedMembers.length > 0 && (
+                <button
+                  className="text-emerald-400 hover:text-emerald-200"
+                  onClick={() => {
+                    const everyoneSelected = selectedPingCount === orderedMembers.length;
+                    if (everyoneSelected) setCallPingSelection({});
+                    else {
+                      const next: Record<string, boolean> = {};
+                      for (const m of orderedMembers) next[m.id] = true;
+                      setCallPingSelection(next);
+                    }
+                  }}
+                >
+                  {selectedPingCount === orderedMembers.length ? 'Clear all' : 'Select all'}
+                </button>
+              )}
+            </div>
+            <label className="space-y-1 text-sm text-neutral-200 w-full">
+              <span className="text-xs uppercase tracking-wide text-neutral-500">Message</span>
+              <textarea
+                className="w-full rounded-xl border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-neutral-50 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                rows={3}
+                value={pingMessage}
+                maxLength={140}
+                onChange={(e) => setPingMessage(e.target.value)}
+                placeholder="Let your team know why you're calling"
+              />
+            </label>
+            <div className="flex justify-end gap-2">
+              <button
+                className="px-4 py-2 rounded-full border border-neutral-700 text-neutral-200 hover:bg-neutral-900/60 disabled:opacity-60"
+                onClick={() => { if (!pingBusy) setCallPingOpen(false); }}
+                disabled={pingBusy}
+              >
+                Cancel
+              </button>
+              <button
+                className="px-4 py-2 rounded-full bg-emerald-600 text-emerald-50 hover:bg-emerald-500 disabled:opacity-60"
+                onClick={sendCallPing}
+                disabled={pingBusy || !pingMessage.trim()}
+              >
+                {pingBusy ? 'Sending...' : 'Send ping'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <Suspense>
         <GifPicker
           open={gifOpen}
@@ -4519,7 +4609,30 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
         />
       </Suspense>
 
-      {/* BottomNav removed per request */}
+      {/* Mobile floating action buttons (keep composer clear) */}
+      {currentVoidId && (
+        <div className="fixed bottom-4 right-4 md:hidden flex flex-col gap-3 z-30 pointer-events-none">
+          <button
+            onClick={() => { setGifOpen(true); }}
+            className="w-12 h-12 rounded-full bg-emerald-600 text-white shadow-lg shadow-emerald-900/40 flex items-center justify-center pointer-events-auto hover:bg-emerald-500"
+            title="Add GIF"
+            aria-label="Add GIF"
+          >
+            GIF
+          </button>
+          <button
+            onClick={() => setSettingsOpen(true)}
+            className="w-12 h-12 rounded-full bg-neutral-900/90 border border-neutral-700 text-neutral-100 shadow-lg shadow-black/40 flex items-center justify-center pointer-events-auto hover:bg-neutral-800"
+            title="Open settings"
+            aria-label="Open settings"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
+              <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V22a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 8 20.17a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 3 15.4 1.65 1.65 0 0 0 1.5 14H1.41a2 2 0 1 1 0-4H1.5A1.65 1.65 0 0 0 3 8.6 1.65 1.65 0 0 0 2.17 6.77l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 8 3.83 1.65 1.65 0 0 0 9.5 2.5V2.41a2 2 0 1 1 4 0V2.5A1.65 1.65 0 0 0 15.4 3a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 21 8.6c.36.5.57 1.11.5 1.77H21.5a2 2 0 1 1 0 4H21.5A1.65 1.65 0 0 0 19.4 15z"/>
+            </svg>
+          </button>
+        </div>
+      )}
 
       {/* Mobile: Spaces sheet */}
       {voidSheetOpen && (
@@ -4743,10 +4856,6 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
           </div>
         </div>
       )}
-      {/* Spacers so top/bottom bars don't cover content on mobile */}
-      <div className="sm:hidden h-12" />
-      <div className="sm:hidden h-16" />
-
       {/* Mobile Edge Handles for drawers */}
       <div className="sm:hidden fixed inset-y-0 inset-x-0 pointer-events-none z-40">
         {/* Left handle: Channels */}
@@ -4771,50 +4880,38 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
         )}
       </div>
 
-      {/* Mobile Bottom Nav: Spaces, Channels, People, Settings */}
-      <div className="sm:hidden fixed bottom-0 inset-x-0 z-40 pointer-events-none">
-        <div className="px-3 pb-[env(safe-area-inset-bottom)]">
-          <nav className="pointer-events-auto mx-auto max-w-3xl rounded-2xl border border-white/10 bg-black/60 backdrop-blur px-3 py-2 flex items-center justify-around gap-2 shadow-lg min-h-[56px]">
-            <button
-              className="flex flex-col items-center justify-center gap-0.5 px-3 py-2 rounded-lg text-white/90 hover:bg-white/10 min-w-[56px] min-h-[44px]"
-              onClick={() => setVoidSheetOpen(true)}
-              aria-label="Open Spaces"
-              title="Spaces"
-            >
-              <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="7" height="7" rx="1"/><rect x="14" y="4" width="7" height="7" rx="1"/><rect x="3" y="13" width="7" height="7" rx="1"/><rect x="14" y="13" width="7" height="7" rx="1"/></svg>
-              <span className="text-[10px]">Spaces</span>
-            </button>
-            <button
-              className="flex flex-col items-center justify-center gap-0.5 px-3 py-2 rounded-lg text-white/90 hover:bg-white/10 min-w-[56px] min-h-[44px]"
-              onClick={() => setChanSheetOpen(true)}
-              aria-label="Open Channels"
-              title="Channels"
-            >
-              <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18"/><path d="M3 12h14"/><path d="M3 18h10"/></svg>
-              <span className="text-[10px]">Channels</span>
-            </button>
-            <button
-              className="flex flex-col items-center justify-center gap-0.5 px-3 py-2 rounded-lg text-white/90 hover:bg-white/10 min-w-[56px] min-h-[44px]"
-              onClick={() => setUsersSheetOpen(true)}
-              aria-label="Open People"
-              title="People"
-            >
-              <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-              <span className="text-[10px]">People</span>
-            </button>
-            <button
-              className="flex flex-col items-center justify-center gap-0.5 px-3 py-2 rounded-lg text-white/90 hover:bg-white/10 min-w-[56px] min-h-[44px]"
-              onClick={() => setSettingsOpen(true)}
-              aria-label="Open Settings"
-              title="Settings"
-            >
-              <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06A2 2 0 1 1 7.04 3.5l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V2a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c0 .66.39 1.25 1 1.51.32.14.67.21 1.02.21H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/></svg>
-              <span className="text-[10px]">Settings</span>
-            </button>
-          </nav>
-        </div>
-      </div>
+
     </div>
   );
 }
+
+  function VoiceTile({ participant }: { participant: VoiceParticipant }) {
+    const videoRef = useRef<HTMLVideoElement | null>(null);
+    useEffect(() => {
+      if (videoRef.current && participant.stream) {
+        (videoRef.current as HTMLVideoElement).srcObject = participant.stream;
+        (videoRef.current as HTMLVideoElement).play().catch(()=>{});
+      }
+    }, [participant.stream, participant.id]);
+    return (
+      <div className={`rounded-2xl border border-neutral-800 bg-neutral-950/70 p-4 flex flex-col gap-3 items-center text-center ${participant.speaking ? 'ring-2 ring-emerald-500/60' : ''}`}>
+        <div className="w-full aspect-video rounded-2xl overflow-hidden bg-neutral-900/80 flex items-center justify-center">
+          {participant.stream ? (
+            <video ref={videoRef} autoPlay playsInline muted={participant.isSelf} className="w-full h-full object-cover" />
+          ) : participant.avatar ? (
+            <img src={participant.avatar} alt={participant.name} className="w-24 h-24 rounded-full object-cover border border-neutral-800" />
+          ) : (
+            <div className="w-24 h-24 rounded-full bg-neutral-800 border border-neutral-700 flex items-center justify-center text-2xl text-neutral-200">
+              {(participant.name || 'U').slice(0,1).toUpperCase()}
+            </div>
+          )}
+        </div>
+        <div className="text-sm text-neutral-100 flex flex-col items-center gap-1">
+          <span className="font-semibold">{participant.name}</span>
+          <span className="text-xs text-neutral-500">{participant.muted ? 'Muted' : participant.speaking ? 'Speaking' : 'Listening'}</span>
+        </div>
+      </div>
+    );
+  }
+
 
