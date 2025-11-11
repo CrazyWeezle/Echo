@@ -17,6 +17,9 @@ import UnifiedSettingsModal from "./components/UnifiedSettingsModal";
 import CreateSpaceModal from "./components/CreateSpaceModal";
 import FormChannelView from "./components/forms/FormChannelView";
 import HabitChannelView from "./components/habits/HabitChannelView";
+import KanbanChannelView from "./components/kanban/KanbanChannelView";
+import NotesChannelView from "./components/notes/NotesChannelView";
+import type { KanbanItem, KanbanList, KanbanTag } from "./types/kanban";
 import UserQuickSettings from "./components/UserQuickSettings";
 import ToastHost from "./components/ToastHost";
 import ConfirmHost from "./components/ConfirmHost";
@@ -103,9 +106,8 @@ type Msg = {
   seenByIds?: string[]; // user ids for avatars
   replyTo?: { id: string; authorId?: string; authorName?: string; authorColor?: string | null; content?: string } | null;
 };
-type KanbanItem = { id: string; content: string; pos: number; done?: boolean };
-type KanbanList = { id: string; name: string; pos: number; items: KanbanItem[] };
 type FormQuestion = { id: string; prompt: string; kind?: string; pos: number; locked?: boolean };
+type NoteDraft = { title: string; body: string; tags: string[] };
 
 // (Lightbox component removed; using inline overlay near the end of ChatApp render)
 type FormState = {
@@ -609,14 +611,14 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
 
   const [text, setText] = useState("");
   const currentChannel = channels.find((c) => c.id === currentChannelId);
+  const [kanbanByChan, setKanbanByChan] = useState<Record<string, KanbanList[]>>({});
+  const [kanbanTagsByChan, setKanbanTagsByChan] = useState<Record<string, KanbanTag[]>>({});
+  const currentKanbanFqid = currentChannel?.type === 'kanban' ? fq(currentVoidId, currentChannelId) : null;
+  const currentKanbanLists = currentKanbanFqid ? (kanbanByChan[currentKanbanFqid] || []) : [];
+  const currentKanbanTags = currentKanbanFqid ? (kanbanTagsByChan[currentKanbanFqid] || []) : [];
   const [pendingUploads, setPendingUploads] = useState<{ url: string; contentType?: string; name?: string; size?: number }[]>([]);
   const [spoiler, setSpoiler] = useState<boolean>(false);
   const [revealedSpoilers, setRevealedSpoilers] = useState<Record<string, boolean>>({});
-  const [kanbanByChan, setKanbanByChan] = useState<Record<string, KanbanList[]>>({});
-  // Track per-list toggle for showing all completed items
-  const [showAllCompleted, setShowAllCompleted] = useState<Record<string, boolean>>({});
-  const [listDrag, setListDrag] = useState<{ dragId?: string; overId?: string; pos?: 'before' | 'after' }>({});
-  const [itemDrag, setItemDrag] = useState<{ dragId?: string; overId?: string; pos?: 'before' | 'after'; listId?: string }>({});
   const [formByChan, setFormByChan] = useState<Record<string, FormState>>({});
   // Lightweight debounce for form reloads per channel
   const formReloadTimersRef = useRef<Record<string, number>>({});
@@ -1026,13 +1028,6 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
     const r = inputResolveRef.current; inputResolveRef.current = null;
     if (r) r(val);
   }
-
-  // Notes channel UI state
-  const [noteSearch, setNoteSearch] = useState<string>('');
-  const [noteTag, setNoteTag] = useState<string | null>(null);
-  const [noteModalId, setNoteModalId] = useState<string | null>(null);
-  const [noteEditTitle, setNoteEditTitle] = useState<string>('');
-  const [noteEditBody, setNoteEditBody] = useState<string>('');
 
   // Voice chat state
   const [voiceJoined, setVoiceJoined] = useState(false);
@@ -1579,8 +1574,13 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
       }
     };
 
-    function onKanbanState({ channelId, lists }: { channelId: string; lists: KanbanList[] }) {
-      setKanbanByChan(old => ({ ...old, [channelId]: lists }));
+    function onKanbanState({ channelId, lists, tags }: { channelId: string; lists?: KanbanList[]; tags?: KanbanTag[] }) {
+      if (Array.isArray(lists)) {
+        setKanbanByChan(old => ({ ...old, [channelId]: lists }));
+      }
+      if (Array.isArray(tags)) {
+        setKanbanTagsByChan(old => ({ ...old, [channelId]: tags }));
+      }
     }
     function onFormState({ channelId, questions, allSubmitted, participants }: { channelId: string; questions: FormQuestion[]; allSubmitted?: Record<string, boolean>; participants?: string[] }) {
       const cid = (channelId && channelId.includes(':')) ? channelId : fq(currentVoidIdRef.current, channelId);
@@ -2210,16 +2210,67 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
     });
   }
 
+  const formatNoteContent = (title: string, body: string, tags: string[]) => {
+    const sections: string[] = [];
+    if (title.trim()) sections.push(title.trim());
+    if (body.trim()) sections.push(body.trim());
+    if (tags.length) sections.push(tags.map((tag) => (tag.startsWith('#') ? tag : `#${tag}`)).join(' '));
+    return sections.join('\n\n');
+  };
+
+  const createNote = useCallback(async ({ title, body, tags }: NoteDraft) => {
+    if (!currentVoidId || !currentChannelId) return;
+    const content = formatNoteContent(title, body, tags);
+    if (!content) return;
+    const tempId = crypto.randomUUID();
+    const fid = fq(currentVoidId, currentChannelId);
+    setMsgsByKey((old) => {
+      const list = old[fid] || [];
+      return { ...old, [fid]: [...list, { id: tempId, content, optimistic: true, createdAt: new Date().toISOString() }] };
+    });
+    socket.emit('message:send', { voidId: currentVoidId, channelId: fid, content, tempId, attachments: [] });
+  }, [currentVoidId, currentChannelId, setMsgsByKey]);
+
+  const updateNote = useCallback(async (noteId: string, draft: NoteDraft) => {
+    if (!currentVoidId || !currentChannelId) return;
+    const content = formatNoteContent(draft.title, draft.body, draft.tags);
+    if (!content) return;
+    socket.emit('message:edit', { messageId: noteId, content });
+    const fid = fq(currentVoidId, currentChannelId);
+    setMsgsByKey((old) => {
+      const list = old[fid] || [];
+      const idx = list.findIndex((m) => m.id === noteId);
+      if (idx === -1) return old;
+      const copy = [...list];
+      copy[idx] = { ...copy[idx], content, optimistic: true };
+      return { ...old, [fid]: copy };
+    });
+  }, [currentVoidId, currentChannelId, setMsgsByKey]);
+
+  const deleteNote = useCallback(async (noteId: string) => {
+    if (!currentVoidId || !currentChannelId) return;
+    socket.emit('message:delete', { messageId: noteId });
+    const fid = fq(currentVoidId, currentChannelId);
+    setMsgsByKey((old) => {
+      const list = old[fid] || [];
+      if (!list.some((m) => m.id === noteId)) return old;
+      return { ...old, [fid]: list.filter((m) => m.id !== noteId) };
+    });
+  }, [currentVoidId, currentChannelId, setMsgsByKey]);
+
   async function loadKanbanIfNeeded(fqChanId: string) {
     try {
       if (Object.prototype.hasOwnProperty.call(kanbanByChan, fqChanId)) return;
       const tok = localStorage.getItem('token') || '';
       const res = await api.getAuth(`/kanban?channelId=${encodeURIComponent(fqChanId)}`, tok);
-      const lists = Array.isArray(res?.lists) ? res.lists as KanbanList[] : [];
+      const lists = Array.isArray(res?.lists) ? (res.lists as KanbanList[]) : [];
+      const tags = Array.isArray(res?.tags) ? (res.tags as KanbanTag[]) : [];
       setKanbanByChan(old => ({ ...old, [fqChanId]: lists }));
+      setKanbanTagsByChan(old => ({ ...old, [fqChanId]: tags }));
     } catch {
       // Mark as loaded (empty) to avoid endless "Loading" and allow UI to render fallback
       setKanbanByChan(old => (Object.prototype.hasOwnProperty.call(old, fqChanId) ? old : { ...old, [fqChanId]: [] }));
+      setKanbanTagsByChan(old => (Object.prototype.hasOwnProperty.call(old, fqChanId) ? old : { ...old, [fqChanId]: [] }));
     }
   }
 
@@ -2227,12 +2278,30 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
     try {
       const tok = localStorage.getItem('token') || '';
       const res = await api.getAuth(`/kanban?channelId=${encodeURIComponent(fqChanId)}`, tok);
-      const lists = Array.isArray(res?.lists) ? res.lists as KanbanList[] : [];
+      const lists = Array.isArray(res?.lists) ? (res.lists as KanbanList[]) : [];
+      const tags = Array.isArray(res?.tags) ? (res.tags as KanbanTag[]) : [];
       setKanbanByChan(old => ({ ...old, [fqChanId]: lists }));
+      setKanbanTagsByChan(old => ({ ...old, [fqChanId]: tags }));
     } catch {
       // keep existing state on error
     }
   }
+  const mutateKanbanLists = useCallback((fqChanId: string, updater: (prev: KanbanList[]) => KanbanList[]) => {
+    setKanbanByChan(old => {
+      const prev = old[fqChanId] || [];
+      const next = updater(prev);
+      if (prev === next) return old;
+      return { ...old, [fqChanId]: next };
+    });
+  }, []);
+  const mutateKanbanTags = useCallback((fqChanId: string, updater: (prev: KanbanTag[]) => KanbanTag[]) => {
+    setKanbanTagsByChan(old => {
+      const prev = old[fqChanId] || [];
+      const next = updater(prev);
+      if (prev === next) return old;
+      return { ...old, [fqChanId]: next };
+    });
+  }, []);
 
   // Proactively load kanban data for any favorited lists (works on landing)
   useEffect(() => {
@@ -3247,186 +3316,18 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
           ) : currentChannel?.type === 'habit' ? (
             <HabitChannelView fid={fq(currentVoidId, currentChannelId)} members={members} meId={me.userId || null} askInput={askInput} />
           ) : currentChannel?.type === 'kanban' ? (
-            <div className="min-h-full">
-              <div className="mb-3 flex items-center gap-2">
-                <button className="px-2 py-1 rounded border border-neutral-700 text-neutral-200 hover:bg-neutral-800/60" onClick={async()=>{
-                  const nm = await askInput({ title:'New List', label:'List name', placeholder:'To do' }); if(!nm) return; try{ const tok=localStorage.getItem('token')||''; await api.postAuth('/kanban/lists',{ channelId: fq(currentVoidId, currentChannelId), name: nm }, tok);}catch(e:any){ toast(e?.message||'Failed to create list','error'); }
-                }}>+ Add List</button>
-              </div>
-              <div className="flex gap-3 overflow-auto pb-2">
-                {(kanbanByChan[fq(currentVoidId, currentChannelId)]||[]).map(list => (
-                  <div key={list.id} className="relative min-w-[240px] max-w-[280px] bg-neutral-900/60 border border-neutral-800 rounded p-2"
-                       draggable
-                       onDragStart={(e)=>{ e.dataTransfer.setData('text/kan-list', list.id); setListDrag({ dragId: list.id, overId: list.id, pos: 'before' }); }}
-                       onDragEnd={()=> setListDrag({})}
-                       onDragOver={(e)=>{ e.preventDefault(); }}
-                       onDrop={async (e)=>{
-                         const fid = fq(currentVoidId, currentChannelId);
-                         const dragListId = e.dataTransfer.getData('text/kan-list');
-                         if (dragListId) {
-                           const all = kanbanByChan[fid] || [];
-                           const order = all.map(l=>l.id).filter(id=>id!==dragListId);
-                           const targetIdx = order.indexOf(list.id);
-                           const insertIndex = (listDrag.overId===list.id && listDrag.pos==='after') ? targetIdx+1 : targetIdx;
-                           order.splice(insertIndex,0,dragListId);
-                           setKanbanByChan(old=>{
-                             const arr = old[fid] || [];
-                             const map = new Map(arr.map(l=>[l.id,l] as const));
-                             const next = order.map(id=>map.get(id)!).filter(Boolean) as any;
-                             return { ...old, [fid]: next };
-                           });
-                           try { const tok=localStorage.getItem('token')||''; await api.postAuth('/kanban/lists/reorder',{ channelId: fid, listIds: order }, tok); } catch {}
-                           return;
-                         }
-                         const itemId = e.dataTransfer.getData('text/kan-item');
-                         if (!itemId) return;
-                         // find and remove from any list
-                         setKanbanByChan(old => {
-                           const lists = (old[fid]||[]).map(l=>({ ...l, items: [...l.items] }));
-                           let moving:any=null; let fromListId:string|null=null;
-                           for (const l of lists){ const idx=l.items.findIndex(it=>it.id===itemId); if(idx!==-1){ moving=l.items.splice(idx,1)[0]; fromListId=l.id; break; }}
-                           if(!moving) return old;
-                           const tgt = lists.find(l=>l.id===list.id); if(!tgt) return old;
-                           tgt.items.push(moving);
-                           // fire API reorders for source and target
-                           (async()=>{
-                             try{
-                               const tok=localStorage.getItem('token')||'';
-                               if(fromListId && fromListId!==list.id){
-                                 const src = lists.find(l=>l.id===fromListId);
-                                 await api.postAuth('/kanban/items/reorder',{ listId: fromListId, itemIds: (src?.items||[]).map(x=>x.id) }, tok);
-                               }
-                               await api.postAuth('/kanban/items/reorder',{ listId: list.id, itemIds: tgt.items.map(x=>x.id) }, tok);
-                             }catch{}
-                           })();
-                           return { ...old, [fid]: lists };
-                         });
-                       }}
-                  onDragOverCapture={(e)=>{
-                    // show blue indicator before/after based on cursor
-                    const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
-                    const before = e.clientX < rect.left + rect.width/2;
-                    setListDrag(prev => ({ ...prev, overId: list.id, pos: before ? 'before' : 'after' }));
-                  }}
-                  >
-                    {listDrag.dragId && listDrag.overId === list.id && (
-                      <div className="absolute top-0 bottom-0 w-1 bg-sky-500" style={{ pointerEvents: 'none', left: listDrag.pos==='before'? -6 : undefined, right: listDrag.pos==='after'? -6 : undefined }} />
-                    )}
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <div className="font-semibold text-neutral-200 truncate" title={list.name}>{list.name}</div>
-                        <button className="text-xs p-1 rounded hover:bg-neutral-800"
-                                title="Favorite list"
-                                onClick={() => toggleListFav(currentVoidId, currentChannelId, list.id)}>
-                          {isListFav(currentVoidId, currentChannelId, list.id) ? (
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-4 w-4 text-amber-400"><path d="M12 17.27 18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>
-                          ) : (
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 text-neutral-400"><path d="M12 17.27 18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>
-                          )}
-                        </button>
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <button className="text-xs text-neutral-300 hover:text-emerald-300" title="Add Card" onClick={async()=>{ const txt=await askInput({ title:'New Card', label:'Text', placeholder:'Do the thing...' }); if(!txt) return; try{ const tok=localStorage.getItem('token')||''; await api.postAuth('/kanban/items',{ listId:list.id, content: txt }, tok);}catch(e:any){ toast(e?.message||'Failed to add','error'); } }}>+ Add</button>
-                        <button className="text-xs text-neutral-400 hover:text-neutral-200" title="Rename" onClick={async()=>{ const nm=await askInput({ title:'Rename List', initialValue:list.name, label:'List name' }); if(!nm||nm===list.name) return; try{ const tok=localStorage.getItem('token')||''; await api.patchAuth('/kanban/lists',{ listId:list.id, name:nm }, tok);}catch(e:any){ toast(e?.message||'Failed to rename','error'); } }}>
-                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 1 1 3 3L7 19l-4 1 1-4 12.5-12.5Z"/></svg>
-                        </button>
-                         
-                        <button className="text-xs text-red-400 hover:text-red-300" title="Delete" onClick={async()=>{ const ok=await askConfirm({ title:'Delete List', message:'Delete this list?', confirmText:'Delete' }); if(!ok) return; try{ const tok=localStorage.getItem('token')||''; await api.deleteAuth('/kanban/lists',{ listId:list.id }, tok);}catch(e:any){ toast(e?.message||'Failed to delete','error'); } }}>
-                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M18 6L6 18"/><path d="M6 6l12 12"/></svg>
-                        </button>
-                      </div>
-                    </div>
-                    <div className="space-y-2">
-                      {(() => {
-                        const actives = list.items.filter(it => !it.done);
-                        const dones = list.items.filter(it => !!it.done);
-                        return (
-                          <>
-                            {actives.map((it) => (
-                              <div key={it.id} className="relative p-2 rounded border border-neutral-800 bg-neutral-950/70" draggable onDragStart={(e)=>{ e.dataTransfer.setData('text/kan-item', it.id); setItemDrag({ dragId: it.id, overId: it.id, pos: 'before', listId: list.id }); }}
-                                   onDragEnd={()=> setItemDrag({})}
-                                   onDragOver={(e)=>{ e.preventDefault(); }}
-                                   onDragOverCapture={(e)=>{ const rect=(e.currentTarget as HTMLDivElement).getBoundingClientRect(); const before = e.clientY < rect.top + rect.height/2; setItemDrag(prev=>({ ...prev, overId: it.id, pos: before? 'before':'after', listId: list.id })); }}
-                                   onDrop={async (e)=>{
-                                     const itemId = e.dataTransfer.getData('text/kan-item'); if(!itemId || itemId===it.id) return;
-                                     const fid = fq(currentVoidId, currentChannelId);
-                                     setKanbanByChan(old => {
-                                       const lists = (old[fid]||[]).map(l=>({ ...l, items: [...l.items] }));
-                                       let moving:any=null; let fromListId:string|null=null;
-                                       for (const l of lists){ const i=l.items.findIndex(x=>x.id===itemId); if(i!==-1){ moving=l.items.splice(i,1)[0]; fromListId=l.id; break; }}
-                                       if(!moving) return old;
-                                       const tgt = lists.find(l=>l.id===list.id); if(!tgt) return old;
-                                       let insert = tgt.items.findIndex(x=>x.id===it.id);
-                                       if (itemDrag.overId===it.id && itemDrag.pos==='after') insert = insert + 1;
-                                       tgt.items.splice(insert,0,moving);
-                                       (async()=>{
-                                         try{
-                                           const tok=localStorage.getItem('token')||'';
-                                           if(fromListId && fromListId!==list.id){
-                                             const src = lists.find(l=>l.id===fromListId);
-                                             await api.postAuth('/kanban/items/reorder',{ listId: fromListId, itemIds: (src?.items||[]).map(x=>x.id) }, tok);
-                                           }
-                                           await api.postAuth('/kanban/items/reorder',{ listId: list.id, itemIds: tgt.items.map(x=>x.id) }, tok);
-                                         }catch{}
-                                       })();
-                                       return { ...old, [fid]: lists };
-                                     });
-                                   }}
-                              >
-                                {itemDrag.dragId && itemDrag.overId === it.id && (
-                                  <div className="absolute left-1 right-1 h-1 bg-sky-500" style={{ pointerEvents:'none', top: itemDrag.pos==='before'? -4 : undefined, bottom: itemDrag.pos==='after'? -4 : undefined }} />
-                                )}
-                                <div className="flex items-start gap-2">
-                                  <input type="checkbox" className="accent-emerald-500" checked={!!it.done} onChange={async(e)=>{ try{ const tok=localStorage.getItem('token')||''; await api.patchAuth('/kanban/items',{ itemId: it.id, done: e.target.checked }, tok);}catch{}}} />
-                                  <div className="flex-1 min-w-0">
-                                    <div className="text-sm text-neutral-200 whitespace-pre-wrap break-words">{it.content}</div>
-                                  </div>
-                                  <button className="text-xs text-neutral-400 hover:text-neutral-200" title="Edit" onClick={async()=>{ const nv=await askInput({ title:'Edit Card', initialValue: it.content, label:'Text' }); if(!nv||nv===it.content) return; try{ const tok=localStorage.getItem('token')||''; await api.patchAuth('/kanban/items',{ itemId: it.id, content: nv }, tok);}catch{}}}>
-                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 1 1 3 3L7 19l-4 1 1-4 12.5-12.5Z"/></svg>
-                                  </button>
-                                  <button className="text-xs text-red-400 hover:text-red-300" title="Delete" onClick={async()=>{ const ok=await askConfirm({ title:'Delete Card', message:'Delete this card?', confirmText:'Delete' }); if(!ok) return; try{ const tok=localStorage.getItem('token')||''; await api.deleteAuth('/kanban/items',{ itemId: it.id }, tok);}catch{}}}>
-                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M18 6L6 18"/><path d="M6 6l12 12"/></svg>
-                                  </button>
-                                </div>
-                              </div>
-                            ))}
-                            {dones.length > 0 && (
-                              <div className="mt-3 pt-2 border-t border-neutral-800">
-                                <div className="text-xs text-neutral-500 mb-1">Completed</div>
-                                <div className="space-y-2">
-                                  {(showAllCompleted[list.id] ? dones : dones.slice(0,3)).map((it) => (
-                                    <div key={it.id} className="p-2 rounded border border-neutral-800 bg-neutral-950/40">
-                                      <div className="flex items-start gap-2">
-                                        <input type="checkbox" className="accent-emerald-500" checked={true} onChange={async(e)=>{ try{ const tok=localStorage.getItem('token')||''; await api.patchAuth('/kanban/items',{ itemId: it.id, done: e.target.checked }, tok);}catch{}}} />
-                                        <div className="flex-1 min-w-0">
-                                          <div className="text-sm text-neutral-400 line-through whitespace-pre-wrap break-words">{it.content}</div>
-                                        </div>
-                                        <button className="text-xs text-neutral-400 hover:text-neutral-200" title="Edit" onClick={async()=>{ const nv=await askInput({ title:'Edit Card', initialValue: it.content, label:'Text' }); if(!nv||nv===it.content) return; try{ const tok=localStorage.getItem('token')||''; await api.patchAuth('/kanban/items',{ itemId: it.id, content: nv }, tok);}catch{}}}>
-                                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 1 1 3 3L7 19l-4 1 1-4 12.5-12.5Z"/></svg>
-                                        </button>
-                                        <button className="text-xs text-red-400 hover:text-red-300" title="Delete" onClick={async()=>{ const ok=await askConfirm({ title:'Delete Card', message:'Delete this card?', confirmText:'Delete' }); if(!ok) return; try{ const tok=localStorage.getItem('token')||''; await api.deleteAuth('/kanban/items',{ itemId: it.id }, tok);}catch{}}}>
-                                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M18 6L6 18"/><path d="M6 6l12 12"/></svg>
-                                        </button>
-                                      </div>
-                                    </div>
-                                  ))}
-                                  {dones.length > 3 && (
-                                    <button className="mt-2 w-full text-xs text-neutral-400 hover:text-neutral-200" onClick={() => setShowAllCompleted(prev => ({ ...prev, [list.id]: !prev[list.id] }))}>
-                                      {showAllCompleted[list.id] ? 'Show less' : `View more (${dones.length - 3} more)`}
-                                    </button>
-                                  )}
-                                </div>
-                              </div>
-                            )}
-                          </>
-                        );
-                      })()}
-                      <button className="w-full text-left px-2 py-1 rounded border border-neutral-800 text-neutral-300 hover:bg-neutral-800/60" onClick={async()=>{ const txt=await askInput({ title:'New Card', label:'Text', placeholder:'Do the thing...' }); if(!txt) return; try{ const tok=localStorage.getItem('token')||''; await api.postAuth('/kanban/items',{ listId:list.id, content: txt }, tok);}catch(e:any){ toast(e?.message||'Failed to add','error'); } }}>+ Add card</button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
+            <KanbanChannelView
+              fid={currentKanbanFqid || fq(currentVoidId, currentChannelId)}
+              lists={currentKanbanLists}
+              mutateLists={(updater) => mutateKanbanLists(currentKanbanFqid || fq(currentVoidId, currentChannelId), updater)}
+              channelTags={currentKanbanTags}
+              mutateTags={(updater) => mutateKanbanTags(currentKanbanFqid || fq(currentVoidId, currentChannelId), updater)}
+              askInput={askInput}
+              currentVoidId={currentVoidId}
+              currentChannelId={currentChannelId}
+              isListFav={isListFav}
+              toggleListFav={toggleListFav}
+            />
           ) : currentChannel?.type === 'form' ? (
             <FormChannelView fid={fq(currentVoidId, currentChannelId)} members={members} meId={me.userId || null} />
           ) : (
@@ -3580,102 +3481,15 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
               );
             }
             if (currentChannel?.type === 'notes') {
-              // Build simple note cards from messages (title = first line)
-              const notesRaw = msgs.map(m => {
-                const text = String(m.content || '');
-                const [first, ...rest] = text.split(/\r?\n/);
-                const title = (first || '').trim() || 'Untitled';
-                const body = rest.join('\n').trim();
-                const tags = Array.from(new Set((text.match(/#([\w-]{1,30})/g) || []).map(s => s.slice(1).toLowerCase())));
-                return { id: m.id, title, body, createdAt: m.createdAt || '', tags };
-              }).reverse(); // newest first on grid
-              const allTags = Array.from(new Set(notesRaw.flatMap(n => n.tags))).slice(0, 20);
-              const q = (noteSearch || '').toLowerCase();
-              const notes = notesRaw.filter(n => {
-                const hitQ = !q || n.title.toLowerCase().includes(q) || n.body.toLowerCase().includes(q) || n.tags.some(t => t.includes(q));
-                const hitTag = !noteTag || n.tags.includes(noteTag.toLowerCase());
-                return hitQ && hitTag;
-              });
+              const noteMessages = msgs.map((m) => ({ id: m.id, content: String(m.content || ''), createdAt: m.createdAt || '' }));
               return (
-                <div className="min-h-full">
-                  <div className="mb-3 flex flex-wrap items-center gap-2">
-                    <input
-                      value={noteSearch}
-                      onChange={e=>setNoteSearch(e.target.value)}
-                      placeholder="Search notes"
-                      className="px-3 py-1.5 rounded border border-neutral-700 bg-neutral-900 text-neutral-100"
-                    />
-                    <div className="flex items-center gap-1 overflow-x-auto">
-                      {allTags.map(t => (
-                        <button key={t} className={`px-2 py-1 rounded-full border text-xs ${noteTag===t?'border-emerald-600 bg-emerald-900/40 text-emerald-200':'border-neutral-700 text-neutral-300 hover:bg-neutral-800/60'}`} onClick={()=> setNoteTag(prev => prev===t ? null : t)}>#{t}</button>
-                      ))}
-                      {noteTag && (
-                        <button className="ml-2 px-2 py-1 rounded border border-neutral-700 text-neutral-300 hover:bg-neutral-800/60 text-xs" onClick={()=> setNoteTag(null)}>Clear tag</button>
-                      )}
-                    </div>
-                    <button
-                      className="px-2 py-1 rounded border border-neutral-700 text-neutral-200 hover:bg-neutral-800/60"
-                      onClick={async()=>{
-                        const t = await askInput({ title:'New Note', label:'Title', placeholder:'My note' });
-                        if (!t) return;
-                        const b = await askInput({ title:'New Note', label:'Content (optional)' });
-                        const content = b ? `${t}\n\n${b}` : t;
-                        const tempId = crypto.randomUUID();
-                        const fid = fq(currentVoidId, currentChannelId);
-                        setMsgsByKey(old => ({ ...old, [fid]: [...(old[fid]||[]), { id: tempId, content, optimistic: true }] }));
-                        socket.emit('message:send', { voidId: currentVoidId, channelId: fid, content, tempId, attachments: [] });
-                      }}
-                    >+ Add Note</button>
-                  </div>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-                    {notes.length === 0 ? (
-                      <div className="text-neutral-500 text-sm col-span-full">No notes yet</div>
-                    ) : notes.map(n => (
-                      <button key={n.id} onClick={()=>{ setNoteModalId(n.id); setNoteEditTitle(n.title); setNoteEditBody(n.body); }} className="text-left p-3 rounded-lg border border-neutral-800 bg-neutral-900/60 hover:bg-neutral-900/80 transition-colors shadow-sm">
-                        <div className="font-semibold text-neutral-100 truncate mb-1" title={n.title}>{n.title}</div>
-                        <div className="text-sm text-neutral-400 line-clamp-3 whitespace-pre-wrap">{n.body || '...'}</div>
-                        {n.tags.length>0 && (
-                          <div className="mt-2 flex flex-wrap gap-1">
-                            {n.tags.map(t => (<span key={t} className="px-1.5 py-0.5 rounded-full border border-neutral-700 text-[10px] text-neutral-300">#{t}</span>))}
-                          </div>
-                        )}
-                      </button>
-                    ))}
-                  </div>
-                  {noteModalId && (()=>{
-                    const sel = msgs.find(m => m.id === noteModalId);
-                    const canSave = (noteEditTitle.trim().length>0);
-                    return (
-                      <div className="fixed inset-0 z-40 flex items-center justify-center">
-                        <div className="absolute inset-0 bg-black/50" onClick={()=> setNoteModalId(null)} />
-                        <div className="relative w-[90vw] max-w-xl rounded-lg border border-neutral-800 bg-neutral-900 p-4 shadow-2xl">
-                          <div className="flex items-center justify-between mb-3">
-                            <div className="text-emerald-300 font-semibold">Edit Note</div>
-                            <button className="px-2 py-1 text-neutral-400 hover:text-neutral-200" onClick={()=> setNoteModalId(null)} aria-label="Close" title="Close">
-                              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
-                                <line x1="18" y1="6" x2="6" y2="18" />
-                                <line x1="6" y1="6" x2="18" y2="18" />
-                              </svg>
-                            </button>
-                          </div>
-                          <input className="w-full mb-2 px-3 py-2 rounded bg-neutral-950 border border-neutral-800 text-neutral-100" value={noteEditTitle} onChange={e=>setNoteEditTitle(e.target.value)} placeholder="Title" />
-                          <textarea className="w-full h-40 px-3 py-2 rounded bg-neutral-950 border border-neutral-800 text-neutral-100" value={noteEditBody} onChange={e=>setNoteEditBody(e.target.value)} placeholder="Body (supports #tags)" spellCheck={true} autoCorrect="on" autoCapitalize="sentences" />
-                          <div className="mt-3 flex items-center gap-2">
-                            <button disabled={!canSave} className="px-3 py-2 rounded border border-emerald-700 bg-emerald-800/70 text-emerald-50 hover:bg-emerald-700/70 disabled:opacity-50" onClick={()=>{
-                              if (!sel) return; const content = noteEditBody.trim()? `${noteEditTitle.trim()}\n\n${noteEditBody}` : noteEditTitle.trim();
-                              socket.emit('message:edit', { messageId: sel.id, content });
-                              const fid = fq(currentVoidId, currentChannelId);
-                              setMsgsByKey(old => { const list = old[fid]??[]; const idx=list.findIndex(m=>m.id===sel.id); if(idx===-1) return old; const copy=[...list]; copy[idx] = { ...copy[idx], content, optimistic: true }; return { ...old, [fid]: copy }; });
-                              setNoteModalId(null);
-                            }}>Save</button>
-                            <button className="px-3 py-2 rounded border border-neutral-700 text-neutral-200 hover:bg-neutral-800/60" onClick={()=> setNoteModalId(null)}>Cancel</button>
-                            <button className="ml-auto px-3 py-2 rounded border border-red-800 text-red-300 hover:bg-red-900/30" onClick={async()=>{ if(!sel) return; const ok = await askConfirm({ title:'Delete Note', message:'Delete this note?', confirmText:'Delete' }); if(!ok) return; socket.emit('message:delete', { messageId: sel.id }); setNoteModalId(null); }}>Delete</button>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })()}
-                </div>
+                <NotesChannelView
+                  fid={fq(currentVoidId, currentChannelId)}
+                  notes={noteMessages}
+                  onCreateNote={createNote}
+                  onUpdateNote={updateNote}
+                  onDeleteNote={deleteNote}
+                />
               );
             }
             const lastIdx = msgs.length - 1;

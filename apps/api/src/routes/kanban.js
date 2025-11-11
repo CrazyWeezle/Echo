@@ -22,7 +22,8 @@ export async function handleKanban(req, res, body, ctx) {
     const sid = found.rows[0].space_id;
     const mem = await pool.query('SELECT 1 FROM space_members WHERE space_id=$1 AND user_id=$2', [sid, userId]);
     if (mem.rowCount === 0) return json(res, 403, { message: 'Forbidden' }), true;
-    return json(res, 200, { lists: await getKanbanState(channelId) }), true;
+    const state = await getKanbanState(channelId);
+    return json(res, 200, state), true;
   }
 
   if (req.method === 'POST' && req.url === '/api/kanban/lists') {
@@ -44,7 +45,10 @@ export async function handleKanban(req, res, body, ctx) {
     const pos = Number(posr[0]?.pos || 0);
     const newId = randomUUID();
     const { rows } = await pool.query('INSERT INTO kanban_lists(id, channel_id, name, pos) VALUES ($1, $2, $3, $4) RETURNING id, name, pos', [newId, cid, nm, pos]);
-    try { io?.to(cid).emit('kanban:state', { channelId: cid, lists: await getKanbanState(cid) }); } catch {}
+    try {
+      const state = await getKanbanState(cid);
+      io?.to(cid).emit('kanban:state', { channelId: cid, ...state });
+    } catch {}
     return json(res, 200, { list: rows[0] }), true;
   }
 
@@ -60,7 +64,10 @@ export async function handleKanban(req, res, body, ctx) {
     await pool.query('UPDATE kanban_lists SET name=$1 WHERE id=$2', [nm, lid]);
     const { rows } = await pool.query('SELECT channel_id FROM kanban_lists WHERE id=$1', [lid]);
     const cid = rows[0]?.channel_id;
-    try { io?.to(cid).emit('kanban:state', { channelId: cid, lists: await getKanbanState(cid) }); } catch {}
+    try {
+      const state = await getKanbanState(cid);
+      io?.to(cid).emit('kanban:state', { channelId: cid, ...state });
+    } catch {}
     return json(res, 200, { ok: true }), true;
   }
 
@@ -75,7 +82,10 @@ export async function handleKanban(req, res, body, ctx) {
     const { rows } = await pool.query('SELECT channel_id FROM kanban_lists WHERE id=$1', [lid]);
     const cid = rows[0]?.channel_id;
     await pool.query('DELETE FROM kanban_lists WHERE id=$1', [lid]);
-    try { io?.to(cid).emit('kanban:state', { channelId: cid, lists: await getKanbanState(cid) }); } catch {}
+    try {
+      const state = await getKanbanState(cid);
+      io?.to(cid).emit('kanban:state', { channelId: cid, ...state });
+    } catch {}
     return json(res, 200, { ok: true }), true;
   }
 
@@ -84,7 +94,7 @@ export async function handleKanban(req, res, body, ctx) {
     const a = req.headers['authorization'] || '';
     if (a.startsWith('Bearer ')) { try { const p = jwt.verify(a.slice(7), JWT_SECRET); userId = p.sub; } catch {} }
     if (!userId) return json(res, 401, { message: 'Unauthorized' }), true;
-    const { listId, content } = body || {};
+    const { listId, content, tagLabel, tagColor } = body || {};
     const lid = String(listId || '').trim();
     const text = String(content || '').trim();
     if (!lid || !text) return json(res, 400, { message: 'listId and content required' }), true;
@@ -92,8 +102,16 @@ export async function handleKanban(req, res, body, ctx) {
     const cid = rows[0]?.channel_id;
     const { rows: posr } = await pool.query('SELECT COALESCE(MAX(pos), 0) + 1 as pos FROM kanban_items WHERE list_id=$1', [lid]);
     const pos = Number(posr[0]?.pos || 0);
-    await pool.query('INSERT INTO kanban_items(id, list_id, content, pos, done, created_by) VALUES ($1, $2, $3, $4, false, $5)', [randomUUID(), lid, text, pos, userId]);
-    try { io?.to(cid).emit('kanban:state', { channelId: cid, lists: await getKanbanState(cid) }); } catch {}
+    const label = typeof tagLabel === 'string' ? tagLabel.trim() : null;
+    const color = typeof tagColor === 'string' ? tagColor.trim() : null;
+    await pool.query(
+      'INSERT INTO kanban_items(id, list_id, content, pos, done, tag_label, tag_color, created_by) VALUES ($1, $2, $3, $4, false, $5, $6, $7)',
+      [randomUUID(), lid, text, pos, label || null, color || null, userId]
+    );
+    try {
+      const state = await getKanbanState(cid);
+      io?.to(cid).emit('kanban:state', { channelId: cid, ...state });
+    } catch {}
     return json(res, 200, { ok: true }), true;
   }
 
@@ -109,7 +127,10 @@ export async function handleKanban(req, res, body, ctx) {
     }
     const { rows } = await pool.query('SELECT channel_id FROM kanban_lists WHERE id=$1', [lid]);
     const cid = rows[0]?.channel_id;
-    try { io?.to(cid).emit('kanban:state', { channelId: cid, lists: await getKanbanState(cid) }); } catch {}
+    try {
+      const state = await getKanbanState(cid);
+      io?.to(cid).emit('kanban:state', { channelId: cid, ...state });
+    } catch {}
     return json(res, 200, { ok: true }), true;
   }
 
@@ -123,21 +144,125 @@ export async function handleKanban(req, res, body, ctx) {
       pos += 1;
       await pool.query('UPDATE kanban_lists SET pos=$1 WHERE id=$2 AND channel_id=$3', [pos, id, cid]);
     }
-    try { io?.to(cid).emit('kanban:state', { channelId: cid, lists: await getKanbanState(cid) }); } catch {}
+    try {
+      const state = await getKanbanState(cid);
+      io?.to(cid).emit('kanban:state', { channelId: cid, ...state });
+    } catch {}
+    return json(res, 200, { ok: true }), true;
+  }
+
+  if (req.method === 'POST' && req.url === '/api/kanban/tags') {
+    let userId = null;
+    const a = req.headers['authorization'] || '';
+    if (a.startsWith('Bearer ')) { try { const p = jwt.verify(a.slice(7), JWT_SECRET); userId = p.sub; } catch {} }
+    if (!userId) return json(res, 401, { message: 'Unauthorized' }), true;
+    const { channelId, label, color } = body || {};
+    const cid = String(channelId || '').trim();
+    const lbl = String(label || '').trim();
+    if (!cid || !lbl) return json(res, 400, { message: 'channelId and label required' }), true;
+    const ch = await pool.query('SELECT space_id FROM channels WHERE id=$1', [cid]);
+    if (ch.rowCount === 0) return json(res, 404, { message: 'channel not found' }), true;
+    const sid = ch.rows[0]?.space_id;
+    const mem = await pool.query('SELECT 1 FROM space_members WHERE space_id=$1 AND user_id=$2', [sid, userId]);
+    if (mem.rowCount === 0) return json(res, 403, { message: 'Forbidden' }), true;
+    const { rows: posRows } = await pool.query('SELECT COALESCE(MAX(pos), 0) + 1 as pos FROM kanban_channel_tags WHERE channel_id=$1', [cid]);
+    const pos = Number(posRows[0]?.pos || 0);
+    const hex = typeof color === 'string' ? color.trim() : null;
+    const newId = randomUUID();
+    const { rows } = await pool.query(
+      'INSERT INTO kanban_channel_tags(id, channel_id, label, color, pos) VALUES ($1, $2, $3, $4, $5) RETURNING id, label, color, pos',
+      [newId, cid, lbl, hex || null, pos]
+    );
+    try {
+      const state = await getKanbanState(cid);
+      io?.to(cid).emit('kanban:state', { channelId: cid, ...state });
+    } catch {}
+    return json(res, 200, { tag: rows[0] }), true;
+  }
+
+  if (req.method === 'PATCH' && req.url === '/api/kanban/tags') {
+    let userId = null;
+    const a = req.headers['authorization'] || '';
+    if (a.startsWith('Bearer ')) { try { const p = jwt.verify(a.slice(7), JWT_SECRET); userId = p.sub; } catch {} }
+    if (!userId) return json(res, 401, { message: 'Unauthorized' }), true;
+    const { tagId, label, color } = body || {};
+    const tid = String(tagId || '').trim();
+    if (!tid) return json(res, 400, { message: 'tagId required' }), true;
+    const meta = await pool.query('SELECT t.channel_id, c.space_id FROM kanban_channel_tags t JOIN channels c ON c.id=t.channel_id WHERE t.id=$1', [tid]);
+    if (meta.rowCount === 0) return json(res, 404, { message: 'tag not found' }), true;
+    const cid = meta.rows[0].channel_id;
+    const sid = meta.rows[0].space_id;
+    const mem = await pool.query('SELECT 1 FROM space_members WHERE space_id=$1 AND user_id=$2', [sid, userId]);
+    if (mem.rowCount === 0) return json(res, 403, { message: 'Forbidden' }), true;
+    const updates = [];
+    const params = [];
+    let idx = 1;
+    if (label !== undefined) {
+      const lbl = String(label || '').trim();
+      if (!lbl) return json(res, 400, { message: 'label cannot be empty' }), true;
+      updates.push(`label=$${idx++}`);
+      params.push(lbl);
+    }
+    if (color !== undefined) {
+      const hex = typeof color === 'string' ? color.trim() : null;
+      updates.push(`color=$${idx++}`);
+      params.push(hex || null);
+    }
+    if (updates.length === 0) return json(res, 400, { message: 'No changes provided' }), true;
+    params.push(tid);
+    await pool.query(`UPDATE kanban_channel_tags SET ${updates.join(', ')} WHERE id=$${idx}`, params);
+    const { rows } = await pool.query('SELECT id, label, color, pos FROM kanban_channel_tags WHERE id=$1', [tid]);
+    try {
+      const state = await getKanbanState(cid);
+      io?.to(cid).emit('kanban:state', { channelId: cid, ...state });
+    } catch {}
+    return json(res, 200, { tag: rows[0] }), true;
+  }
+
+  if (req.method === 'DELETE' && req.url === '/api/kanban/tags') {
+    let userId = null;
+    const a = req.headers['authorization'] || '';
+    if (a.startsWith('Bearer ')) { try { const p = jwt.verify(a.slice(7), JWT_SECRET); userId = p.sub; } catch {} }
+    if (!userId) return json(res, 401, { message: 'Unauthorized' }), true;
+    const { tagId } = body || {};
+    const tid = String(tagId || '').trim();
+    if (!tid) return json(res, 400, { message: 'tagId required' }), true;
+    const meta = await pool.query('SELECT t.channel_id, c.space_id FROM kanban_channel_tags t JOIN channels c ON c.id=t.channel_id WHERE t.id=$1', [tid]);
+    if (meta.rowCount === 0) return json(res, 404, { message: 'tag not found' }), true;
+    const cid = meta.rows[0].channel_id;
+    const sid = meta.rows[0].space_id;
+    const mem = await pool.query('SELECT 1 FROM space_members WHERE space_id=$1 AND user_id=$2', [sid, userId]);
+    if (mem.rowCount === 0) return json(res, 403, { message: 'Forbidden' }), true;
+    await pool.query('DELETE FROM kanban_channel_tags WHERE id=$1', [tid]);
+    try {
+      const state = await getKanbanState(cid);
+      io?.to(cid).emit('kanban:state', { channelId: cid, ...state });
+    } catch {}
     return json(res, 200, { ok: true }), true;
   }
 
   if (req.method === 'PATCH' && req.url === '/api/kanban/items') {
-    const { itemId, content, done } = body || {};
+    const { itemId, content, done, tagLabel, tagColor } = body || {};
     const iid = String(itemId || '').trim();
     if (!iid) return json(res, 400, { message: 'itemId required' }), true;
     if (typeof content === 'string') await pool.query('UPDATE kanban_items SET content=$1 WHERE id=$2', [String(content), iid]);
     if (typeof done === 'boolean') await pool.query('UPDATE kanban_items SET done=$1 WHERE id=$2', [!!done, iid]);
+    if (tagLabel !== undefined) {
+      const label = typeof tagLabel === 'string' ? tagLabel.trim() : null;
+      await pool.query('UPDATE kanban_items SET tag_label=$1 WHERE id=$2', [label, iid]);
+    }
+    if (tagColor !== undefined) {
+      const color = typeof tagColor === 'string' ? tagColor.trim() : null;
+      await pool.query('UPDATE kanban_items SET tag_color=$1 WHERE id=$2', [color, iid]);
+    }
     const { rows } = await pool.query('SELECT list_id FROM kanban_items WHERE id=$1', [iid]);
     const lid = rows[0]?.list_id;
     const { rows: ch } = await pool.query('SELECT channel_id FROM kanban_lists WHERE id=$1', [lid]);
     const cid = ch[0]?.channel_id;
-    try { io?.to(cid).emit('kanban:state', { channelId: cid, lists: await getKanbanState(cid) }); } catch {}
+    try {
+      const state = await getKanbanState(cid);
+      io?.to(cid).emit('kanban:state', { channelId: cid, ...state });
+    } catch {}
     return json(res, 200, { ok: true }), true;
   }
 
@@ -150,7 +275,10 @@ export async function handleKanban(req, res, body, ctx) {
     const { rows: ch } = await pool.query('SELECT channel_id FROM kanban_lists WHERE id=$1', [lid]);
     const cid = ch[0]?.channel_id;
     await pool.query('DELETE FROM kanban_items WHERE id=$1', [iid]);
-    try { io?.to(cid).emit('kanban:state', { channelId: cid, lists: await getKanbanState(cid) }); } catch {}
+    try {
+      const state = await getKanbanState(cid);
+      io?.to(cid).emit('kanban:state', { channelId: cid, ...state });
+    } catch {}
     return json(res, 200, { ok: true }), true;
   }
 

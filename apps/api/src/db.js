@@ -136,10 +136,25 @@ export async function initDb() {
       content TEXT NOT NULL,
       pos INT NOT NULL DEFAULT 0,
       done BOOLEAN DEFAULT false,
+      tag_label TEXT,
+      tag_color TEXT,
       created_by UUID REFERENCES users(id) ON DELETE SET NULL,
       created_at TIMESTAMPTZ DEFAULT now()
     );
   `);
+  await pool.query(`ALTER TABLE kanban_items ADD COLUMN IF NOT EXISTS tag_label TEXT`);
+  await pool.query(`ALTER TABLE kanban_items ADD COLUMN IF NOT EXISTS tag_color TEXT`);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS kanban_channel_tags (
+      id UUID PRIMARY KEY,
+      channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+      label TEXT NOT NULL,
+      color TEXT,
+      pos INT NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ DEFAULT now()
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_kanban_channel_tags_channel ON kanban_channel_tags(channel_id)`);
 
   // Forms
   await pool.query(`

@@ -18,13 +18,30 @@ export async function getKanbanState(channelId) {
   const ids = lists.map(l => l.id);
   const itemsMap = new Map();
   if (ids.length > 0) {
-    const { rows: items } = await pool.query('SELECT id, list_id, content, pos, done FROM kanban_items WHERE list_id = ANY($1::uuid[]) ORDER BY pos ASC, created_at ASC', [ids]);
+    const { rows: items } = await pool.query(
+      'SELECT id, list_id, content, pos, done, tag_label, tag_color FROM kanban_items WHERE list_id = ANY($1::uuid[]) ORDER BY pos ASC, created_at ASC',
+      [ids]
+    );
     for (const it of items) {
       if (!itemsMap.has(it.list_id)) itemsMap.set(it.list_id, []);
-      itemsMap.get(it.list_id).push({ id: it.id, content: it.content, pos: it.pos, done: !!it.done });
+      itemsMap.get(it.list_id).push({
+        id: it.id,
+        content: it.content,
+        pos: it.pos,
+        done: !!it.done,
+        tagLabel: it.tag_label || null,
+        tagColor: it.tag_color || null,
+      });
     }
   }
-  return lists.map(l => ({ id: l.id, name: l.name, pos: l.pos, items: (itemsMap.get(l.id) || []) }));
+  const { rows: tags } = await pool.query(
+    'SELECT id, label, color, pos FROM kanban_channel_tags WHERE channel_id=$1 ORDER BY pos ASC, created_at ASC',
+    [channelId]
+  );
+  return {
+    lists: lists.map(l => ({ id: l.id, name: l.name, pos: l.pos, items: (itemsMap.get(l.id) || []) })),
+    tags: tags.map(t => ({ id: t.id, label: t.label, color: t.color || null, pos: t.pos })),
+  };
 }
 
 export async function getFormQuestions(channelId) {
