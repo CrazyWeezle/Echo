@@ -1,5 +1,5 @@
 
-import { useEffect, useMemo, useRef, useState, Suspense, lazy, useCallback } from "react";
+import { useEffect, useMemo, useRef, useState, Suspense, lazy, useCallback, type ReactNode } from "react";
 import Login from "./pages/Login"; // match actual filename case for Linux builds
 import SettingsRoute from "./routes/settings";
 import { socket, connectSocket, disconnectSocket, getLocalUser, setLocalUser } from "./lib/socket";
@@ -19,7 +19,7 @@ import FormChannelView from "./components/forms/FormChannelView";
 import HabitChannelView from "./components/habits/HabitChannelView";
 import KanbanChannelView from "./components/kanban/KanbanChannelView";
 import NotesChannelView from "./components/notes/NotesChannelView";
-import type { KanbanList, KanbanTag } from "./types/kanban";
+import type { KanbanList, KanbanTag, KanbanItem } from "./types/kanban";
 import type { AuthUser } from "./types/auth";
 import UserQuickSettings from "./components/UserQuickSettings";
 import ToastHost from "./components/ToastHost";
@@ -28,6 +28,17 @@ import UserRow from "./components/people/UserRow";
 import MemberProfileCard from "./components/MemberProfileCard";
 import { askConfirm, toast } from "./lib/ui";
 import { getAuthToken, setAuthToken, subscribeAuthToken } from "./lib/auth";
+
+type KanbanItemWithTags = KanbanItem & { tags?: KanbanTag[] };
+type MinimalConnection = {
+  addEventListener?: (type: 'change', listener: () => void) => void;
+  removeEventListener?: (type: 'change', listener: () => void) => void;
+};
+type NavigatorWithConnection = Navigator & {
+  connection?: MinimalConnection;
+  mozConnection?: MinimalConnection;
+  webkitConnection?: MinimalConnection;
+};
 
 function FavGalleryVisual({ frames, fit, hover, rotate, seconds, pause, transition = 'fade' }: { frames: { url: string; name?: string }[]; fit: 'contain-blur'|'cover'; hover: 'subtle'|'none'; rotate: boolean; seconds: number; pause: boolean; transition?: 'fade'|'snap' }) {
   const [idx, setIdx] = useState(0);
@@ -204,6 +215,7 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: AuthUser
 
   // identity
   const [me, setMe] = useState<{ userId?: string; name?: string; avatarUrl?: string | null }>(() => getLocalUser());
+  const [, setAskName] = useState(false);
 
   // Register for push notifications in Capacitor environments (no-op on web)
   useEffect(() => {
@@ -641,11 +653,12 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: AuthUser
 
   // React quickly to connection type changes (e.g., Wi‑Fi ↔ LTE)
   useEffect(() => {
-    const conn: any = (navigator as any).connection || (navigator as any).mozConnection || (navigator as any).webkitConnection;
+    const nav = navigator as NavigatorWithConnection;
+    const conn = nav.connection ?? nav.mozConnection ?? nav.webkitConnection;
     if (!conn || !conn.addEventListener) return;
     const onChange = () => { try { if (!socket.connected) connectSocket(); } catch { /* noop */ } };
     conn.addEventListener('change', onChange);
-    return () => { try { conn.removeEventListener('change', onChange); } catch { /* noop */ } };
+    return () => { try { conn.removeEventListener?.('change', onChange); } catch { /* noop */ } };
   }, []);
 
   function startDrag(which: 'chan' | 'people', clientX: number) {
@@ -818,6 +831,224 @@ const currentChannelTags = currentChannelFqid ? (channelTagsByChan[currentChanne
   // message editing
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
+  const landingShowFavorites = (() => { try { return localStorage.getItem('landing.showFavorites') !== '0'; } catch { return true; } })();
+  const landingFavoriteLimit = (() => { try { const v = parseInt(localStorage.getItem('landing.maxFavorites') || '4', 10); return Math.max(1, Math.min(8, isNaN(v) ? 4 : v)); } catch { return 4; } })();
+  const landingComposerMeta: Record<string, { allowed: boolean; placeholder: string; channelLabel: string; voidName: string }> = {};
+  const landingFavoriteCards: ReactNode[] = [];
+  if (landingShowFavorites) {
+    const limitedFavorites = favorites.slice(0, landingFavoriteLimit);
+    for (const fid of limitedFavorites) {
+      if (fid.startsWith('klist:')) {
+        const parsed = parseListFav(fid);
+        if (!parsed) continue;
+        const { vId, cIdRaw, fqid, listId } = parsed;
+        const cId = cIdRaw.includes(':') ? cIdRaw.split(':')[1] : cIdRaw;
+        const v = voids.find(vv => vv.id === vId);
+        const vName = v?.name || vId;
+        const lists = kanbanByChan[fqid];
+        const list = lists?.find(l => l.id === listId);
+        const cMeta = vId === currentVoidId ? channels.find(c=>c.id===cId) : null;
+        const cName = cMeta?.name || (cId === 'chat' && vId.startsWith('dm_') ? 'Direct Message' : cId);
+        const listItems = list ? (list.items as KanbanItemWithTags[]) : [];
+        const incomplete = listItems.filter(it => !it.done).slice(0, 6);
+        const totalTasks = list?.items.length ?? 0;
+        const completed = totalTasks - incomplete.length;
+        const completionPct = totalTasks ? Math.round((completed / totalTasks) * 100) : (list ? 100 : 0);
+        landingFavoriteCards.push(
+          <div key={fid} className="relative rounded-2xl border border-neutral-800 bg-neutral-950/70 p-4 shadow-inner shadow-black/20 flex flex-col gap-4">
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <p className="text-xs uppercase tracking-wide text-emerald-300/80">Kanban / {vName}</p>
+                <div className="text-lg font-semibold text-neutral-50 truncate">{list?.name || 'List'}</div>
+                <div className="text-sm text-neutral-400 truncate">#{cName}</div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  className="rounded-full border border-emerald-700/70 bg-emerald-900/20 px-3 py-1 text-xs font-medium text-emerald-200 hover:bg-emerald-800/30 transition"
+                  onClick={()=>{ switchVoid(vId); const shortId = cId.includes(':') ? cId.split(':')[1] : cId; switchChannel(shortId); }}
+                >
+                  Open board
+                </button>
+                <button className="rounded-full border border-transparent p-1 text-neutral-500 hover:text-neutral-200" title="Remove favorite" onClick={()=>setFavorites(prev=>prev.filter(x=>x!==fid))}>
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+                    <path d="m18 6-12 12"/>
+                    <path d="m6 6 12 12"/>
+                  </svg>
+                </button>
+              </div>
+            </div>
+            <div className="flex items-center gap-3 text-sm text-neutral-400">
+              <div className="text-emerald-300 font-semibold">{Math.max(incomplete.length, 0)} open</div>
+              <div className="h-1.5 flex-1 rounded-full bg-neutral-800 overflow-hidden">
+                <span className="block h-full bg-gradient-to-r from-emerald-400 to-teal-400" style={{ width: `${Math.min(100, Math.max(0, completionPct))}%` }} />
+              </div>
+              <div className="text-xs uppercase tracking-wide text-neutral-500">{totalTasks} tasks</div>
+            </div>
+            <div ref={(el)=>{ favScrollRefs.current[fid] = el; }} className="space-y-2 max-h-40 overflow-auto pr-1 text-sm">
+              {lists === undefined ? (
+                <div className="text-neutral-500">Loading lists...</div>
+              ) : (!list && (lists?.length || 0) === 0) ? (
+                <div className="flex items-center justify-between gap-2 text-neutral-500">
+                  <span>Open this kanban once to load lists.</span>
+                  <button className="text-xs px-2 py-1 rounded border border-neutral-700 text-neutral-300 hover:bg-neutral-800/60" onClick={()=>{ kanbanReloadedRef.current.delete(fqid); reloadKanban(fqid); }}>Retry</button>
+                </div>
+              ) : !list ? (
+                <div className="text-neutral-500">List not found or removed</div>
+              ) : incomplete.length === 0 ? (
+                <div className="text-neutral-500">No incomplete tasks</div>
+              ) : (
+                incomplete.map(it => (
+                  <label key={it.id} className="flex items-start gap-3 rounded-xl border border-neutral-800 bg-neutral-950/60 px-3 py-2 hover:border-emerald-700/40 transition-colors">
+                    <input type="checkbox" className="mt-1 accent-emerald-500" checked={false} onChange={async(e)=> {
+                      try { const tok=localStorage.getItem('token')||''; await api.patchAuth('/kanban/items',{ itemId: it.id, done: e.target.checked }, tok); } catch { /* noop */ }
+                      setKanbanByChan(old => {
+                        const all = (old[fqid]||[]).map(l=>({ ...l, items: [...l.items] }));
+                        const target = all.find(l=>l.id===listId); if(!target) return old;
+                        const idx = target.items.findIndex(x=>x.id===it.id); if(idx!==-1){ target.items[idx] = { ...target.items[idx], done: true }; }
+                        return { ...old, [fqid]: all };
+                      });
+                    }} />
+                    <div className="min-w-0 flex-1">
+                      <div className="text-neutral-200 whitespace-pre-wrap break-words">{it.content}</div>
+                      {it.tags && it.tags.length ? (
+                        <div className="mt-1 flex flex-wrap gap-1 text-[11px] text-neutral-400">
+                          {it.tags.map((tag: KanbanTag) => (
+                            <span key={tag.id} className="rounded-full border border-neutral-700/80 px-2 py-0.5">{tag.label ?? tag.id}</span>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  </label>
+                ))
+              )}
+            </div>
+          </div>
+        );
+        continue;
+      }
+      const [vId, cId] = fid.split(':');
+      const v = voids.find(vv => vv.id === vId);
+      const vName = v?.name || vId.replace(/^dm_/, 'DM ');
+      const cMeta = vId === currentVoidId ? channels.find(c=>c.id===cId) : null;
+      const cName = cMeta?.name || (cId === 'chat' && vId.startsWith('dm_') ? 'Direct Message' : cId);
+      const kk = k(vId, cId);
+      const mbase = (msgsByKey[kk] || []).map(m => ({ id: m.id, content: m.content, authorName: m.authorName, createdAt: m.createdAt || '', attachments: (m.attachments || []) as any }));
+      const pbase = (previewsByChan[`${vId}:${cId}`] || []).map(x => ({ id: x.id, content: x.content, authorName: x.authorName, createdAt: x.createdAt || '', attachments: (x.attachments || []) as any }));
+      const seen: Record<string, boolean> = {};
+      const merged = ([] as { id:string; content:string; authorName?:string; createdAt?:string; attachments?: any[] }[])
+        .concat(mbase, pbase)
+        .filter(it => { if (!it.id || seen[it.id]) return false; seen[it.id] = true; return true; })
+        .sort((a,b) => (new Date(a.createdAt||0).getTime()) - (new Date(b.createdAt||0).getTime()));
+      const items = merged.slice(-5);
+      const unreadCount = unread[`${vId}:${cId}`] || 0;
+      const fqid = fq(vId, cId);
+      const ctypeKnown = channelTypeById[fqid] || (vId === currentVoidId ? channels.find(c=>c.id===cId)?.type : undefined);
+      const landingQuick = (()=>{ try { return localStorage.getItem('landing.quickComposer') !== '0'; } catch { return true; } })();
+      const hideComposer = (ctypeKnown === 'kanban' || ctypeKnown === 'form' || ctypeKnown === 'habit' || !!kanbanByChan[fqid]) || !landingQuick;
+      if (ctypeKnown === 'gallery') {
+        const rotateCount = (()=>{ try { const v=parseInt(localStorage.getItem('fav.gallery.rotateCount')||'5',10); return Math.max(1, Math.min(12, isNaN(v)?5:v)); } catch { return 5; } })();
+        const frames: { url: string; name?: string }[] = [];
+        for (let i = merged.length - 1; i >= 0 && frames.length < rotateCount; i--) {
+          const atts = merged[i].attachments || [];
+          const img = atts.find((a:any)=>{ const t=String(a?.contentType||'').toLowerCase(); const u=String(a?.url||'').toLowerCase(); return t.startsWith('image/') || /\.(png|jpe?g|webp)(\?.*)?$/.test(u); });
+          if (img) frames.push({ url: img.url, name: img.name });
+        }
+        const galFit = (()=>{ try { return localStorage.getItem('fav.gallery.fit') || 'contain-blur'; } catch { return 'contain-blur'; } })();
+        const galHover = (()=>{ try { return localStorage.getItem('fav.gallery.hover') || 'subtle'; } catch { return 'subtle'; } })();
+        const rotate = (()=>{ try { return localStorage.getItem('fav.gallery.rotate') !== '0'; } catch { return true; } })();
+        const rotateSeconds = (()=>{ try { const v=parseInt(localStorage.getItem('fav.gallery.rotateSeconds')||'8',10); return Math.max(3, Math.min(60, isNaN(v)?8:v)); } catch { return 8; } })();
+        const rotatePause = (()=>{ try { return localStorage.getItem('fav.gallery.rotatePause') !== '0'; } catch { return true; } })();
+        const galTransition = (()=>{ try { const v=localStorage.getItem('fav.gallery.transition')||'fade'; return (v==='snap'||v==='fade')?v:'fade'; } catch { return 'fade'; } })();
+        landingFavoriteCards.push(
+          <div key={fid} className="relative overflow-hidden rounded-[28px] border border-neutral-800 bg-neutral-950 shadow-lg shadow-black/30">
+            <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(16,185,129,0.25),transparent_60%)] opacity-70"></div>
+            <div className="relative flex flex-col h-full">
+              <div className="flex items-center justify-between gap-3 px-4 pt-4">
+                <div>
+                  <p className="text-xs uppercase tracking-wide text-emerald-200/80">Gallery / {vName}</p>
+                  <div className="text-lg font-semibold text-white">#{cName}</div>
+                </div>
+                <button className="rounded-full border border-transparent p-1 text-neutral-300 hover:text-white" title="Remove favorite" onClick={()=>setFavorites(prev=>prev.filter(x=>x!==fid))}>
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+                    <path d="m18 6-12 12"/>
+                    <path d="m6 6 12 12"/>
+                  </svg>
+                </button>
+              </div>
+              <button className="group relative flex-1" onClick={()=>{ switchVoid(vId); const shortId = cId.includes(':') ? cId.split(':')[1] : cId; switchChannel(shortId); }}>
+                <div className={`relative m-4 w-auto ${galFit === 'contain-blur' ? 'pt-[100%]' : 'pt-[66%]'} rounded-3xl border border-white/10 overflow-hidden`}>
+                  <FavGalleryVisual frames={frames} fit={galFit as any} hover={galHover as any} rotate={rotate} seconds={rotateSeconds} pause={rotatePause} transition={galTransition as any} />
+                </div>
+              </button>
+            </div>
+          </div>
+        );
+        continue;
+      }
+      landingComposerMeta[fid] = { allowed: !hideComposer, placeholder: `Message #${cName}`, channelLabel: `#${cName}`, voidName: vName };
+      const lastMessageAuthor = items[items.length - 1]?.authorName || 'Someone';
+      landingFavoriteCards.push(
+        <div key={fid} className="rounded-2xl border border-neutral-800 bg-neutral-950/60 p-4 flex flex-col gap-4 shadow-inner shadow-black/10">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-xs uppercase tracking-wide text-neutral-500">{vName}</p>
+              <div className="flex items-center gap-2 text-lg font-semibold text-neutral-50">
+                <span>#{cName}</span>
+                {unreadCount > 0 && <span className="rounded-full border border-emerald-600/30 bg-emerald-900/20 px-2 py-0.5 text-xs font-medium text-emerald-200">{unreadCount} new</span>}
+              </div>
+              <p className="text-sm text-neutral-400">Latest from {lastMessageAuthor}</p>
+            </div>
+            <button className="rounded-full border border-transparent p-1 text-neutral-500 hover:text-neutral-200" title="Remove favorite" onClick={()=>setFavorites(prev=>prev.filter(x=>x!==fid))}>
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+                <path d="m18 6-12 12"/>
+                <path d="m6 6 12 12"/>
+              </svg>
+            </button>
+          </div>
+          <div ref={(el)=>{ favScrollRefs.current[fid] = el; }} className="space-y-2 max-h-40 overflow-auto pr-1 text-sm">
+            {items.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-neutral-800 px-3 py-2 text-neutral-500">Start the conversation to see a preview.</div>
+            ) : (
+              items.map(it => {
+                const atts = it.attachments || [];
+                const hasImg = atts.some((a:any)=>{ const t=String(a?.contentType||'').toLowerCase(); const u=String(a?.url||'').toLowerCase(); return t.startsWith('image/') || /\.(png|jpe?g|webp)(\?.*)?$/.test(u); });
+                const onlyImage = hasImg && (!it.content || String(it.content).trim()==='');
+                return (
+                  <div key={it.id} className="rounded-xl border border-neutral-800 bg-neutral-950/70 px-3 py-2">
+                    <div className="text-[11px] uppercase tracking-wide text-neutral-500">{it.authorName || 'User'}</div>
+                    <div className="text-neutral-200 truncate">{onlyImage ? 'Shared an image' : (it.content || '')}</div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              className="rounded-full border border-neutral-700/80 px-3 py-1.5 text-sm text-neutral-200 hover:border-emerald-500/60 hover:text-emerald-100 transition disabled:opacity-50"
+              onClick={()=>{ setActiveFavorite(fid); setQuickPickerFor(null); }}
+              disabled={hideComposer}
+            >
+              Message
+            </button>
+            <button
+              className="rounded-full border border-neutral-700/80 px-3 py-1.5 text-sm text-neutral-200 hover:border-emerald-500/60 hover:text-emerald-100 transition"
+              onClick={()=>{ switchVoid(vId); const shortId = cId.includes(':') ? cId.split(':')[1] : cId; switchChannel(shortId); }}
+            >
+              Open
+            </button>
+            <button
+              className="ml-auto rounded-full border border-neutral-700/60 px-3 py-1.5 text-xs uppercase tracking-wide text-neutral-500 hover:border-emerald-500/40"
+              onClick={()=>refreshPreview(`${vId}:${cId}`)}
+            >
+              Refresh
+            </button>
+          </div>
+        </div>
+      );
+    }
+  }
+  const landingFavoritesCount = landingFavoriteCards.length;
+  const showFavoritesSection = landingShowFavorites && landingFavoritesCount > 0;
   // Render *wrapped* segments in italics
   function renderWithItalics(text: string) {
     const parts = text.split(/(\*[^*]+\*)/g);
@@ -1039,6 +1270,67 @@ const currentChannelTags = currentChannelFqid ? (channelTagsByChan[currentChanne
     const onlineSet = new Set(globalUserIds);
     return friendsList.filter((friend) => friend.id && onlineSet.has(friend.id));
   }, [friendsList, globalUserIds]);
+  const presenceFromStatus = useCallback((status?: string | null): 'online' | 'idle' | 'dnd' => {
+    const normalized = String(status || '').toLowerCase();
+    if (normalized === 'dnd') return 'dnd';
+    if (normalized === 'idle') return 'idle';
+    return 'online';
+  }, []);
+  const [friendFilter, setFriendFilter] = useState<'all' | 'online' | 'idle' | 'dnd'>('all');
+  const filteredFriends = useMemo(() => {
+    if (friendFilter === 'all') return friendsOnline;
+    return friendsOnline.filter((friend) => presenceFromStatus(friend.status) === friendFilter);
+  }, [friendFilter, friendsOnline, presenceFromStatus]);
+  const friendPresenceCounts = useMemo(() => friendsOnline.reduce(
+    (acc, friend) => {
+      const bucket = presenceFromStatus(friend.status);
+      acc[bucket] += 1;
+      return acc;
+    },
+    { online: 0, idle: 0, dnd: 0 }
+  ), [friendsOnline, presenceFromStatus]);
+  const [activeFavorite, setActiveFavorite] = useState<string | null>(null);
+  useEffect(() => {
+    if (activeFavorite && !favorites.includes(activeFavorite)) {
+      setActiveFavorite(null);
+    }
+  }, [activeFavorite, favorites]);
+  const landingStats = useMemo(() => {
+    const fmt = new Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 });
+    return [
+      { label: 'Spaces live', value: fmt.format(Math.max(voids.length, 1)) },
+      { label: 'Pinned favorites', value: fmt.format(favorites.length || 1) },
+      { label: 'Friends online', value: fmt.format(friendsOnline.length || 0) },
+    ];
+  }, [voids.length, favorites.length, friendsOnline.length]);
+  const heroFavoriteBadges = useMemo(() => {
+    const badges: string[] = [];
+    for (const fid of favorites) {
+      if (fid.startsWith('klist:')) {
+        const parsed = parseListFav(fid);
+        if (!parsed) continue;
+        const lists = kanbanByChan[parsed.fqid];
+        const list = lists?.find((l) => l.id === parsed.listId);
+        if (list?.name) badges.push(list.name);
+      } else {
+        const [vId, cId] = fid.split(':');
+        const cMeta = vId === currentVoidId ? channels.find((c) => c.id === cId) : null;
+        const cName = cMeta?.name || (cId === 'chat' && vId?.startsWith('dm_') ? 'Direct Message' : cId);
+        badges.push(`#${cName}`);
+      }
+      if (badges.length >= 3) break;
+    }
+    if (!badges.length) {
+      return ['Design sprint', 'Stand-up notes', 'Team gallery'];
+    }
+    return badges;
+  }, [favorites, currentVoidId, channels, kanbanByChan]);
+  const friendFilterOptions = [
+    { label: 'All', value: 'all' as const, count: friendsOnline.length },
+    { label: 'Online', value: 'online' as const, count: friendPresenceCounts.online },
+    { label: 'Idle', value: 'idle' as const, count: friendPresenceCounts.idle },
+    { label: 'DND', value: 'dnd' as const, count: friendPresenceCounts.dnd },
+  ];
   // DM icons can be hidden from the Spaces column (still available under Direct Messages)
   const [hiddenDms, setHiddenDms] = useState<string[]>(() => {
     try { const s = localStorage.getItem('hiddenDMs'); return s ? JSON.parse(s) : []; } catch { return []; }
@@ -3096,43 +3388,100 @@ const mutateChannelTags = useCallback((fqChanId: string, updater: (prev: KanbanT
             </div>
           )}
           {!currentVoidId ? (
-            <div className="h-full w-full flex items-center justify-center">
-              <div className="relative w-full max-w-3xl mx-auto">
-                <div className="relative z-10 rounded-2xl border border-neutral-800 bg-neutral-900/80 p-6 md:p-8 shadow-2xl text-center">
-                  <div className="flex items-center justify-center mb-3">
-                    <img src="/brand/echo_plant_name.png" alt="Echo" className="h-24 md:h-28 w-auto object-contain opacity-95" />
+            <div className="h-full w-full">
+              <div className="mx-auto flex w-full max-w-6xl flex-col gap-10 py-6">
+                <section className="relative overflow-hidden rounded-[36px] border border-neutral-800 bg-neutral-950/80 px-6 py-10 shadow-2xl shadow-black/40">
+                  <div className="absolute inset-0 opacity-70" aria-hidden="true">
+                    <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(16,185,129,0.2),_transparent_60%)]" />
+                    <div className="absolute -top-20 right-10 h-64 w-64 rounded-full bg-emerald-500/10 blur-[120px]" />
                   </div>
-                  <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <button onClick={createSpace} className="group text-left rounded-xl border border-neutral-800 bg-neutral-950/50 hover:border-emerald-700 hover:bg-emerald-900/10 transition-colors p-4">
-                      <div className="flex items-center gap-3">
-                        <div className="h-10 w-10 rounded-lg flex items-center justify-center bg-gradient-to-br from-emerald-600 to-teal-500 text-white shadow">
-                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5"><path d="M12 5v14M5 12h14"/></svg>
+                  <div className="relative grid gap-10 lg:grid-cols-[1.1fr,0.9fr]">
+                    <div className="flex flex-col gap-6">
+                      <span className="inline-flex items-center gap-2 self-start rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-emerald-200">
+                        <span className="h-2 w-2 rounded-full bg-emerald-300" />
+                        Live spaces
+                      </span>
+                      <h1 className="text-3xl font-semibold leading-tight text-neutral-50 sm:text-4xl">
+                        Ship updates, share rituals, and keep every channel calm.
+                      </h1>
+                      <p className="text-base text-neutral-300">
+                        Echo blends chat, kanban, galleries, and forms into one quiet landing page so your team can focus on the work that matters.
+                      </p>
+                      <div className="flex flex-wrap gap-3">
+                        <button onClick={createSpace} className="rounded-full bg-emerald-500 px-5 py-3 text-base font-medium text-emerald-950 shadow-lg shadow-emerald-900/40 transition hover:bg-emerald-400">
+                          Start a space
+                        </button>
+                        <button onClick={acceptInvite} className="rounded-full border border-neutral-600 px-5 py-3 text-base font-medium text-neutral-50 transition hover:border-emerald-400">
+                          Join via invite
+                        </button>
+                      </div>
+                      <div className="grid gap-3 sm:grid-cols-3">
+                        {landingStats.map((stat) => (
+                          <div key={stat.label} className="rounded-2xl border border-neutral-800/70 bg-neutral-950/70 p-4">
+                            <div className="text-3xl font-semibold text-emerald-300">{stat.value}</div>
+                            <div className="text-sm text-neutral-400">{stat.label}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="relative">
+                      <div className="absolute -inset-6 rounded-[40px] bg-emerald-500/20 blur-3xl" aria-hidden="true" />
+                      <div className="relative rounded-[32px] border border-white/10 bg-gradient-to-b from-neutral-950/90 to-neutral-900/60 p-6 backdrop-blur">
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <p className="text-xs uppercase tracking-wide text-neutral-500">Snapshot</p>
+                            <p className="text-lg font-semibold text-neutral-50">Today in Echo</p>
+                          </div>
+                          <span className="rounded-full border border-emerald-500/40 px-3 py-1 text-xs text-emerald-200">{friendsOnline.length} online</span>
                         </div>
-                        <div>
-                          <div className="text-neutral-100 font-medium">New Space</div>
-                          <div className="text-neutral-400 text-xs">Create a place for your team</div>
+                        <div className="mt-6 space-y-4">
+                          <div className="rounded-2xl border border-white/5 bg-neutral-950/70 p-4">
+                            <p className="text-xs uppercase tracking-wide text-neutral-500">Pinned</p>
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              {heroFavoriteBadges.map((badge) => (
+                                <span key={badge} className="rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-100">{badge}</span>
+                              ))}
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-2 gap-3 text-sm">
+                            <div className="rounded-2xl border border-white/5 bg-neutral-950/70 p-4">
+                              <p className="text-xs uppercase tracking-wide text-neutral-500">Favorites</p>
+                              <div className="text-2xl font-semibold text-neutral-50">{landingFavoritesCount}</div>
+                              <p className="text-neutral-400">Tracked channels</p>
+                            </div>
+                            <div className="rounded-2xl border border-white/5 bg-neutral-950/70 p-4">
+                              <p className="text-xs uppercase tracking-wide text-neutral-500">Pins left</p>
+                              <div className="text-2xl font-semibold text-neutral-50">{Math.max(0, 8 - landingFavoritesCount)}</div>
+                              <p className="text-neutral-400">More spots today</p>
+                            </div>
+                          </div>
                         </div>
                       </div>
-                    </button>
-                    <button onClick={acceptInvite} className="group text-left rounded-xl border border-neutral-800 bg-neutral-950/50 hover:border-emerald-700 hover:bg-emerald-900/10 transition-colors p-4">
-                      <div className="flex items-center gap-3">
-                        <div className="h-10 w-10 rounded-lg flex items-center justify-center bg-gradient-to-br from-emerald-600 to-teal-500 text-white shadow">
-                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5"><path d="M5 12h14"/><path d="M12 5l7 7-7 7"/></svg>
-                        </div>
-                        <div>
-                          <div className="text-neutral-100 font-medium">Join a Space</div>
-                          <div className="text-neutral-400 text-xs">Use an invite to join a space</div>
-                        </div>
-                      </div>
-                    </button>
+                    </div>
                   </div>
-                </div>
-                <div className="relative z-10 mt-6 max-w-5xl mx-auto">
-                  <div className="mb-2 text-neutral-300 font-medium text-center">Friends Online</div>
-                  {friendsOnline.length > 0 ? (
-                    <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-4 justify-center">
-                      {friendsOnline.slice(0, 12).map((friend) => {
-                        const presence = String(friend.status || '').toLowerCase();
+                </section>
+                <section className="rounded-3xl border border-neutral-800 bg-neutral-950/70 p-6 shadow-xl shadow-black/20">
+                  <div className="flex flex-wrap items-center justify-between gap-4">
+                    <div>
+                      <p className="text-sm uppercase tracking-wide text-neutral-500">Presence</p>
+                      <h2 className="text-2xl font-semibold text-neutral-50">Who's around</h2>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {friendFilterOptions.map((opt) => (
+                        <button
+                          key={opt.value}
+                          className={`rounded-full border px-3 py-1.5 text-sm transition ${friendFilter === opt.value ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-100' : 'border-neutral-700 text-neutral-300 hover:border-neutral-500'}`}
+                          onClick={() => setFriendFilter(opt.value)}
+                        >
+                          {opt.label} / {opt.count}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  {filteredFriends.length > 0 ? (
+                    <div className="mt-5 flex gap-4 overflow-x-auto pb-2 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                      {filteredFriends.map((friend) => {
+                        const presence = presenceFromStatus(friend.status);
                         const dot =
                           presence === 'dnd' ? 'bg-red-500' :
                           presence === 'idle' ? 'bg-amber-400' :
@@ -3140,276 +3489,132 @@ const mutateChannelTags = useCallback((fqChanId: string, updater: (prev: KanbanT
                         return (
                           <button
                             key={friend.id}
-                            className="flex flex-col items-center gap-2 text-center text-sm text-neutral-200 hover:text-emerald-200 transition"
+                            className="group min-w-[220px] rounded-2xl border border-neutral-800 bg-neutral-900/70 px-4 py-3 text-left transition hover:border-emerald-500/40"
                             onClick={() => setFriendsOpen(true)}
                           >
-                            <div className="relative h-14 w-14 rounded-full overflow-hidden bg-neutral-800 border border-neutral-700 flex items-center justify-center">
-                              {friend.avatarUrl ? (
-                                <img src={friend.avatarUrl} alt={friend.name || friend.username || 'Friend'} className="h-full w-full object-cover" />
-                              ) : (
-                                <span className="text-neutral-400 text-base">
-                                  {(friend.name?.[0] || friend.username?.[0] || '?').toUpperCase()}
-                                </span>
-                              )}
-                              <span className={`absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-neutral-900 ${dot}`} />
-                            </div>
-                            <div className="text-xs font-medium truncate w-full" style={friend.nameColor ? { color: friend.nameColor } : undefined}>
-                              {friend.name || friend.username || 'Friend'}
+                            <div className="flex items-center gap-3">
+                              <div className="relative">
+                                <div className="h-12 w-12 overflow-hidden rounded-full border border-neutral-700 bg-neutral-800">
+                                  {friend.avatarUrl ? (
+                                    <img src={friend.avatarUrl} alt={friend.name || friend.username || 'Friend'} className="h-full w-full object-cover" />
+                                  ) : (
+                                    <div className="flex h-full w-full items-center justify-center text-lg font-semibold text-neutral-500">
+                                      {(friend.name?.[0] || friend.username?.[0] || '?').toUpperCase()}
+                                    </div>
+                                  )}
+                                </div>
+                                <span className={`absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-neutral-950 ${dot}`} />
+                              </div>
+                              <div className="min-w-0">
+                                <div className="truncate text-sm font-medium text-neutral-50" style={friend.nameColor ? { color: friend.nameColor } : undefined}>
+                                  {friend.name || friend.username || 'Friend'}
+                                </div>
+                                <div className="text-xs text-neutral-500 capitalize">{presence}</div>
+                              </div>
                             </div>
                           </button>
                         );
                       })}
+                      <button
+                        className="min-w-[220px] rounded-2xl border border-dashed border-neutral-700 bg-neutral-900/40 px-4 py-3 text-left text-neutral-300 transition hover:border-emerald-500/50"
+                        onClick={() => setFriendsOpen(true)}
+                      >
+                        <div className="text-sm font-semibold text-neutral-100">Invite friends</div>
+                        <p className="text-xs text-neutral-500">Share your link and start collaborating.</p>
+                      </button>
                     </div>
                   ) : (
-                    <div className="rounded-xl border border-neutral-800 bg-neutral-900/70 p-4 text-sm text-neutral-400 flex flex-col items-center gap-3">
-                      <div>{friendsList.length === 0 ? 'Add friends to see them here.' : 'No friends online right now.'}</div>
-                      <button className="px-3 py-1.5 rounded-full border border-neutral-700 text-neutral-200 hover:bg-neutral-800/60" onClick={() => setFriendsOpen(true)}>
-                        Open Friends
+                    <div className="mt-5 rounded-2xl border border-dashed border-neutral-800 bg-neutral-950/50 p-6 text-center">
+                      <p className="text-neutral-300">{friendsList.length === 0 ? 'Add friends to see who is online.' : 'No friends in this filter right now.'}</p>
+                      <button className="mt-4 rounded-full border border-neutral-700 px-4 py-2 text-sm text-neutral-200 hover:border-emerald-500/50" onClick={() => setFriendsOpen(true)}>
+                        Open friends
                       </button>
                     </div>
                   )}
-                  {/* Favorites Dashboard */}
-                  {(() => { const showFav = (()=>{ try { return localStorage.getItem('landing.showFavorites') !== '0'; } catch { return true; } })(); return showFav && favorites.length > 0; })() && (
-                <div className="relative z-10 mt-8 max-w-6xl mx-auto">
-                  <div className="mb-2 text-neutral-300 font-medium text-center">Favorites Dashboard</div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-                    {favorites.slice(0, (()=>{ try { const v=parseInt(localStorage.getItem('landing.maxFavorites')||'4',10); return Math.max(1, Math.min(8, isNaN(v)?4:v)); } catch { return 4; }})()).map(fid => {
-                      if (fid.startsWith('klist:')) {
-                        const parsed = parseListFav(fid);
-                        if (!parsed) return null as any;
-                        const { vId, cIdRaw, fqid, listId } = parsed;
-                        const cId = cIdRaw.includes(':') ? cIdRaw.split(':')[1] : cIdRaw;
-                        const v = voids.find(vv => vv.id === vId);
-                        const vName = v?.name || vId;
-                        const lists = kanbanByChan[fqid];
-                        const list = lists?.find(l => l.id === listId);
-                        const cMeta = vId === currentVoidId ? channels.find(c=>c.id===cId) : null;
-                        const cName = cMeta?.name || (cId === 'chat' && vId.startsWith('dm_') ? 'Direct Message' : cId);
-                        const incomplete = list ? list.items.filter(it => !it.done).slice(0, 10) : [];
-                        return (
-                          <div key={fid} className="relative rounded-xl border border-neutral-800 bg-neutral-900/70 p-3">
-                            <div className="flex items-center justify-between mb-2">
-                              <div className="min-w-0">
-                                <div className="truncate text-neutral-200 text-sm">{vName} <span className="opacity-50">/</span> <span className="text-emerald-300">#{cName}</span> <span className="opacity-50">/</span> <span className="text-neutral-200">{list?.name || 'List'}</span></div>
-                                {list && <div className="text-[11px] text-neutral-400">{incomplete.length} incomplete</div>}
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <button className="text-xs px-2 py-1 rounded border border-neutral-700 text-neutral-300 hover:bg-neutral-800/60"
-                                        onClick={()=>{ switchVoid(vId); const shortId = cId.includes(':') ? cId.split(':')[1] : cId; switchChannel(shortId); }}
-                                >Open</button>
-                                <button className="text-xs p-1 rounded hover:bg-neutral-800" title="Remove favorite" onClick={()=>setFavorites(prev=>prev.filter(x=>x!==fid))}>
-                                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 text-neutral-400"><path d="M12 17.27 18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>
-                                </button>
-                              </div>
+                </section>
+                {showFavoritesSection && (
+                  <section className="rounded-3xl border border-neutral-800 bg-neutral-950/70 p-6 shadow-xl shadow-black/20">
+                    <div className="flex flex-wrap items-center justify-between gap-4">
+                      <div>
+                        <p className="text-sm uppercase tracking-wide text-neutral-500">Favorites Dashboard</p>
+                        <h2 className="text-2xl font-semibold text-neutral-50">Stay close to important work</h2>
+                        <p className="text-sm text-neutral-400">Pinned channels, boards, and galleries appear here.</p>
+                      </div>
+                      <span className="rounded-full border border-neutral-700 px-4 py-1.5 text-sm text-neutral-300">{landingFavoritesCount} showing</span>
+                    </div>
+                    <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                      {landingFavoriteCards}
+                    </div>
+                    {(() => {
+                      const composerTarget = activeFavorite && landingComposerMeta[activeFavorite]?.allowed ? activeFavorite : null;
+                      if (!composerTarget) return null;
+                      const meta = landingComposerMeta[composerTarget];
+                      if (!meta) return null;
+                      const composerValue = quickTextByFav[composerTarget] || '';
+                      return (
+                        <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-950/80 p-5">
+                          <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div>
+                              <p className="text-xs uppercase tracking-wide text-neutral-500">Quick reply</p>
+                              <div className="text-lg font-semibold text-neutral-50">{meta.channelLabel}</div>
+                              <p className="text-sm text-neutral-400">{meta.voidName}</p>
                             </div>
-                            <div ref={(el)=>{ favScrollRefs.current[fid] = el; }} className="min-h-[72px] max-h-48 overflow-auto space-y-2 text-[12px]">
-                              {lists === undefined ? (
-                                <div className="text-neutral-500">Loading lists...</div>
-                              ) : (!list && (lists?.length || 0) === 0) ? (
-                                <div className="text-neutral-500 flex items-center justify-between gap-2">
-                                  <span>Open this kanban once to load lists.</span>
-                                  <button className="text-xs px-2 py-1 rounded border border-neutral-700 text-neutral-300 hover:bg-neutral-800/60" onClick={()=>{ kanbanReloadedRef.current.delete(fqid); reloadKanban(fqid); }}>Retry</button>
-                                </div>
-                              ) : !list ? (
-                                <div className="text-neutral-500">List not found or removed</div>
-                              ) : (
-                                incomplete.length === 0 ? (
-                                  <div className="text-neutral-500">No incomplete tasks</div>
-                                ) : (
-                                  incomplete.map(it => (
-                                    <div key={it.id} className="px-2 py-1 rounded border border-neutral-800 bg-neutral-950/50 flex items-start gap-2">
-                                      <input type="checkbox" className="mt-0.5 accent-emerald-500" checked={false} onChange={async(e)=>{
-                                        try { const tok=localStorage.getItem('token')||''; await api.patchAuth('/kanban/items',{ itemId: it.id, done: e.target.checked }, tok); } catch { /* noop */ }
-                                        setKanbanByChan(old => {
-                                          const all = (old[fqid]||[]).map(l=>({ ...l, items: [...l.items] }));
-                                          const L = all.find(l=>l.id===listId); if(!L) return old;
-                                          const idx = L.items.findIndex(x=>x.id===it.id); if(idx!==-1){ L.items[idx] = { ...L.items[idx], done: true }; }
-                                          return { ...old, [fqid]: all };
-                                        });
-                                      }} />
-                                      <div className="flex-1 min-w-0 text-neutral-200 whitespace-pre-wrap break-words">{it.content}</div>
-                                    </div>
-                                  ))
-                                )
-                              )}
-                            </div>
-                          </div>
-                        );
-                      } else {
-                        const [vId, cId] = fid.split(":");
-                        const v = voids.find(vv => vv.id === vId);
-                        const vName = v?.name || vId.replace(/^dm_/, 'DM ');
-                        const cMeta = vId === currentVoidId ? channels.find(c=>c.id===cId) : null;
-                        const cName = cMeta?.name || (cId === 'chat' && vId.startsWith('dm_') ? 'Direct Message' : cId);
-                        const kk = k(vId, cId);
-                        const mbase = (msgsByKey[kk] || []).map(m => ({ id: m.id, content: m.content, authorName: m.authorName, createdAt: m.createdAt || '', attachments: (m.attachments || []) as any }));
-                        const pbase = (previewsByChan[`${vId}:${cId}`] || []).map(x => ({ id: x.id, content: x.content, authorName: x.authorName, createdAt: x.createdAt || '', attachments: (x.attachments || []) as any }));
-                        const seen: Record<string, boolean> = {};
-                        const merged = ([] as { id:string; content:string; authorName?:string; createdAt?:string; attachments?: any[] }[])
-                          .concat(mbase, pbase)
-                          .filter(it => { if (!it.id || seen[it.id]) return false; seen[it.id] = true; return true; })
-                          .sort((a,b) => (new Date(a.createdAt||0).getTime()) - (new Date(b.createdAt||0).getTime()));
-                        const mergedAll = merged;
-                        const items = mergedAll.slice(-5);
-                        const unreadCount = unread[`${vId}:${cId}`] || 0;
-                        const fqid = fq(vId, cId);
-                        const ctypeKnown = channelTypeById[fqid] || (vId === currentVoidId ? channels.find(c=>c.id===cId)?.type : undefined);
-                        const landingQuick = (()=>{ try { return localStorage.getItem('landing.quickComposer') !== '0'; } catch { return true; } })();
-                        const hideComposer = (ctypeKnown === 'kanban' || ctypeKnown === 'form' || ctypeKnown === 'habit' || !!kanbanByChan[fqid]) || !landingQuick;
-                        if (ctypeKnown === 'gallery') {
-                          // Build frames list: last N images
-                          const rotateCount = (()=>{ try { const v=parseInt(localStorage.getItem('fav.gallery.rotateCount')||'5',10); return Math.max(1, Math.min(12, isNaN(v)?5:v)); } catch { return 5; } })();
-                          const frames: { url: string; name?: string }[] = [];
-                          for (let i = mergedAll.length - 1; i >= 0 && frames.length < rotateCount; i--) {
-                            const atts = mergedAll[i].attachments || [];
-                            const img = atts.find((a:any)=>{ const t=String(a?.contentType||'').toLowerCase(); const u=String(a?.url||'').toLowerCase(); return t.startsWith('image/') || /\.(png|jpe?g|webp)(\?.*)?$/.test(u); });
-                            if (img) frames.push({ url: img.url, name: img.name });
-                          }
-                          // Read favorites prefs for gallery widget
-                          const galFit = (()=>{ try { return localStorage.getItem('fav.gallery.fit') || 'contain-blur'; } catch { return 'contain-blur'; } })();
-                          const galHover = (()=>{ try { return localStorage.getItem('fav.gallery.hover') || 'subtle'; } catch { return 'subtle'; } })();
-                          const rotate = (()=>{ try { return localStorage.getItem('fav.gallery.rotate') !== '0'; } catch { return true; } })();
-                          const rotateSeconds = (()=>{ try { const v=parseInt(localStorage.getItem('fav.gallery.rotateSeconds')||'8',10); return Math.max(3, Math.min(60, isNaN(v)?8:v)); } catch { return 8; } })();
-                          const rotatePause = (()=>{ try { return localStorage.getItem('fav.gallery.rotatePause') !== '0'; } catch { return true; } })();
-                          const galTransition = (()=>{ try { const v=localStorage.getItem('fav.gallery.transition')||'fade'; return (v==='snap'||v==='fade')?v:'fade'; } catch { return 'fade'; } })();
-                          return (
-                            <button key={fid} className="relative rounded-xl border border-neutral-800 bg-neutral-950 overflow-hidden group"
-                                    onClick={()=>{ switchVoid(vId); const shortId = cId.includes(':') ? cId.split(':')[1] : cId; switchChannel(shortId); }}
-                                    title={`${vName} / #${cName}`}>
-                              {(() => {
-                                // Use a square tile for contain mode to reduce letterboxing on square/portrait images
-                                const padCls = (galFit === 'contain-blur') ? 'pt-[100%]' : 'pt-[66%]';
-                                return (
-                                  <div className={`relative w-full ${padCls}`}>
-                                    <FavGalleryVisual frames={frames} fit={galFit as any} hover={galHover as any} rotate={rotate} seconds={rotateSeconds} pause={rotatePause} transition={galTransition as any} />
-                                  </div>
-                                );
-                              })()}
+                            <button className="rounded-full border border-neutral-700 px-3 py-1.5 text-sm text-neutral-300 hover:border-emerald-500/60" onClick={()=>{ setActiveFavorite(null); setQuickPickerFor(null); }}>
+                              Close
                             </button>
-                          );
-                        }
-                        return (
-                          <div key={fid} className="relative rounded-xl border border-neutral-800 bg-neutral-900/70 p-3">
-                            <div className="flex items-center justify-between mb-2">
-                              <div className="min-w-0">
-                                <div className="truncate text-neutral-200 text-sm">{vName} <span className="opacity-50">/</span> <span className="text-emerald-300">#{cName}</span></div>
-                                {unreadCount>0 && <div className="text-[11px] text-emerald-400">{unreadCount} unread</div>}
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <button className="text-xs px-2 py-1 rounded border border-neutral-700 text-neutral-300 hover:bg-neutral-800/60"
-                                        onClick={()=>{ switchVoid(vId); const shortId = cId.includes(':') ? cId.split(':')[1] : cId; switchChannel(shortId); }}
-                                >Open</button>
-                                <button className="text-xs p-1 rounded hover:bg-neutral-800" title="Remove favorite" onClick={()=>setFavorites(prev=>prev.filter(x=>x!==fid))}>
-                                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 text-neutral-400"><path d="M12 17.27 18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>
-                                </button>
-                              </div>
+                          </div>
+                          <div className="mt-4 space-y-3">
+                            <div className="flex items-center gap-2 rounded-full border border-neutral-800 bg-neutral-900 px-5 py-2.5 shadow-inner shadow-black/20">
+                              <input
+                                className="min-w-0 flex-1 bg-transparent text-neutral-100 placeholder-neutral-500 outline-none"
+                                placeholder={meta.placeholder}
+                                value={composerValue}
+                                onChange={(e) => setQuick(composerTarget, (e.target as HTMLInputElement).value)}
+                                onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); quickSend(composerTarget); } }}
+                                autoComplete="off"
+                                autoCorrect="on"
+                                autoCapitalize="sentences"
+                                spellCheck
+                              />
+                              <button
+                                type="button"
+                                className="h-10 w-10 rounded-full text-neutral-300 hover:text-neutral-100 hover:bg-neutral-800/60 flex items-center justify-center"
+                                title="Emoji" aria-label="Emoji"
+                                onClick={() => setQuickPickerFor(quickPickerFor===composerTarget?null:composerTarget)}
+                              >
+                                <svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round' className='h-5 w-5'>
+                                  <circle cx='12' cy='12' r='9'/>
+                                  <path d='M8 14s1.5 2 4 2 4-2 4-2'/>
+                                  <path d='M9 9h.01M15 9h.01'/>
+                                </svg>
+                              </button>
+                              <button
+                                type="button"
+                                className="h-10 w-10 rounded-full bg-emerald-600 hover:bg-emerald-500 text-white flex items-center justify-center disabled:opacity-40"
+                                onClick={() => quickSend(composerTarget)}
+                                disabled={!composerValue.trim()}
+                              >
+                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
+                                  <path d="M22 2L11 13"/>
+                                  <path d="M22 2l-7 20-4-9-9-4 20-7z"/>
+                                </svg>
+                              </button>
                             </div>
-                            <div ref={(el)=>{ favScrollRefs.current[fid] = el; }} className="min-h-[88px] max-h-48 overflow-auto text-[12px]">
-                              {ctypeKnown === 'gallery' ? (
-                                (() => {
-                                  // Find the most recent image attachment
-                                  for (let i = items.length - 1; i >= 0; i--) {
-                                    const atts = items[i].attachments || [];
-                                    const img = atts.find((a:any)=>{ const t=String(a?.contentType||'').toLowerCase(); const u=String(a?.url||'').toLowerCase(); return t.startsWith('image/') || /\.(png|jpe?g|webp)(\?.*)?$/.test(u); });
-                                    if (img) {
-                                      return (
-                                        <div key={items[i].id} className="relative w-full pt-[56%] rounded overflow-hidden border border-neutral-800 bg-neutral-950">
-                                          <img src={img.url} alt={img.name||'image'} className="absolute inset-0 w-full h-full object-cover" />
-                                        </div>
-                                      );
-                                    }
-                                  }
-                                  return <div className="text-neutral-500">No images yet</div>;
-                                })()
-                              ) : (
-                                <div className="space-y-1">
-                                  {items.length === 0 ? (
-                                    <div className="text-neutral-500">Loading recent messages...</div>
-                                  ) : (
-                                    items.map(it => {
-                                      const atts = it.attachments || [];
-                                      const hasImg = atts.some((a:any)=>{ const t=String(a?.contentType||'').toLowerCase(); const u=String(a?.url||'').toLowerCase(); return t.startsWith('image/') || /\.(png|jpe?g|webp)(\?.*)?$/.test(u); });
-                                      const onlyImage = hasImg && (!it.content || String(it.content).trim()==='');
-                                      if (onlyImage) {
-                                        return (
-                                          <div key={it.id} className="px-2 py-1 rounded border border-neutral-800 bg-neutral-950/50">
-                                            <div className="text-neutral-200 truncate">@{it.authorName || 'User'} sent an image</div>
-                                          </div>
-                                        );
-                                      }
-                                      return (
-                                        <div key={it.id} className="px-2 py-1 rounded border border-neutral-800 bg-neutral-950/50">
-                                          <div className="text-[11px] text-neutral-400">{it.authorName || 'User'}</div>
-                                          <div className="text-neutral-200 truncate">{it.content || (hasImg ? 'sent an image' : '')}</div>
-                                        </div>
-                                      );
-                                    })
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                            {/* Quick composer (hidden for special channels: kanban/form/habit) */}
-                            {!hideComposer && (
-                              <div className="mt-3 pt-3 border-t border-neutral-800 relative">
-                                <div className="flex items-center gap-2 w-full max-w-full box-border rounded-full bg-neutral-900 border border-neutral-800 shadow-inner px-5 py-2.5 overflow-hidden">
-                                  <input
-                                    className="min-w-0 flex-1 px-3 py-2 bg-transparent text-neutral-100 placeholder-neutral-500 outline-none ring-0 border-0 text-base"
-                                    placeholder={`Message #${cName}`}
-                                    value={quickTextByFav[fid] || ''}
-                                    onChange={(e) => setQuick(fid, (e.target as HTMLInputElement).value)}
-                                    onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); quickSend(fid); } }}
-                                    autoComplete="off"
-                                    autoCorrect="on"
-                                    autoCapitalize="sentences"
-                                    spellCheck={true}
-                                    inputMode="text"
-                                    name="chat-message"
-                                    data-lpignore="true"
-                                    data-1p-ignore
-                                    data-bw-ignore
-                                  />
-                                  <button
-                                    type="button"
-                                    className="h-10 w-10 rounded-full text-neutral-300 hover:text-neutral-100 hover:bg-neutral-800/60 flex items-center justify-center"
-                                    title="Emoji" aria-label="Emoji"
-                                    onClick={() => setQuickPickerFor(quickPickerFor===fid?null:fid)}
-                                  >
-                                    <svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round' className='h-5 w-5'>
-                                      <circle cx='12' cy='12' r='9'/>
-                                      <path d='M8 14s1.5 2 4 2 4-2 4-2'/>
-                                      <path d='M9 9h.01M15 9h.01'/>
-                                    </svg>
+                            {quickPickerFor === composerTarget && (
+                              <div className="flex flex-wrap gap-1 rounded-2xl border border-neutral-800 bg-neutral-900/90 px-3 py-2">
+                                {favEmojis.map((emoji) => (
+                                  <button key={`${composerTarget}-${emoji}`} className="px-2 py-1 text-lg text-neutral-100 hover:bg-neutral-800 rounded" onClick={()=>addQuickEmoji(composerTarget, emoji)}>
+                                    {emoji}
                                   </button>
-                                  <button
-                                    type="button"
-                                    className="h-10 w-10 rounded-full bg-emerald-700 hover:bg-emerald-600 text-white flex items-center justify-center"
-                                    onClick={() => quickSend(fid)}
-                                    title="Send" aria-label="Send"
-                                    disabled={!((quickTextByFav[fid]||'').trim())}
-                                  >
-                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
-                                      <path d="M22 2L11 13"/>
-                                      <path d="M22 2l-7 20-4-9-9-4 20-7z"/>
-                                    </svg>
-                                  </button>
-                                </div>
-                                {quickPickerFor === fid && (
-                                  <div className="mt-2 inline-flex flex-wrap gap-1 max-w-full overflow-x-auto px-2 py-1 rounded-lg border border-neutral-800 bg-neutral-900/90">
-                                    {['🙂','😂','🔥','❤️','👍','🎉','😎','🤝'].map(e => (
-                                      <button key={e} className="px-2 py-1 text-neutral-200 hover:bg-neutral-800 rounded" onClick={()=>addQuickEmoji(fid, e)}>{e}</button>
-                                    ))}
-                                  </div>
-                                )}
+                                ))}
                               </div>
                             )}
                           </div>
-                        );
-                      }
-                    })}
-                  </div>
-                </div>
-              )}
-                </div>
+                        </div>
+                      );
+                    })()}
+                  </section>
+                )}
               </div>
             </div>
           ) : currentChannel?.type === 'habit' ? (
