@@ -833,7 +833,6 @@ const currentChannelTags = currentChannelFqid ? (channelTagsByChan[currentChanne
   const [editText, setEditText] = useState("");
   const landingShowFavorites = (() => { try { return localStorage.getItem('landing.showFavorites') !== '0'; } catch { return true; } })();
   const landingFavoriteLimit = (() => { try { const v = parseInt(localStorage.getItem('landing.maxFavorites') || '4', 10); return Math.max(1, Math.min(8, isNaN(v) ? 4 : v)); } catch { return 4; } })();
-  const landingComposerMeta: Record<string, { allowed: boolean; placeholder: string; channelLabel: string; voidName: string }> = {};
   const landingFavoriteCards: ReactNode[] = [];
   if (landingShowFavorites) {
     const limitedFavorites = favorites.slice(0, landingFavoriteLimit);
@@ -896,9 +895,9 @@ const currentChannelTags = currentChannelFqid ? (channelTagsByChan[currentChanne
                 <div className="text-neutral-500">List not found or removed</div>
               ) : incomplete.length === 0 ? (
                 <div className="text-neutral-500">No incomplete tasks</div>
-              ) : (
-                incomplete.map(it => (
-                  <label key={it.id} className="flex items-start gap-3 rounded-xl border border-neutral-800 bg-neutral-950/60 px-3 py-2 hover:border-emerald-700/40 transition-colors">
+            ) : (
+              incomplete.map(it => (
+                <label key={it.id} className="flex items-start gap-3 rounded-xl border border-neutral-800 bg-neutral-950/60 px-3 py-2 hover:border-emerald-700/40 transition-colors">
                     <input type="checkbox" className="mt-1 accent-emerald-500" checked={false} onChange={async(e)=> {
                       try { const tok=localStorage.getItem('token')||''; await api.patchAuth('/kanban/items',{ itemId: it.id, done: e.target.checked }, tok); } catch { /* noop */ }
                       setKanbanByChan(old => {
@@ -922,6 +921,13 @@ const currentChannelTags = currentChannelFqid ? (channelTagsByChan[currentChanne
                 ))
               )}
             </div>
+            <button
+              className="flex items-center justify-center gap-2 rounded-full border border-neutral-700/70 px-3 py-1.5 text-xs font-semibold text-neutral-200 hover:border-emerald-500/50 hover:text-emerald-100"
+              onClick={() => quickAddKanbanCard(fqid, listId)}
+            >
+              <span className="text-lg leading-none">＋</span>
+              Add card
+            </button>
           </div>
         );
         continue;
@@ -985,7 +991,6 @@ const currentChannelTags = currentChannelFqid ? (channelTagsByChan[currentChanne
         );
         continue;
       }
-      landingComposerMeta[fid] = { allowed: !hideComposer, placeholder: `Message #${cName}`, channelLabel: `#${cName}`, voidName: vName };
       const lastMessageAuthor = items[items.length - 1]?.authorName || 'Someone';
       landingFavoriteCards.push(
         <div key={fid} className="rounded-2xl border border-neutral-800 bg-neutral-950/60 p-4 flex flex-col gap-4 shadow-inner shadow-black/10">
@@ -1024,13 +1029,6 @@ const currentChannelTags = currentChannelFqid ? (channelTagsByChan[currentChanne
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <button
-              className="rounded-full border border-neutral-700/80 px-3 py-1.5 text-sm text-neutral-200 hover:border-emerald-500/60 hover:text-emerald-100 transition disabled:opacity-50"
-              onClick={()=>{ setActiveFavorite(fid); setQuickPickerFor(null); }}
-              disabled={hideComposer}
-            >
-              Message
-            </button>
-            <button
               className="rounded-full border border-neutral-700/80 px-3 py-1.5 text-sm text-neutral-200 hover:border-emerald-500/60 hover:text-emerald-100 transition"
               onClick={()=>{ switchVoid(vId); const shortId = cId.includes(':') ? cId.split(':')[1] : cId; switchChannel(shortId); }}
             >
@@ -1043,6 +1041,52 @@ const currentChannelTags = currentChannelFqid ? (channelTagsByChan[currentChanne
               Refresh
             </button>
           </div>
+          {!hideComposer && (
+            <div className="mt-3 border-t border-neutral-800 pt-3">
+              <div className="flex items-center gap-2 rounded-full border border-neutral-800 bg-neutral-900 px-4 py-2 shadow-inner shadow-black/20">
+                <input
+                  className="min-w-0 flex-1 bg-transparent text-sm text-neutral-100 placeholder-neutral-500 outline-none"
+                  placeholder={`Message #${cName}`}
+                  value={quickTextByFav[fid] || ''}
+                  onChange={(e) => setQuick(fid, (e.target as HTMLInputElement).value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); quickSend(fid); } }}
+                  autoComplete="off"
+                />
+                <button
+                  type="button"
+                  className="h-9 w-9 rounded-full text-neutral-300 hover:text-neutral-100 hover:bg-neutral-800/60 flex items-center justify-center"
+                  title="Emoji" aria-label="Emoji"
+                  onClick={() => setQuickPickerFor(quickPickerFor===fid?null:fid)}
+                >
+                  <svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round' className='h-5 w-5'>
+                    <circle cx='12' cy='12' r='9'/>
+                    <path d='M8 14s1.5 2 4 2 4-2 4-2'/>
+                    <path d='M9 9h.01M15 9h.01'/>
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  className="h-9 w-9 rounded-full bg-emerald-600 hover:bg-emerald-500 text-white flex items-center justify-center disabled:opacity-40"
+                  onClick={() => quickSend(fid)}
+                  disabled={!((quickTextByFav[fid]||'').trim())}
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+                    <path d="M22 2L11 13"/>
+                    <path d="M22 2l-7 20-4-9-9-4 20-7z"/>
+                  </svg>
+                </button>
+              </div>
+              {quickPickerFor === fid && (
+                <div className="mt-2 flex flex-wrap gap-1 rounded-2xl border border-neutral-800 bg-neutral-900/90 px-3 py-2">
+                  {favEmojis.map((emoji) => (
+                    <button key={`${fid}-${emoji}`} className="px-2 py-1 text-lg text-neutral-100 hover:bg-neutral-800 rounded" onClick={()=>addQuickEmoji(fid, emoji)}>
+                      {emoji}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       );
     }
@@ -1159,8 +1203,8 @@ const currentChannelTags = currentChannelFqid ? (channelTagsByChan[currentChanne
   useEffect(() => {
     const el = inputRef.current;
     if (!el) return;
-    el.style.height = '0px';
-    el.style.height = Math.min(200, el.scrollHeight) + 'px';
+    el.style.height = 'auto';
+    el.style.height = Math.min(220, el.scrollHeight) + 'px';
   }, [text]);
   const [replyTo, setReplyTo] = useState<Msg | null>(null);
   // Profile modal removed; avatar now navigates to landing
@@ -1289,12 +1333,6 @@ const currentChannelTags = currentChannelFqid ? (channelTagsByChan[currentChanne
     },
     { online: 0, idle: 0, dnd: 0 }
   ), [friendsOnline, presenceFromStatus]);
-  const [activeFavorite, setActiveFavorite] = useState<string | null>(null);
-  useEffect(() => {
-    if (activeFavorite && !favorites.includes(activeFavorite)) {
-      setActiveFavorite(null);
-    }
-  }, [activeFavorite, favorites]);
   const landingStats = useMemo(() => {
     const fmt = new Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 });
     return [
@@ -1325,6 +1363,22 @@ const currentChannelTags = currentChannelFqid ? (channelTagsByChan[currentChanne
     }
     return badges;
   }, [favorites, currentVoidId, channels, kanbanByChan]);
+  async function quickAddKanbanCard(fqid: string, listId: string) {
+    const text = await askInput({
+      title: 'New Card',
+      label: 'Card title',
+      placeholder: 'Do the thing...',
+    });
+    const content = text?.trim();
+    if (!content) return;
+    try {
+      const tok = localStorage.getItem('token') || '';
+      await api.postAuth('/kanban/items', { listId, content }, tok);
+      reloadKanban(fqid);
+    } catch {
+      toast('Failed to add card', 'error');
+    }
+  }
   const friendFilterOptions = [
     { label: 'All', value: 'all' as const, count: friendsOnline.length },
     { label: 'Online', value: 'online' as const, count: friendPresenceCounts.online },
@@ -2980,7 +3034,7 @@ const mutateChannelTags = useCallback((fqChanId: string, updater: (prev: KanbanT
       {/* Mobile Top Header: current space + settings */}
       <div className="sm:hidden fixed top-0 inset-x-0 z-40 pointer-events-none">
         <div className="px-3 pt-[env(safe-area-inset-top)]">
-          <header className="pointer-events-auto mx-auto max-w-3xl rounded-2xl border border-white/10 bg-black/60 backdrop-blur px-3 py-2 flex items-center justify-between gap-2 shadow-lg min-h-[44px]">
+          <header className="pointer-events-auto mx-auto max-w-3xl rounded-2xl border border-white/10 bg-black/70 md:backdrop-blur px-3 py-2 flex items-center justify-between gap-2 shadow-lg min-h-[44px]">
             <button
               className="min-w-0 flex items-center gap-1.5 px-2 py-1 rounded-lg text-white/90 hover:bg-white/10 min-h-[44px]"
               onClick={() => setVoidSheetOpen(true)}
@@ -3278,7 +3332,7 @@ const mutateChannelTags = useCallback((fqChanId: string, updater: (prev: KanbanT
         {/* Removed top channel bar; channels now in left column */}
 
         {/* Messages, Kanban, or landing */}
-        <div ref={listRef} className="overflow-auto p-4 space-y-2 bg-transparent pb-44 md:pb-8">
+        <div ref={listRef} className="overflow-auto p-4 space-y-2 bg-transparent pb-8 md:pb-4">
           {currentVoidId && currentChannel?.type === "voice" && (
             <div className="max-w-5xl mx-auto py-4 space-y-4">
               {voiceJoined ? (
@@ -3396,63 +3450,63 @@ const mutateChannelTags = useCallback((fqChanId: string, updater: (prev: KanbanT
                     <div className="absolute -top-20 right-10 h-64 w-64 rounded-full bg-emerald-500/10 blur-[120px]" />
                   </div>
                   <div className="relative grid gap-10 lg:grid-cols-[1.1fr,0.9fr]">
-                    <div className="flex flex-col gap-6">
-                      <span className="inline-flex items-center gap-2 self-start rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-emerald-200">
+                    <div className="flex flex-col gap-5">
+                      <span className="inline-flex items-center gap-2 self-start rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-emerald-200">
                         <span className="h-2 w-2 rounded-full bg-emerald-300" />
                         Live spaces
                       </span>
-                      <h1 className="text-3xl font-semibold leading-tight text-neutral-50 sm:text-4xl">
+                      <h1 className="text-2xl font-semibold leading-tight text-neutral-50 sm:text-3xl">
                         Ship updates, share rituals, and keep every channel calm.
                       </h1>
-                      <p className="text-base text-neutral-300">
+                      <p className="text-sm text-neutral-300">
                         Echo blends chat, kanban, galleries, and forms into one quiet landing page so your team can focus on the work that matters.
                       </p>
-                      <div className="flex flex-wrap gap-3">
-                        <button onClick={createSpace} className="rounded-full bg-emerald-500 px-5 py-3 text-base font-medium text-emerald-950 shadow-lg shadow-emerald-900/40 transition hover:bg-emerald-400">
+                      <div className="flex flex-wrap gap-2">
+                        <button onClick={createSpace} className="rounded-full bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-emerald-950 shadow shadow-emerald-900/30 transition hover:bg-emerald-400">
                           Start a space
                         </button>
-                        <button onClick={acceptInvite} className="rounded-full border border-neutral-600 px-5 py-3 text-base font-medium text-neutral-50 transition hover:border-emerald-400">
+                        <button onClick={acceptInvite} className="rounded-full border border-neutral-600 px-4 py-2.5 text-sm font-semibold text-neutral-50 transition hover:border-emerald-400">
                           Join via invite
                         </button>
                       </div>
                       <div className="grid gap-3 sm:grid-cols-3">
                         {landingStats.map((stat) => (
-                          <div key={stat.label} className="rounded-2xl border border-neutral-800/70 bg-neutral-950/70 p-4">
-                            <div className="text-3xl font-semibold text-emerald-300">{stat.value}</div>
-                            <div className="text-sm text-neutral-400">{stat.label}</div>
+                          <div key={stat.label} className="rounded-2xl border border-neutral-800/70 bg-neutral-950/70 p-3 text-center">
+                            <div className="text-2xl font-semibold text-emerald-300">{stat.value}</div>
+                            <div className="text-xs uppercase tracking-wide text-neutral-500">{stat.label}</div>
                           </div>
                         ))}
                       </div>
                     </div>
                     <div className="relative">
-                      <div className="absolute -inset-6 rounded-[40px] bg-emerald-500/20 blur-3xl" aria-hidden="true" />
-                      <div className="relative rounded-[32px] border border-white/10 bg-gradient-to-b from-neutral-950/90 to-neutral-900/60 p-6 backdrop-blur">
-                        <div className="flex items-center justify-between gap-3">
+                      <div className="absolute -inset-4 rounded-[32px] bg-emerald-500/15 blur-3xl" aria-hidden="true" />
+                      <div className="relative rounded-[28px] border border-white/10 bg-gradient-to-b from-neutral-950/95 to-neutral-900/70 p-5 md:backdrop-blur">
+                        <div className="flex items-center justify-between gap-2">
                           <div>
-                            <p className="text-xs uppercase tracking-wide text-neutral-500">Snapshot</p>
-                            <p className="text-lg font-semibold text-neutral-50">Today in Echo</p>
+                            <p className="text-[11px] uppercase tracking-wide text-neutral-500">Snapshot</p>
+                            <p className="text-base font-semibold text-neutral-50">Today in Echo</p>
                           </div>
-                          <span className="rounded-full border border-emerald-500/40 px-3 py-1 text-xs text-emerald-200">{friendsOnline.length} online</span>
+                          <span className="rounded-full border border-emerald-500/40 px-2.5 py-0.5 text-[11px] text-emerald-200">{friendsOnline.length} online</span>
                         </div>
-                        <div className="mt-6 space-y-4">
-                          <div className="rounded-2xl border border-white/5 bg-neutral-950/70 p-4">
-                            <p className="text-xs uppercase tracking-wide text-neutral-500">Pinned</p>
-                            <div className="mt-3 flex flex-wrap gap-2">
+                        <div className="mt-5 space-y-3">
+                          <div className="rounded-2xl border border-white/5 bg-neutral-950/70 p-3">
+                            <p className="text-[11px] uppercase tracking-wide text-neutral-500">Pinned</p>
+                            <div className="mt-2 flex flex-wrap gap-1.5">
                               {heroFavoriteBadges.map((badge) => (
-                                <span key={badge} className="rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-100">{badge}</span>
+                                <span key={badge} className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-0.5 text-[11px] font-medium text-emerald-100">{badge}</span>
                               ))}
                             </div>
                           </div>
-                          <div className="grid grid-cols-2 gap-3 text-sm">
-                            <div className="rounded-2xl border border-white/5 bg-neutral-950/70 p-4">
-                              <p className="text-xs uppercase tracking-wide text-neutral-500">Favorites</p>
-                              <div className="text-2xl font-semibold text-neutral-50">{landingFavoritesCount}</div>
-                              <p className="text-neutral-400">Tracked channels</p>
+                          <div className="grid grid-cols-2 gap-2 text-sm">
+                            <div className="rounded-2xl border border-white/5 bg-neutral-950/70 p-3">
+                              <p className="text-[11px] uppercase tracking-wide text-neutral-500">Favorites</p>
+                              <div className="text-xl font-semibold text-neutral-50">{landingFavoritesCount}</div>
+                              <p className="text-xs text-neutral-400">Tracked channels</p>
                             </div>
-                            <div className="rounded-2xl border border-white/5 bg-neutral-950/70 p-4">
-                              <p className="text-xs uppercase tracking-wide text-neutral-500">Pins left</p>
-                              <div className="text-2xl font-semibold text-neutral-50">{Math.max(0, 8 - landingFavoritesCount)}</div>
-                              <p className="text-neutral-400">More spots today</p>
+                            <div className="rounded-2xl border border-white/5 bg-neutral-950/70 p-3">
+                              <p className="text-[11px] uppercase tracking-wide text-neutral-500">Pins left</p>
+                              <div className="text-xl font-semibold text-neutral-50">{Math.max(0, 8 - landingFavoritesCount)}</div>
+                              <p className="text-xs text-neutral-400">More spots today</p>
                             </div>
                           </div>
                         </div>
@@ -3489,38 +3543,37 @@ const mutateChannelTags = useCallback((fqChanId: string, updater: (prev: KanbanT
                         return (
                           <button
                             key={friend.id}
-                            className="group min-w-[220px] rounded-2xl border border-neutral-800 bg-neutral-900/70 px-4 py-3 text-left transition hover:border-emerald-500/40"
+                            className="group flex min-w-[88px] flex-col items-center gap-2 rounded-2xl border border-neutral-800 bg-neutral-900/60 px-3 py-4 text-center transition hover:border-emerald-500/40"
                             onClick={() => setFriendsOpen(true)}
                           >
-                            <div className="flex items-center gap-3">
-                              <div className="relative">
-                                <div className="h-12 w-12 overflow-hidden rounded-full border border-neutral-700 bg-neutral-800">
-                                  {friend.avatarUrl ? (
-                                    <img src={friend.avatarUrl} alt={friend.name || friend.username || 'Friend'} className="h-full w-full object-cover" />
-                                  ) : (
-                                    <div className="flex h-full w-full items-center justify-center text-lg font-semibold text-neutral-500">
-                                      {(friend.name?.[0] || friend.username?.[0] || '?').toUpperCase()}
-                                    </div>
-                                  )}
-                                </div>
-                                <span className={`absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-neutral-950 ${dot}`} />
+                            <div className="relative">
+                              <div className="h-12 w-12 overflow-hidden rounded-full border border-neutral-700 bg-neutral-800">
+                                {friend.avatarUrl ? (
+                                  <img src={friend.avatarUrl} alt={friend.name || friend.username || 'Friend'} className="h-full w-full object-cover" />
+                                ) : (
+                                  <div className="flex h-full w-full items-center justify-center text-lg font-semibold text-neutral-500">
+                                    {(friend.name?.[0] || friend.username?.[0] || '?').toUpperCase()}
+                                  </div>
+                                )}
                               </div>
-                              <div className="min-w-0">
-                                <div className="truncate text-sm font-medium text-neutral-50" style={friend.nameColor ? { color: friend.nameColor } : undefined}>
-                                  {friend.name || friend.username || 'Friend'}
-                                </div>
-                                <div className="text-xs text-neutral-500 capitalize">{presence}</div>
-                              </div>
+                              <span className={`absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-neutral-950 ${dot}`} />
+                            </div>
+                            <div className="flex flex-col items-center">
+                              <span className="max-w-[80px] truncate text-xs font-medium text-neutral-50" style={friend.nameColor ? { color: friend.nameColor } : undefined}>
+                                {friend.name || friend.username || 'Friend'}
+                              </span>
+                              <span className="text-[10px] uppercase tracking-wide text-neutral-500">{presence}</span>
                             </div>
                           </button>
                         );
                       })}
                       <button
-                        className="min-w-[220px] rounded-2xl border border-dashed border-neutral-700 bg-neutral-900/40 px-4 py-3 text-left text-neutral-300 transition hover:border-emerald-500/50"
+                        className="flex min-w-[88px] flex-col items-center gap-1 rounded-2xl border border-dashed border-neutral-700 bg-neutral-900/40 px-3 py-4 text-center text-neutral-300 transition hover:border-emerald-500/50"
                         onClick={() => setFriendsOpen(true)}
                       >
-                        <div className="text-sm font-semibold text-neutral-100">Invite friends</div>
-                        <p className="text-xs text-neutral-500">Share your link and start collaborating.</p>
+                        <span className="text-base text-neutral-100">＋</span>
+                        <div className="text-xs font-semibold text-neutral-100">Invite</div>
+                        <p className="text-[10px] text-neutral-500">Share your link</p>
                       </button>
                     </div>
                   ) : (
@@ -3545,74 +3598,6 @@ const mutateChannelTags = useCallback((fqChanId: string, updater: (prev: KanbanT
                     <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                       {landingFavoriteCards}
                     </div>
-                    {(() => {
-                      const composerTarget = activeFavorite && landingComposerMeta[activeFavorite]?.allowed ? activeFavorite : null;
-                      if (!composerTarget) return null;
-                      const meta = landingComposerMeta[composerTarget];
-                      if (!meta) return null;
-                      const composerValue = quickTextByFav[composerTarget] || '';
-                      return (
-                        <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-950/80 p-5">
-                          <div className="flex flex-wrap items-center justify-between gap-3">
-                            <div>
-                              <p className="text-xs uppercase tracking-wide text-neutral-500">Quick reply</p>
-                              <div className="text-lg font-semibold text-neutral-50">{meta.channelLabel}</div>
-                              <p className="text-sm text-neutral-400">{meta.voidName}</p>
-                            </div>
-                            <button className="rounded-full border border-neutral-700 px-3 py-1.5 text-sm text-neutral-300 hover:border-emerald-500/60" onClick={()=>{ setActiveFavorite(null); setQuickPickerFor(null); }}>
-                              Close
-                            </button>
-                          </div>
-                          <div className="mt-4 space-y-3">
-                            <div className="flex items-center gap-2 rounded-full border border-neutral-800 bg-neutral-900 px-5 py-2.5 shadow-inner shadow-black/20">
-                              <input
-                                className="min-w-0 flex-1 bg-transparent text-neutral-100 placeholder-neutral-500 outline-none"
-                                placeholder={meta.placeholder}
-                                value={composerValue}
-                                onChange={(e) => setQuick(composerTarget, (e.target as HTMLInputElement).value)}
-                                onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); quickSend(composerTarget); } }}
-                                autoComplete="off"
-                                autoCorrect="on"
-                                autoCapitalize="sentences"
-                                spellCheck
-                              />
-                              <button
-                                type="button"
-                                className="h-10 w-10 rounded-full text-neutral-300 hover:text-neutral-100 hover:bg-neutral-800/60 flex items-center justify-center"
-                                title="Emoji" aria-label="Emoji"
-                                onClick={() => setQuickPickerFor(quickPickerFor===composerTarget?null:composerTarget)}
-                              >
-                                <svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round' className='h-5 w-5'>
-                                  <circle cx='12' cy='12' r='9'/>
-                                  <path d='M8 14s1.5 2 4 2 4-2 4-2'/>
-                                  <path d='M9 9h.01M15 9h.01'/>
-                                </svg>
-                              </button>
-                              <button
-                                type="button"
-                                className="h-10 w-10 rounded-full bg-emerald-600 hover:bg-emerald-500 text-white flex items-center justify-center disabled:opacity-40"
-                                onClick={() => quickSend(composerTarget)}
-                                disabled={!composerValue.trim()}
-                              >
-                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
-                                  <path d="M22 2L11 13"/>
-                                  <path d="M22 2l-7 20-4-9-9-4 20-7z"/>
-                                </svg>
-                              </button>
-                            </div>
-                            {quickPickerFor === composerTarget && (
-                              <div className="flex flex-wrap gap-1 rounded-2xl border border-neutral-800 bg-neutral-900/90 px-3 py-2">
-                                {favEmojis.map((emoji) => (
-                                  <button key={`${composerTarget}-${emoji}`} className="px-2 py-1 text-lg text-neutral-100 hover:bg-neutral-800 rounded" onClick={()=>addQuickEmoji(composerTarget, emoji)}>
-                                    {emoji}
-                                  </button>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })()}
                   </section>
                 )}
               </div>
@@ -3732,10 +3717,10 @@ const mutateChannelTags = useCallback((fqChanId: string, updater: (prev: KanbanT
                               <img src={im.url} alt={im.name||'photo'} className={`w-full h-auto transition-all duration-500 ease-out ${hidden ? 'blur-md brightness-50' : loaded ? 'opacity-100 scale-100' : 'opacity-0 scale-[1.02] blur-md'}`} onLoad={()=> setImgLoadedByUrl(prev => prev[im.url] ? prev : ({ ...prev, [im.url]: true }))} />
                             </button>
                             {hidden && (
-                              <button className="absolute inset-0 flex items-center justify-center bg-neutral-950/90 backdrop-blur-sm text-neutral-200 text-sm font-medium" onClick={()=> setRevealedSpoilers(prev => ({ ...prev, [im.mid]: true }))}>Spoiler - tap to reveal</button>
+                              <button className="absolute inset-0 flex items-center justify-center bg-neutral-950/90 md:backdrop-blur-sm text-neutral-200 text-sm font-medium" onClick={()=> setRevealedSpoilers(prev => ({ ...prev, [im.mid]: true }))}>Spoiler - tap to reveal</button>
                             )}
                             {!selMode && (
-                              <button className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity px-2 py-1 rounded-md bg-neutral-900/85 border border-neutral-700 text-neutral-300 hover:text-red-300 hover:border-red-600 backdrop-blur-sm" title="Delete photo" aria-label="Delete photo" onClick={async (e)=>{ e.preventDefault(); const ok = await askConfirm({ title: 'Delete Photo', message: 'Remove this photo from gallery?', confirmText: 'Delete', cancelText: 'Cancel' }); if (!ok) return; try { const tok = localStorage.getItem('token')||''; await api.postAuth('/channels/gallery-attachment-delete', { messageId: im.mid, url: im.url }, tok); } catch (e:any) { toast(e?.message||'Failed to delete','error'); } }}>
+                              <button className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity px-2 py-1 rounded-md bg-neutral-900/85 border border-neutral-700 text-neutral-300 hover:text-red-300 hover:border-red-600 md:backdrop-blur-sm" title="Delete photo" aria-label="Delete photo" onClick={async (e)=>{ e.preventDefault(); const ok = await askConfirm({ title: 'Delete Photo', message: 'Remove this photo from gallery?', confirmText: 'Delete', cancelText: 'Cancel' }); if (!ok) return; try { const tok = localStorage.getItem('token')||''; await api.postAuth('/channels/gallery-attachment-delete', { messageId: im.mid, url: im.url }, tok); } catch (e:any) { toast(e?.message||'Failed to delete','error'); } }}>
                                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M3 6h18"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
                               </button>
                             )}
@@ -3922,7 +3907,7 @@ const mutateChannelTags = useCallback((fqChanId: string, updater: (prev: KanbanT
                       ))}
                     </div>
                     {hidden && (
-                      <button className="absolute inset-0 flex items-center justify-center bg-neutral-950/90 backdrop-blur-sm text-neutral-200 text-sm font-medium" onClick={() => setRevealedSpoilers(prev => ({ ...prev, [m.id]: true }))}>
+                      <button className="absolute inset-0 flex items-center justify-center bg-neutral-950/90 md:backdrop-blur-sm text-neutral-200 text-sm font-medium" onClick={() => setRevealedSpoilers(prev => ({ ...prev, [m.id]: true }))}>
                         Spoiler - tap to reveal
                       </button>
                     )}
@@ -4078,7 +4063,7 @@ const mutateChannelTags = useCallback((fqChanId: string, updater: (prev: KanbanT
 
         {/* Typing + presence (sticky above composer on mobile) */}
         <div className="px-4 text-xs text-teal-300 md:mb-2">
-          <div className="sticky bottom-16 md:static py-1 h-6">
+          <div className="sticky bottom-6 md:static py-1 h-6">
             {(() => {
               if (!currentVoidId) return null;
               // Use last non-empty text so we can fade it out smoothly
@@ -4110,10 +4095,8 @@ const mutateChannelTags = useCallback((fqChanId: string, updater: (prev: KanbanT
 
         {/* Voice room or Input (hidden for Kanban/Form/Habit) */}
         {currentChannel?.type !== 'kanban' && currentChannel?.type !== 'form' && currentChannel?.type !== 'habit' && currentChannel?.type !== 'gallery' && currentChannel?.type !== 'notes' && (
-          <div className="p-3 md:static fixed inset-x-0 bottom-4 z-20 md:mb-4 bg-transparent pb-[env(safe-area-inset-bottom)]">
-          {!currentVoidId ? (
-            <div className="text-center text-sm text-neutral-400">Create or join a space to start chatting.</div>
-          ) : currentChannel?.type === 'voice' ? (
+          <div className="p-3">
+          {!currentVoidId ? null : currentChannel?.type === 'voice' ? (
             <div className="flex flex-col gap-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2 text-emerald-300 font-semibold">
@@ -4133,7 +4116,7 @@ const mutateChannelTags = useCallback((fqChanId: string, updater: (prev: KanbanT
                   </button>
                 </div>
               ) : (
-                <div className="flex items-center gap-2 flex-wrap rounded-lg border border-neutral-800/70 bg-neutral-900/40 backdrop-blur px-2 py-2">
+                <div className="flex items-center gap-2 flex-wrap rounded-lg border border-neutral-800/70 bg-neutral-900/40 md:backdrop-blur px-2 py-2">
                   <button className="px-3 py-2 rounded-md border border-neutral-700 text-neutral-200 hover:bg-neutral-800/60 inline-flex items-center gap-1" onClick={toggleMute} title={voiceMuted ? 'Unmute' : 'Mute'}>
                     {voiceMuted ? (
                       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 text-red-400"><path d="M13.5 14.5V9.4a3.4 3.4 0 0 0-5.7-2.4L5 9H2v6h3l2.8 2.8a3.4 3.4 0 0 0 5.7-2.4Z"/><path d="m14 9 7-7"/></svg>
@@ -4317,7 +4300,7 @@ const mutateChannelTags = useCallback((fqChanId: string, updater: (prev: KanbanT
                 <textarea
                   ref={inputRef}
                   rows={1}
-                  className="min-w-0 flex-1 px-2 py-2 text-base bg-transparent text-neutral-100 placeholder-neutral-500 outline-none ring-0 border-0 resize-none"
+                  className="min-w-0 flex-1 px-2 py-2 text-base bg-transparent text-neutral-100 placeholder-neutral-500 outline-none ring-0 border-0 resize-none max-h-32 overflow-y-auto"
                   placeholder={`Message #${currentChannel?.name ?? 'general'}`}
                   value={text}
                   onChange={(e) => onInputChange(e.target.value)}
@@ -5007,7 +4990,7 @@ const mutateChannelTags = useCallback((fqChanId: string, updater: (prev: KanbanT
       <div className="sm:hidden fixed inset-y-0 inset-x-0 pointer-events-none z-40">
         {/* Left handle: Channels */}
         <button
-          className={`absolute left-0 top-1/2 -translate-y-1/2 ml-1 h-16 w-8 rounded-r-full border border-white/10 bg-black/50 backdrop-blur text-white/70 hover:text-white hover:bg-white/10 pointer-events-auto ${chanSheetOpen ? 'opacity-0' : 'opacity-80'}`}
+          className={`absolute left-0 top-1/2 -translate-y-1/2 ml-1 h-16 w-8 rounded-r-full border border-white/10 bg-black/50 md:backdrop-blur text-white/70 hover:text-white hover:bg-white/10 pointer-events-auto ${chanSheetOpen ? 'opacity-0' : 'opacity-80'}`}
           aria-label="Open Channels"
           title="Channels"
           onClick={() => setChanSheetOpen(true)}
@@ -5017,7 +5000,7 @@ const mutateChannelTags = useCallback((fqChanId: string, updater: (prev: KanbanT
         {/* Right handle: People */}
         {showPeople && (
           <button
-            className={`absolute right-0 top-1/2 -translate-y-1/2 mr-1 h-16 w-8 rounded-l-full border border-white/10 bg-black/50 backdrop-blur text-white/70 hover:text-white hover:bg-white/10 pointer-events-auto ${usersSheetOpen ? 'opacity-0' : 'opacity-80'}`}
+            className={`absolute right-0 top-1/2 -translate-y-1/2 mr-1 h-16 w-8 rounded-l-full border border-white/10 bg-black/50 md:backdrop-blur text-white/70 hover:text-white hover:bg-white/10 pointer-events-auto ${usersSheetOpen ? 'opacity-0' : 'opacity-80'}`}
             aria-label="Open People"
             title="People"
             onClick={() => setUsersSheetOpen(true)}
