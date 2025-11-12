@@ -17,6 +17,7 @@ import { handleChannels } from './routes/channels.js';
 import { handleFriends } from './routes/friends.js';
 import { handleFiles } from './routes/files.js';
 import { handleKanban } from './routes/kanban.js';
+import { handleChannelTags } from './routes/channelTags.js';
 import { handleForms } from './routes/forms.js';
 import { handleHabits } from './routes/habits.js';
 import { handleMessages } from './routes/messages.js';
@@ -91,6 +92,7 @@ const server = http.createServer(async (req, res) => {
     if (req.url.startsWith('/api/spaces') || req.url.startsWith('/api/invites/')) { const handled = await handleSpaces(req, res, body, { io }); if (handled) return; }
     if (req.url.startsWith('/api/channels')) { const handled = await handleChannels(req, res, body, { io }); if (handled) return; }
     if (req.url.startsWith('/api/files')) { const handled = await handleFiles(req, res, body, { io }); if (handled) return; }
+    if (req.url.startsWith('/api/channel-tags')) { const handled = await handleChannelTags(req, res, body, { io }); if (handled) return; }
     if (req.url === '/api/users/me/profile') { const handled = await handleProfile(req, res, body, { io }); if (handled) return; }
     if (req.url.startsWith('/api/kanban')) { const handled = await handleKanban(req, res, body, { io }); if (handled) return; }
     if (req.url.startsWith('/api/forms')) { const handled = await handleForms(req, res, body, { io }); if (handled) return; }

@@ -48,7 +48,7 @@ export function AccountBannerCard({
 
   const presenceHex = (() => {
     switch ((presence||'').toLowerCase()) {
-      case 'mobile': return '#14b8a6'; // teal-500
+      case 'mobile': return '#0ea5e9'; // sky-500 (mobile)
       case 'online': return '#10b981'; // emerald-500
       case 'idle': return '#f59e0b';   // amber-500
       case 'dnd': return '#f43f5e';    // rose-500

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../../lib/api';
 import { askConfirm, toast } from '../../lib/ui';
+import ChannelStatsBar from '../common/ChannelStatsBar';
 import type { KanbanItem, KanbanList, KanbanTag } from '../../types/kanban';
 
 type AskInputFn = (cfg: { title?: string; label?: string; placeholder?: string; initialValue?: string; textarea?: boolean; okText?: string }) => Promise<string | null>;
@@ -122,6 +123,14 @@ export default function KanbanChannelView({
     return [...channelTags].sort((a, b) => (a.label || '').localeCompare(b.label || ''));
   }, [channelTags]);
   const dragDisabled = sortByTag || !!tagFilter;
+  const kanbanStats = useMemo(() => {
+    return [
+      { label: 'Lists', value: lists.length },
+      { label: 'Active cards', value: activeCards },
+      { label: 'Completed', value: completedCards },
+      { label: 'Channel tags', value: sortedChannelTags.length || '—' },
+    ];
+  }, [lists.length, activeCards, completedCards, sortedChannelTags.length]);
 
   const handleAddList = async () => {
     const name = await askInput({ title: 'New List', label: 'List name', placeholder: 'To do' });
@@ -305,11 +314,11 @@ export default function KanbanChannelView({
     try {
       const tok = localStorage.getItem('token') || '';
       if (channelTagEditor.id) {
-        const res = await api.patchAuth('/kanban/tags', { tagId: channelTagEditor.id, label, color: channelTagEditor.color }, tok);
+        const res = await api.patchAuth('/channel-tags', { tagId: channelTagEditor.id, label, color: channelTagEditor.color }, tok);
         const tag = (res?.tag as KanbanTag) || { id: channelTagEditor.id, label, color: channelTagEditor.color };
         mutateTags((prev) => prev.map((t) => (t.id === tag.id ? tag : t)));
       } else {
-        const res = await api.postAuth('/kanban/tags', { channelId: fid, label, color: channelTagEditor.color }, tok);
+        const res = await api.postAuth('/channel-tags', { channelId: fid, label, color: channelTagEditor.color }, tok);
         const fallbackId = makeRandomId();
         const tag = (res?.tag as KanbanTag) || { id: fallbackId, label, color: channelTagEditor.color };
         mutateTags((prev) => {
@@ -331,7 +340,7 @@ export default function KanbanChannelView({
     mutateTags((prev) => prev.filter((tag) => tag.id !== tagId));
     try {
       const tok = localStorage.getItem('token') || '';
-      await api.deleteAuth('/kanban/tags', { tagId }, tok);
+      await api.deleteAuth('/channel-tags', { tagId }, tok);
     } catch (err) {
       showError(err, 'Failed to delete tag');
     } finally {
@@ -372,30 +381,21 @@ export default function KanbanChannelView({
   return (
     <>
       <div className="min-h-full space-y-4">
-        <div className="grid gap-3 md:grid-cols-3">
-          <StatCard label="Lists" value={lists.length} />
-          <StatCard label="Active tasks" value={activeCards} />
-          <StatCard label="Completed" value={completedCards} />
-        </div>
+      <ChannelStatsBar stats={kanbanStats} />
 
-        <div className="rounded-2xl border border-neutral-800 bg-neutral-950/60 p-3 space-y-2">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <div className="text-sm font-semibold text-neutral-100">Channel tags</div>
-              <p className="text-xs text-neutral-500">Create shared tags once and reuse them on cards.</p>
-            </div>
-            <button
-              className="inline-flex items-center gap-1 rounded-full border border-emerald-600/50 px-3 py-1 text-sm text-emerald-200 hover:bg-emerald-900/30"
-              onClick={() => openChannelTagEditor(null)}
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
-                <path d="M12 5v14M5 12h14" />
-              </svg>
-              New tag
-            </button>
-          </div>
+        <div className="rounded-xl border border-neutral-800 bg-neutral-950/70 px-3 py-2 flex flex-wrap items-center gap-3">
+          <span className="text-xs uppercase tracking-wide text-neutral-500">Channel tags</span>
+          <button
+            className="inline-flex items-center gap-1 rounded-full border border-emerald-600/50 px-2 py-1 text-xs text-emerald-200 hover:bg-emerald-900/30"
+            onClick={() => openChannelTagEditor(null)}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
+              <path d="M12 5v14M5 12h14" />
+            </svg>
+            New tag
+          </button>
           {sortedChannelTags.length === 0 ? (
-            <p className="text-sm text-neutral-500">No channel tags yet.</p>
+            <span className="text-xs text-neutral-500">No tags yet</span>
           ) : (
             <div className="flex flex-wrap gap-2">
               {sortedChannelTags.map((tag) => (
@@ -419,6 +419,18 @@ export default function KanbanChannelView({
                       <path d="M16.5 3.5a2.1 2.1 0 1 1 3 3L7 19l-4 1 1-4Z" />
                     </svg>
                   </button>
+                  {tag.id && (
+                    <button
+                      className="p-0.5 rounded-full text-red-200 hover:bg-red-900/40"
+                      title="Delete tag"
+                      onClick={() => removeChannelTag(tag.id!)}
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3">
+                        <path d="M18 6L6 18" />
+                        <path d="M6 6l12 12" />
+                      </svg>
+                    </button>
+                  )}
                 </span>
               ))}
             </div>
@@ -781,15 +793,6 @@ function ChannelTagModal({
           </div>
         </div>
       </div>
-    </div>
-  );
-}
-
-function StatCard({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="rounded-2xl border border-neutral-800 bg-neutral-950/70 px-4 py-3 shadow-inner shadow-black/30">
-      <div className="text-xs uppercase tracking-wide text-neutral-500">{label}</div>
-      <div className="text-2xl font-semibold text-neutral-50">{value}</div>
     </div>
   );
 }

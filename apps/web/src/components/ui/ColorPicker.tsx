@@ -61,6 +61,8 @@ export default function ColorPicker({ value, onChange, onChangeComplete, swatche
   const [s, setS] = useState(initial.s);
   const [v, setV] = useState(initial.v);
   const svRef = useRef<HTMLDivElement | null>(null);
+  const hueRef = useRef<HTMLDivElement | null>(null);
+  const latestHSV = useRef({ h: initial.h, s: initial.s, v: initial.v });
 
   useEffect(() => {
     const rgb = hsvToRgb(h, s, v);
@@ -71,29 +73,109 @@ export default function ColorPicker({ value, onChange, onChangeComplete, swatche
     // external value change sync
     const { r, g, b } = hexToRgb(value || '#22c55e');
     const hsv = rgbToHsv(r, g, b);
-    setH(hsv.h); setS(hsv.s); setV(hsv.v);
+    setH(hsv.h);
+    setS(hsv.s);
+    setV(hsv.v);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value]);
 
-  function handleSV(e: React.MouseEvent) {
+  useEffect(() => {
+    latestHSV.current = { h, s, v };
+  }, [h, s, v]);
+
+  const commitChange = () => {
+    const { h: hh, s: ss, v: vv } = latestHSV.current;
+    const rgb = hsvToRgb(hh, ss, vv);
+    onChangeComplete?.(rgbToHex(rgb.r, rgb.g, rgb.b));
+  };
+
+  function updateSVFromPoint(clientX: number, clientY: number) {
     if (!svRef.current) return;
     const rect = svRef.current.getBoundingClientRect();
-    const x = clamp(e.clientX - rect.left, 0, rect.width);
-    const y = clamp(e.clientY - rect.top, 0, rect.height);
-    setS(clamp(x / rect.width, 0, 1));
-    setV(clamp(1 - y / rect.height, 0, 1));
+    const x = clamp(clientX - rect.left, 0, rect.width);
+    const y = clamp(clientY - rect.top, 0, rect.height);
+    const nextS = clamp(x / rect.width, 0, 1);
+    const nextV = clamp(1 - y / rect.height, 0, 1);
+    setS(nextS);
+    setV(nextV);
+    latestHSV.current = { h: latestHSV.current.h, s: nextS, v: nextV };
   }
-  function startDragSV(e: React.MouseEvent) {
-    handleSV(e);
-    const move = (ev: MouseEvent) => handleSV(ev as any);
+
+  function startDragSVMouse(e: React.MouseEvent) {
+    e.preventDefault();
+    updateSVFromPoint(e.clientX, e.clientY);
+    const move = (ev: MouseEvent) => {
+      ev.preventDefault();
+      updateSVFromPoint(ev.clientX, ev.clientY);
+    };
     const up = () => {
       document.removeEventListener('mousemove', move);
       document.removeEventListener('mouseup', up);
-      const rgb = hsvToRgb(h, s, v);
-      onChangeComplete?.(rgbToHex(rgb.r, rgb.g, rgb.b));
+      commitChange();
     };
     document.addEventListener('mousemove', move);
     document.addEventListener('mouseup', up);
+  }
+
+  function startDragSVTouch(e: React.TouchEvent) {
+    if (!e.touches[0]) return;
+    e.preventDefault();
+    updateSVFromPoint(e.touches[0].clientX, e.touches[0].clientY);
+    const move = (ev: TouchEvent) => {
+      if (!ev.touches[0]) return;
+      ev.preventDefault();
+      updateSVFromPoint(ev.touches[0].clientX, ev.touches[0].clientY);
+    };
+    const up = () => {
+      document.removeEventListener('touchmove', move);
+      document.removeEventListener('touchend', up);
+      commitChange();
+    };
+    document.addEventListener('touchmove', move, { passive: false });
+    document.addEventListener('touchend', up, { once: true });
+  }
+
+  function updateHueFromPoint(clientX: number) {
+    if (!hueRef.current) return;
+    const rect = hueRef.current.getBoundingClientRect();
+    const x = clamp(clientX - rect.left, 0, rect.width);
+    const nextH = clamp((x / rect.width) * 360, 0, 360);
+    setH(nextH);
+    latestHSV.current = { h: nextH, s: latestHSV.current.s, v: latestHSV.current.v };
+  }
+
+  function startDragHueMouse(e: React.MouseEvent) {
+    e.preventDefault();
+    updateHueFromPoint(e.clientX);
+    const move = (ev: MouseEvent) => {
+      ev.preventDefault();
+      updateHueFromPoint(ev.clientX);
+    };
+    const up = () => {
+      document.removeEventListener('mousemove', move);
+      document.removeEventListener('mouseup', up);
+      commitChange();
+    };
+    document.addEventListener('mousemove', move);
+    document.addEventListener('mouseup', up);
+  }
+
+  function startDragHueTouch(e: React.TouchEvent) {
+    if (!e.touches[0]) return;
+    e.preventDefault();
+    updateHueFromPoint(e.touches[0].clientX);
+    const move = (ev: TouchEvent) => {
+      if (!ev.touches[0]) return;
+      ev.preventDefault();
+      updateHueFromPoint(ev.touches[0].clientX);
+    };
+    const up = () => {
+      document.removeEventListener('touchmove', move);
+      document.removeEventListener('touchend', up);
+      commitChange();
+    };
+    document.addEventListener('touchmove', move, { passive: false });
+    document.addEventListener('touchend', up, { once: true });
   }
 
   return (
@@ -101,31 +183,20 @@ export default function ColorPicker({ value, onChange, onChangeComplete, swatche
       <div ref={svRef}
            className="relative h-36 rounded-md cursor-crosshair select-none"
            style={{ background: `hsl(${Math.round(h)}, 100%, 50%)` }}
-           onMouseDown={startDragSV}
+           onMouseDown={startDragSVMouse}
+           onTouchStart={startDragSVTouch}
       >
         <div className="absolute inset-0 rounded-md" style={{ background: 'linear-gradient(to right, #fff, rgba(255,255,255,0))' }} />
         <div className="absolute inset-0 rounded-md" style={{ background: 'linear-gradient(to top, #000, rgba(0,0,0,0))' }} />
         <div className="absolute h-3 w-3 -mt-1.5 -ml-1.5 rounded-full border border-white shadow"
              style={{ left: `${s * 100}%`, top: `${(1 - v) * 100}%` }} />
       </div>
-      <div className="h-3 rounded-md cursor-pointer border border-neutral-800"
-           style={{ background: 'linear-gradient(to right, #ff0000, #ffff00, #00ff00, #00ffff, #0000ff, #ff00ff, #ff0000)' }}
-           onMouseDown={(e)=>{
-             const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
-             const x = clamp(e.clientX - rect.left, 0, rect.width);
-             setH(clamp((x / rect.width) * 360, 0, 360));
-             const move = (ev: MouseEvent) => {
-               const xx = clamp(ev.clientX - rect.left, 0, rect.width);
-               setH(clamp((xx / rect.width) * 360, 0, 360));
-             };
-             const up = () => {
-               document.removeEventListener('mousemove', move);
-               const rgb2 = hsvToRgb(h, s, v);
-               onChangeComplete?.(rgbToHex(rgb2.r, rgb2.g, rgb2.b));
-             };
-             document.addEventListener('mousemove', move);
-             document.addEventListener('mouseup', up, { once: true });
-           }}
+      <div
+        ref={hueRef}
+        className="h-3 rounded-md cursor-pointer border border-neutral-800"
+        style={{ background: 'linear-gradient(to right, #ff0000, #ffff00, #00ff00, #00ffff, #0000ff, #ff00ff, #ff0000)' }}
+        onMouseDown={startDragHueMouse}
+        onTouchStart={startDragHueTouch}
       />
       <div className="flex items-center gap-2">
         <div className="h-8 w-8 rounded border border-neutral-700" style={{ background: value }} />

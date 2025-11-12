@@ -1,11 +1,56 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useFormChannel } from '../../hooks/useFormChannel';
 import { askConfirm, toast } from '../../lib/ui';
+import { api } from '../../lib/api';
+import ChannelStatsBar from '../common/ChannelStatsBar';
+import type { KanbanTag } from '../../types/kanban';
 
 type Member = { id: string; name?: string; username?: string };
+const TAG_COLOR_PRESETS = ['#ef4444', '#f97316', '#facc15', '#22c55e', '#0ea5e9', '#6366f1', '#a855f7', '#ec4899', '#a3a3a3'];
+const FALLBACK_TAG_COLOR = '#475569';
 
-export default function FormChannelView({ fid, members, meId }: { fid: string; members: Member[]; meId?: string | null }) {
-  const { data, mySubmitted, allSubmitted, actions } = useFormChannel(fid, members, meId);
+const hexToRgb = (hex?: string | null) => {
+  if (!hex) return null;
+  let value = hex.trim();
+  if (!value.startsWith('#')) value = `#${value}`;
+  if (!/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(value)) return null;
+  if (value.length === 4) value = `#${value[1]}${value[1]}${value[2]}${value[2]}${value[3]}${value[3]}`;
+  const num = parseInt(value.slice(1), 16);
+  return { r: (num >> 16) & 255, g: (num >> 8) & 255, b: num & 255 };
+};
+
+const colorWithAlpha = (hex: string, alpha: number) => {
+  const rgb = hexToRgb(hex);
+  if (!rgb) return hex;
+  const a = Math.max(0, Math.min(1, alpha));
+  return `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${a})`;
+};
+
+const getReadableTextColor = (hex?: string | null) => {
+  const rgb = hexToRgb(hex);
+  if (!rgb) return '#e5e7eb';
+  const luminance = (0.299 * rgb.r + 0.587 * rgb.g + 0.114 * rgb.b) / 255;
+  return luminance > 0.6 ? '#0f172a' : '#f8fafc';
+};
+
+const normalizeTagLabel = (label: string) => label.trim().toLowerCase();
+const getErrorMessage = (err: unknown, fallback: string) => {
+  if (err instanceof Error) return err.message;
+  if (typeof err === 'string') return err;
+  return fallback;
+};
+
+type FormChannelViewProps = {
+  fid: string;
+  members: Member[];
+  meId?: string | null;
+  channelTags: KanbanTag[];
+  mutateTags: (updater: (prev: KanbanTag[]) => KanbanTag[]) => void;
+  refreshTags?: () => void;
+};
+
+export default function FormChannelView({ fid, members, meId, channelTags, mutateTags, refreshTags }: FormChannelViewProps) {
+  const { data, allSubmitted, actions } = useFormChannel(fid, members, meId);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [pendingSubmit, setPendingSubmit] = useState<Record<string, boolean>>({});
   const [newPrompt, setNewPrompt] = useState('');
@@ -15,6 +60,26 @@ export default function FormChannelView({ fid, members, meId }: { fid: string; m
   const [renameDraft, setRenameDraft] = useState('');
   const [renaming, setRenaming] = useState(false);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const tagLibrary = useMemo(
+    () =>
+      channelTags
+        .map((tag) => ({ id: tag.id || `${tag.label}`, label: (tag.label || '').trim(), color: tag.color || FALLBACK_TAG_COLOR }))
+        .filter((tag) => tag.label.length > 0)
+        .sort((a, b) => a.label.localeCompare(b.label)),
+    [channelTags]
+  );
+  const channelTagMap = useMemo(() => {
+    const map = new Map<string, KanbanTag>();
+    channelTags.forEach((tag) => map.set(normalizeTagLabel(tag.label || ''), tag));
+    return map;
+  }, [channelTags]);
+  const normalizedTagMap = useMemo(() => {
+    const map = new Map<string, { id?: string; label: string; color: string }>();
+    tagLibrary.forEach((tag) => map.set(normalizeTagLabel(tag.label), tag));
+    return map;
+  }, [tagLibrary]);
+  const [tagEditor, setTagEditor] = useState<{ id?: string; label: string; color: string; mode: 'new' | 'edit' } | null>(null);
+  const [tagSaving, setTagSaving] = useState(false);
 
   const roster = useMemo(() => {
     if (data.participants && data.participants.length > 0) {
@@ -57,8 +122,8 @@ export default function FormChannelView({ fid, members, meId }: { fid: string; m
       await actions.create(prompt, newLocked);
       setNewPrompt('');
       setNewLocked(false);
-    } catch (e: any) {
-      toast(e?.message || 'Failed to add question', 'error');
+    } catch (err) {
+      toast(getErrorMessage(err, 'Failed to add question'), 'error');
     } finally {
       setCreating(false);
     }
@@ -78,8 +143,8 @@ export default function FormChannelView({ fid, members, meId }: { fid: string; m
         delete next[qid];
         return next;
       });
-    } catch (e: any) {
-      toast(e?.message || 'Failed to save answer', 'error');
+    } catch (err) {
+      toast(getErrorMessage(err, 'Failed to save answer'), 'error');
     } finally {
       setPendingSubmit((prev) => {
         const next = { ...prev };
@@ -107,19 +172,157 @@ export default function FormChannelView({ fid, members, meId }: { fid: string; m
       await actions.rename(editingId, next);
       setEditingId(null);
       setRenameDraft('');
-    } catch (e: any) {
-      toast(e?.message || 'Failed to rename question', 'error');
+    } catch (err) {
+      toast(getErrorMessage(err, 'Failed to rename question'), 'error');
     } finally {
       setRenaming(false);
     }
   };
 
+  const openNewTagEditor = useCallback(() => {
+    setTagEditor({ label: '', color: TAG_COLOR_PRESETS[3], mode: 'new' });
+  }, []);
+
+  const openEditTagEditor = useCallback((tag: KanbanTag) => {
+    setTagEditor({ id: tag.id, label: tag.label || '', color: tag.color || TAG_COLOR_PRESETS[3], mode: 'edit' });
+  }, []);
+
+  const saveChannelTag = async () => {
+    if (!tagEditor) return;
+    const label = tagEditor.label.trim();
+    if (!label) {
+      toast('Tag name required', 'error');
+      return;
+    }
+    const color = tagEditor.color || TAG_COLOR_PRESETS[0];
+    setTagSaving(true);
+    const tok = localStorage.getItem('token') || '';
+    if (tagEditor.mode === 'new') {
+      const tempId = `${label}:${Date.now()}`;
+      mutateTags((prev) => {
+        if (prev.some((tag) => normalizeTagLabel(tag.label || '') === normalizeTagLabel(label))) return prev;
+        return [...prev, { id: tempId, label, color }];
+      });
+      try {
+        const res = await api.postAuth('/channel-tags', { channelId: fid, label, color }, tok);
+        const tag = (res?.tag as KanbanTag) || null;
+        if (tag) mutateTags((prev) => prev.map((t) => (t.id === tempId ? tag : t)));
+        else refreshTags?.();
+        setTagEditor(null);
+      } catch (err) {
+        mutateTags((prev) => prev.filter((tag) => tag.id !== tempId));
+        toast(getErrorMessage(err, 'Failed to save tag'), 'error');
+      } finally {
+        setTagSaving(false);
+      }
+      return;
+    }
+    if (!tagEditor.id) {
+      setTagSaving(false);
+      return;
+    }
+    mutateTags((prev) => prev.map((tag) => (tag.id === tagEditor.id ? { ...tag, label, color } : tag)));
+    try {
+      await api.patchAuth('/channel-tags', { tagId: tagEditor.id, label, color }, tok);
+      setTagEditor(null);
+    } catch (err) {
+      toast(getErrorMessage(err, 'Failed to save tag'), 'error');
+      refreshTags?.();
+    } finally {
+      setTagSaving(false);
+    }
+  };
+
+  const deleteTag = useCallback(
+    async (tag: KanbanTag) => {
+      if (!tag?.id) return;
+      const ok = await askConfirm({ title: 'Delete tag', message: `Remove #${tag.label}?`, confirmText: 'Delete' });
+      if (!ok) return;
+      mutateTags((prev) => prev.filter((t) => t.id !== tag.id));
+      if (tagEditor?.id === tag.id) setTagEditor(null);
+      try {
+        const tok = localStorage.getItem('token') || '';
+        await api.deleteAuth('/channel-tags', { tagId: tag.id }, tok);
+      } catch (err) {
+        toast(getErrorMessage(err, 'Failed to delete tag'), 'error');
+        refreshTags?.();
+      }
+    },
+    [mutateTags, refreshTags, tagEditor?.id]
+  );
+  const deleteTagFromEditor = useCallback(() => {
+    if (!tagEditor?.id) return;
+    void deleteTag({ id: tagEditor.id, label: tagEditor.label, color: tagEditor.color });
+  }, [deleteTag, tagEditor]);
+
+  const displayTags = useMemo(() => tagLibrary, [tagLibrary]);
+
+  const stats = useMemo(
+    () => [
+      { label: 'Questions', value: totalQuestions },
+      { label: 'Your answers', value: totalQuestions ? `${myAnsweredCount}/${totalQuestions}` : '0' },
+      { label: 'Ready to reveal', value: totalQuestions ? `${everyoneReadyCount}/${totalQuestions}` : '0' },
+    ],
+    [totalQuestions, myAnsweredCount, everyoneReadyCount]
+  );
+
   return (
     <div className="min-h-full space-y-4">
-      <div className="grid gap-3 md:grid-cols-3">
-        <StatCard label="Questions" value={totalQuestions} hint="In this form" />
-        <StatCard label="Your answers" value={totalQuestions ? `${myAnsweredCount}/${totalQuestions}` : '0'} hint="Saved responses" />
-        <StatCard label="Ready to reveal" value={totalQuestions ? `${everyoneReadyCount}/${totalQuestions}` : '0'} hint="All participants submitted" />
+      <ChannelStatsBar stats={stats} />
+
+      <div className="rounded-xl border border-neutral-800 bg-neutral-950/70 px-3 py-2 flex flex-wrap items-center gap-3">
+        <span className="text-xs uppercase tracking-wide text-neutral-500">Channel tags</span>
+        <button
+          className="inline-flex items-center gap-1 rounded-full border border-emerald-600/50 px-2 py-1 text-xs text-emerald-200 hover:bg-emerald-900/30"
+          onClick={openNewTagEditor}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
+            <path d="M12 5v14M5 12h14" />
+          </svg>
+          New tag
+        </button>
+        {displayTags.length === 0 ? (
+          <span className="text-xs text-neutral-500">No channel tags yet.</span>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {displayTags.map((tag) => {
+              const canonical = channelTagMap.get(normalizeTagLabel(tag.label));
+              return (
+                <span
+                  key={canonical?.id || tag.label}
+                  className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium"
+                  style={{
+                    backgroundColor: colorWithAlpha(tag.color, 0.2),
+                    borderColor: tag.color,
+                    color: getReadableTextColor(tag.color),
+                  }}
+                >
+                  #{tag.label}
+                  {canonical && (
+                    <>
+                      <button className="p-0.5 rounded-full bg-black/20 hover:bg-black/40" title="Edit tag" onClick={() => openEditTagEditor(canonical)}>
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
+                          <path d="M12 20h9" />
+                          <path d="M16.5 3.5a2.1 2.1 0 1 1 3 3L7 19l-4 1 1-4Z" />
+                        </svg>
+                      </button>
+                      <button
+                        className="p-0.5 rounded-full text-red-200 hover:bg-red-900/40"
+                        title="Delete tag"
+                        onClick={() => { void deleteTag(canonical); }}
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3">
+                          <path d="M18 6L6 18" />
+                          <path d="M6 6l12 12" />
+                        </svg>
+                      </button>
+                    </>
+                  )}
+                </span>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       <div className="rounded-2xl border border-neutral-800 bg-neutral-900/70 p-4 shadow-inner shadow-black/40">
@@ -220,7 +423,11 @@ export default function FormChannelView({ fid, members, meId }: { fid: string; m
                     onClick={async () => {
                       const ok = await askConfirm({ title: 'Delete Question', message: 'Delete this question?', confirmText: 'Delete' });
                       if (!ok) return;
-                      try { await actions.remove(q.id); } catch (e: any) { toast(e?.message || 'Failed to delete', 'error'); }
+                      try {
+                        await actions.remove(q.id);
+                      } catch (err) {
+                        toast(getErrorMessage(err, 'Failed to delete'), 'error');
+                      }
                     }}
                   >
                     ✕
@@ -291,16 +498,58 @@ export default function FormChannelView({ fid, members, meId }: { fid: string; m
           </div>
         )}
       </div>
-    </div>
-  );
-}
-
-function StatCard({ label, value, hint }: { label: string; value: string | number; hint?: string }) {
-  return (
-    <div className="rounded-2xl border border-neutral-800 bg-neutral-950/70 px-4 py-3 shadow-inner shadow-black/30">
-      <div className="text-xs uppercase tracking-wide text-neutral-500">{label}</div>
-      <div className="text-2xl font-semibold text-neutral-50">{value}</div>
-      {hint && <div className="text-xs text-neutral-500">{hint}</div>}
+      {tagEditor && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center px-4">
+          <div className="absolute inset-0 bg-black/60" onClick={() => setTagEditor(null)} />
+          <div className="relative w-full max-w-sm rounded-2xl border border-neutral-800 bg-neutral-950 p-5 shadow-2xl space-y-4">
+            <div className="text-lg font-semibold text-neutral-100">{tagEditor.mode === 'new' ? 'New tag' : `Edit #${tagEditor.label}`}</div>
+            {tagEditor.mode === 'new' && (
+              <label className="space-y-1 text-sm text-neutral-200 w-full">
+                <span className="text-xs uppercase tracking-wide text-neutral-500">Tag name</span>
+                <input
+                  className="w-full rounded-xl border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-neutral-100 focus:border-emerald-500 focus:outline-none"
+                  value={tagEditor.label}
+                  onChange={(e) => setTagEditor((prev) => (prev ? { ...prev, label: e.target.value } : prev))}
+                />
+              </label>
+            )}
+            <div className="space-y-2">
+              <div className="text-xs uppercase tracking-wide text-neutral-500">Color</div>
+              <div className="flex flex-wrap gap-2">
+                {TAG_COLOR_PRESETS.map((color) => (
+                  <button
+                    key={color}
+                    className={`h-8 w-8 rounded-full border ${tagEditor.color === color ? 'ring-2 ring-emerald-400' : 'border-white/20'}`}
+                    style={{ backgroundColor: color }}
+                    onClick={() => setTagEditor((prev) => (prev ? { ...prev, color } : prev))}
+                  />
+                ))}
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2">
+              {tagEditor.mode === 'edit' && tagEditor.id && (
+                <button
+                  className="mr-auto text-sm text-red-400 hover:text-red-200"
+                  onClick={deleteTagFromEditor}
+                  disabled={tagSaving}
+                >
+                  Delete
+                </button>
+              )}
+              <button className="px-4 py-2 rounded-full border border-neutral-700 text-sm text-neutral-200 hover:bg-neutral-900/60" onClick={() => setTagEditor(null)} disabled={tagSaving}>
+                Cancel
+              </button>
+              <button
+                className="px-4 py-2 rounded-full bg-emerald-600 text-sm text-emerald-50 hover:bg-emerald-500 disabled:opacity-50"
+                onClick={saveChannelTag}
+                disabled={tagSaving || (tagEditor.mode === 'new' && !tagEditor.label.trim())}
+              >
+                {tagSaving ? 'Saving...' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { api } from '../lib/api';
+import type { AuthUser } from '../types/auth';
 
-export default function Login({ onAuth }: { onAuth: (token: string, user: any) => void }) {
+export default function Login({ onAuth }: { onAuth: (token: string, user: AuthUser) => void }) {
   const [mode, setMode] = useState<'login' | 'signup'>('login');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -18,7 +19,7 @@ export default function Login({ onAuth }: { onAuth: (token: string, user: any) =
         setMode('login');
       } else {
         const res = await api.post(`/auth/login`, { username, password });
-        onAuth(res.token, res.user);
+        onAuth(res.token, res.user as AuthUser);
       }
     } catch (err: any) {
       setErr(err.message || 'Auth failed');

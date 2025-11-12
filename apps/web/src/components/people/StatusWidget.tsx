@@ -24,7 +24,7 @@ export function StatusWidget({
     : presence === 'idle'
     ? 'text-amber-400'
     : presence === 'mobile'
-    ? 'text-teal-400'
+    ? 'text-sky-400'
     : presence === 'online'
     ? 'text-emerald-400'
     : 'text-neutral-400';

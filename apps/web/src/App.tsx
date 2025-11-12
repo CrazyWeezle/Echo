@@ -19,7 +19,8 @@ import FormChannelView from "./components/forms/FormChannelView";
 import HabitChannelView from "./components/habits/HabitChannelView";
 import KanbanChannelView from "./components/kanban/KanbanChannelView";
 import NotesChannelView from "./components/notes/NotesChannelView";
-import type { KanbanItem, KanbanList, KanbanTag } from "./types/kanban";
+import type { KanbanList, KanbanTag } from "./types/kanban";
+import type { AuthUser } from "./types/auth";
 import UserQuickSettings from "./components/UserQuickSettings";
 import ToastHost from "./components/ToastHost";
 import ConfirmHost from "./components/ConfirmHost";
@@ -45,7 +46,7 @@ function FavGalleryVisual({ frames, fit, hover, rotate, seconds, pause, transiti
       });
     }, ms);
     return () => clearInterval(t);
-  }, [rotate, frames?.length, seconds, pause, isHover, transition]);
+  }, [rotate, frames, seconds, pause, isHover, transition]);
   useEffect(() => {
     if (fadePhase === 'in') {
       const t = setTimeout(() => { setFadePhase('idle'); setPrevIdx(null); }, 500);
@@ -120,6 +121,13 @@ type FormState = {
 type Channel = { id: string; name: string; voidId: string; type?: 'text' | 'voice' | 'announcement' | 'kanban' | 'form' | 'habit' | 'gallery' | string; linkedGalleryId?: string | null };
 type VoidWS = { id: string; name: string; avatarUrl?: string | null };
 type VoiceParticipant = { id: string; name: string; stream: MediaStream | null; avatar?: string | null; isSelf?: boolean; speaking?: boolean; muted?: boolean };
+type ServiceWorkerMessage = {
+  type?: 'OPEN_CHANNEL' | 'MUTE_CHANNEL';
+  data?: { channelId?: string };
+};
+type ReactionUser = { userId?: string | number; name?: string; username?: string; createdAt?: string };
+type ReactionInfo = { userId: string; name?: string; username?: string; createdAt?: string };
+type FriendSummary = { id: string; username?: string; name?: string; avatarUrl?: string | null; status?: string | null; nameColor?: string | null };
 
 const CHANNEL_TYPE_OPTIONS = [
   { id: 'text', label: 'Text', desc: 'Chat threads' },
@@ -135,8 +143,13 @@ const CHANNEL_TYPE_OPTIONS = [
 // --- Gate component: no conditional hooks here, only simple state ---
 export default function App() {
   const [token, setToken] = useState<string | null>(() => getAuthToken());
-  const [user, setUser]   = useState<any>(() => {
-    try { const raw = localStorage.getItem("user"); return raw ? JSON.parse(raw) : null; } catch { return null; }
+  const [user, setUser] = useState<AuthUser | null>(() => {
+    try {
+      const raw = localStorage.getItem("user");
+      return raw ? (JSON.parse(raw) as AuthUser) : null;
+    } catch {
+      return null;
+    }
   });
 
   useEffect(() => {
@@ -144,9 +157,13 @@ export default function App() {
     return () => unsub();
   }, []);
 
-  const handleAuth = (t: string, u: any) => {
+  const handleAuth = (t: string, u: AuthUser) => {
     setAuthToken(t);
-    try { localStorage.setItem("user", JSON.stringify(u)); } catch {}
+    try {
+      localStorage.setItem("user", JSON.stringify(u));
+    } catch {
+      /* noop */
+    }
     setUser(u);
   };
 
@@ -163,10 +180,16 @@ export default function App() {
 }
 
 // --- Authenticated app: all your previous logic lives here unconditionally ---
-function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onTokenChange: (token: string | null) => void }) {
+function ChatApp({ token, user, onTokenChange }: { token: string; user: AuthUser | null; onTokenChange: (token: string | null) => void }) {
   const [status, setStatus] = useState<"connecting" | "connected" | "error" | "disconnected">("connecting");
   // Default-enable in-app notifications on first run
-  useEffect(() => { try { if (localStorage.getItem('notifEnabled') == null) localStorage.setItem('notifEnabled','1'); } catch {} }, []);
+  useEffect(() => {
+    try {
+      if (localStorage.getItem('notifEnabled') == null) localStorage.setItem('notifEnabled', '1');
+    } catch {
+      /* noop */
+    }
+  }, []);
   // Nudge to enable permissions on web
   useEffect(() => {
     try {
@@ -174,13 +197,13 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
         const p = Notification.permission;
         if (p !== 'granted') setTimeout(() => toast('Enable notifications for instant alerts (browser settings)', 'info'), 1200);
       }
-    } catch {}
+    } catch {
+      /* noop */
+    }
   }, []);
 
   // identity
   const [me, setMe] = useState<{ userId?: string; name?: string; avatarUrl?: string | null }>(() => getLocalUser());
-  const [askName, setAskName] = useState(false);
-  const [tempName, setTempName] = useState(me.name || "");
 
   // Register for push notifications in Capacitor environments (no-op on web)
   useEffect(() => {
@@ -191,29 +214,32 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
   }, [token]);
   // Re-register push on app foreground (covers token invalidation and SW restart)
   useEffect(() => {
-    const onFocus = () => { try { if (token) { initPush(token).catch(()=>{}); registerWebPush(token).catch(()=>{}); } } catch {} };
+    const onFocus = () => { try { if (token) { initPush(token).catch(()=>{}); registerWebPush(token).catch(()=>{}); } } catch { /* noop */ } };
     window.addEventListener('focus', onFocus);
     return () => window.removeEventListener('focus', onFocus);
   }, [token]);
 
   // Optional: handle postMessage from SW to open channels (basic example)
   useEffect(() => {
-    function onMsg(e: MessageEvent) {
+    const handleMessage = (event: Event) => {
       try {
-        const m = e.data || {};
-        if (m.type === 'OPEN_CHANNEL' && m.data?.channelId) {
-          const rid = String(m.data.channelId);
+        const msgEvent = event as MessageEvent<ServiceWorkerMessage>;
+        const payload = msgEvent.data || {};
+        if (payload.type === 'OPEN_CHANNEL' && payload.data?.channelId) {
+          const rid = String(payload.data.channelId);
           const [voidId, short] = rid.split(':');
           if (voidId && short) { setCurrentVoidId(voidId); setCurrentChannelId(short); }
-        } else if (m.type === 'MUTE_CHANNEL' && m.data?.channelId) {
-          const rid = String(m.data.channelId);
+        } else if (payload.type === 'MUTE_CHANNEL' && payload.data?.channelId) {
+          const rid = String(payload.data.channelId);
           const spaceId = rid.includes(':') ? rid.split(':')[0] : rid;
           if (spaceId) setMutedSpaces(prev => ({ ...prev, [spaceId]: true }));
         }
-      } catch {}
-    }
-    if (navigator.serviceWorker) navigator.serviceWorker.addEventListener('message', onMsg as any);
-    return () => { if (navigator.serviceWorker) navigator.serviceWorker.removeEventListener('message', onMsg as any); };
+      } catch {
+        /* noop */
+      }
+    };
+    if (navigator.serviceWorker) navigator.serviceWorker.addEventListener('message', handleMessage);
+    return () => { if (navigator.serviceWorker) navigator.serviceWorker.removeEventListener('message', handleMessage); };
   }, []);
 
   // Voids / Channels
@@ -236,7 +262,13 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
   const [channelTypeById, setChannelTypeById] = useState<Record<string, string>>(() => {
     try { const raw = localStorage.getItem('channelTypeById'); return raw ? JSON.parse(raw) : {}; } catch { return {}; }
   });
-  useEffect(() => { try { localStorage.setItem('channelTypeById', JSON.stringify(channelTypeById)); } catch {} }, [channelTypeById]);
+  useEffect(() => {
+    try {
+      localStorage.setItem('channelTypeById', JSON.stringify(channelTypeById));
+    } catch {
+      /* noop */
+    }
+  }, [channelTypeById]);
   const [currentChannelId, setCurrentChannelId] = useState<string>(() => {
     try { return localStorage.getItem('currentChannelId') || "general"; } catch { return "general"; }
   });
@@ -273,14 +305,19 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
       return ax.localeCompare(bx, undefined, { sensitivity: "base" });
     });
   }, [members]);
-  const [activityByUser, setActivityByUser] = useState<Record<string, string>>({});
   const [unread, setUnread] = useState<Record<string, number>>({});
   // Throttle notifications: one per channel until user visits it.
   // Persist across reloads so you don't get spam after refresh.
   const [notified, setNotified] = useState<Record<string, boolean>>(() => {
     try { const raw = localStorage.getItem('notifiedChannels'); return raw ? JSON.parse(raw) : {}; } catch { return {}; }
   });
-  useEffect(() => { try { localStorage.setItem('notifiedChannels', JSON.stringify(notified)); } catch {} }, [notified]);
+  useEffect(() => {
+    try {
+      localStorage.setItem('notifiedChannels', JSON.stringify(notified));
+    } catch {
+      /* noop */
+    }
+  }, [notified]);
   const notifiedRef = useRef<Record<string, boolean>>({});
   useEffect(() => { notifiedRef.current = notified; }, [notified]);
   // Reaction hover details cache: messageId -> emoji -> items
@@ -346,12 +383,21 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
     try {
       const tok = localStorage.getItem('token') || '';
       const res = await api.getAuth(`/messages/reactions?messageId=${encodeURIComponent(messageId)}`, tok);
-      const map: Record<string, { users: { userId: string; name?: string; username?: string; createdAt?: string }[] }> = {};
-      for (const [emoji, list] of Object.entries(res?.reactions || {})) {
-        map[emoji] = { users: (list as any[]).map(it => ({ userId: String((it as any).userId || ''), name: (it as any).name ? String((it as any).name) : undefined, username: (it as any).username ? String((it as any).username) : undefined, createdAt: (it as any).createdAt })) };
+      const map: Record<string, { users: ReactionInfo[] }> = {};
+      const entries = Object.entries((res?.reactions ?? {}) as Record<string, ReactionUser[]>) as [string, ReactionUser[]][];
+      for (const [emoji, list] of entries) {
+        const users = (list || []).map<ReactionInfo>((item) => ({
+          userId: String(item?.userId ?? ''),
+          name: item?.name ?? undefined,
+          username: item?.username ?? undefined,
+          createdAt: item?.createdAt,
+        }));
+        map[emoji] = { users };
       }
       setReactionInfoByMsg(prev => ({ ...prev, [messageId]: map }));
-    } catch {}
+    } catch {
+      /* noop */
+    }
   }
 
   function timeAgo(ts?: string) {
@@ -402,14 +448,21 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
     // Detect browser support for passive event listeners and prepare options objects safely
     let supportsPassive = false;
     try {
-      const opts = Object.defineProperty({}, 'passive', { get() { supportsPassive = true; return false; } });
-      window.addEventListener('test-passive', () => {}, opts);
-      window.removeEventListener('test-passive', () => {}, opts as any);
-    } catch {}
-    const optPassiveTrue = supportsPassive ? { passive: true } as any : false as any;
-    const optPassiveFalse = supportsPassive ? { passive: false } as any : false as any;
+      const opts = Object.defineProperty({}, 'passive', {
+        get() {
+          supportsPassive = true;
+          return false;
+        },
+      }) as AddEventListenerOptions;
+      const noop = () => undefined;
+      window.addEventListener('test-passive', noop, opts);
+      window.removeEventListener('test-passive', noop, opts);
+    } catch {
+      /* noop */
+    }
+    const optPassiveTrue: AddEventListenerOptions | boolean = supportsPassive ? { passive: true } : false;
+    const optPassiveFalse: AddEventListenerOptions | boolean = supportsPassive ? { passive: false } : false;
     let startX = 0, startY = 0, active = false, decided = false;
-    const thresh = 60; // min dx to commit open/close
     const drawerW = Math.min(window.innerWidth * 0.8, 360); // px
     function onStart(e: TouchEvent) {
       if (!currentVoidId) return; // nothing when no space selected
@@ -456,7 +509,7 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
         }
       }
       // When actively swiping a panel, prevent vertical scroll jitter
-      if (decided && (e as any)?.cancelable) e.preventDefault();
+      if (decided && e.cancelable) e.preventDefault();
       let dist = 0;
       if (swipeModeRef.current === 'open') {
         dist = Math.min(drawerW, Math.max(0, Math.abs(dx)));
@@ -471,7 +524,7 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
       swipeProgRef.current = p;
       setSwipeProgress(p);
     }
-    function onEnd(e: TouchEvent) {
+    function onEnd() {
       if (!active) return; active = false;
       const prog = swipeProgRef.current;
       const panel = swipePanelRef.current;
@@ -494,19 +547,19 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
     el.addEventListener('touchmove', onMove, optPassiveFalse);
     el.addEventListener('touchend', onEnd, optPassiveTrue);
     return () => {
-      el.removeEventListener('touchstart', onStart as any, optPassiveTrue);
-      el.removeEventListener('touchmove', onMove as any, optPassiveFalse);
-      el.removeEventListener('touchend', onEnd as any, optPassiveTrue);
+      el.removeEventListener('touchstart', onStart, optPassiveTrue);
+      el.removeEventListener('touchmove', onMove, optPassiveFalse);
+      el.removeEventListener('touchend', onEnd, optPassiveTrue);
     };
   }, [currentVoidId, showPeople]);
   const [chanOrder, setChanOrder] = useState<Record<string,string[]>>(() => {
     try { const s = localStorage.getItem('chanOrder'); return s ? JSON.parse(s) : {}; } catch { return {}; }
   });
-  useEffect(() => { try { localStorage.setItem('spaceOrder', JSON.stringify(spaceOrder)); } catch {} }, [spaceOrder]);
-  useEffect(() => { try { localStorage.setItem('chanOrder', JSON.stringify(chanOrder)); } catch {} }, [chanOrder]);
+  useEffect(() => { try { localStorage.setItem('spaceOrder', JSON.stringify(spaceOrder)); } catch { /* noop */ } }, [spaceOrder]);
+  useEffect(() => { try { localStorage.setItem('chanOrder', JSON.stringify(chanOrder)); } catch { /* noop */ } }, [chanOrder]);
   // Persist current selection so refresh restores the view
-  useEffect(() => { try { localStorage.setItem('currentVoidId', currentVoidId); } catch {} }, [currentVoidId]);
-  useEffect(() => { try { localStorage.setItem('currentChannelId', currentChannelId); } catch {} }, [currentChannelId]);
+  useEffect(() => { try { localStorage.setItem('currentVoidId', currentVoidId); } catch { /* noop */ } }, [currentVoidId]);
+  useEffect(() => { try { localStorage.setItem('currentChannelId', currentChannelId); } catch { /* noop */ } }, [currentChannelId]);
   // --- Focus/visibility heartbeat to improve server push routing (presence-aware)
   useEffect(() => {
     const emitFocus = () => {
@@ -515,7 +568,7 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
         const vid = currentVoidIdRef.current;
         const cid = currentChannelIdRef.current ? `${vid}:${currentChannelIdRef.current}` : '';
         socket.emit('client:focus', { focused, voidId: vid, channelId: cid });
-      } catch {}
+      } catch { /* noop */ }
     };
     const onFocus = () => emitFocus();
     const onBlur = () => emitFocus();
@@ -539,14 +592,16 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
       const tok = localStorage.getItem('token') || '';
       const r = await api.getAuth('/friends/list', tok);
       const map: Record<string, boolean> = {};
-      (r.friends || []).forEach((f: any) => { map[f.id] = true; });
+      const list: FriendSummary[] = Array.isArray(r?.friends) ? r.friends : [];
+      list.forEach((f) => { if (f?.id) map[f.id] = true; });
       setFriendIds(map);
+      setFriendsList(list);
       try {
         const rq = await api.getAuth('/friends/requests', tok);
         const incoming = Array.isArray(rq?.incoming) ? rq.incoming.length : 0;
         setFriendReqCount(incoming || 0);
-      } catch {}
-    } catch {}
+      } catch { /* noop */ }
+    } catch { /* noop */ }
   }
   useEffect(() => { refreshFriends(); }, []);
   useEffect(() => {
@@ -565,12 +620,12 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
     const v = Number(localStorage.getItem('peopleW') || '224');
     return isFinite(v) && v >= 160 && v <= 420 ? v : 224;
   });
-  useEffect(() => { try { localStorage.setItem('chanW', String(chanW)); } catch {} }, [chanW]);
-  useEffect(() => { try { localStorage.setItem('peopleW', String(peopleW)); } catch {} }, [peopleW]);
+  useEffect(() => { try { localStorage.setItem('chanW', String(chanW)); } catch { /* noop */ } }, [chanW]);
+  useEffect(() => { try { localStorage.setItem('peopleW', String(peopleW)); } catch { /* noop */ } }, [peopleW]);
 
   // Reconnect sockets immediately when network comes back
   useEffect(() => {
-    const onOnline = () => { try { if (!socket.connected) connectSocket(); } catch {} };
+    const onOnline = () => { try { if (!socket.connected) connectSocket(); } catch { /* noop */ } };
     window.addEventListener('online', onOnline);
     return () => window.removeEventListener('online', onOnline);
   }, []);
@@ -578,7 +633,7 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
   // Hint presence changes based on tab visibility
   useEffect(() => {
     const onVis = () => {
-      try { socket.emit('presence:visibility', { state: document.visibilityState }); } catch {}
+      try { socket.emit('presence:visibility', { state: document.visibilityState }); } catch { /* noop */ }
     };
     document.addEventListener('visibilitychange', onVis);
     return () => document.removeEventListener('visibilitychange', onVis);
@@ -588,9 +643,9 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
   useEffect(() => {
     const conn: any = (navigator as any).connection || (navigator as any).mozConnection || (navigator as any).webkitConnection;
     if (!conn || !conn.addEventListener) return;
-    const onChange = () => { try { if (!socket.connected) connectSocket(); } catch {} };
+    const onChange = () => { try { if (!socket.connected) connectSocket(); } catch { /* noop */ } };
     conn.addEventListener('change', onChange);
-    return () => { try { conn.removeEventListener('change', onChange); } catch {} };
+    return () => { try { conn.removeEventListener('change', onChange); } catch { /* noop */ } };
   }, []);
 
   function startDrag(which: 'chan' | 'people', clientX: number) {
@@ -611,11 +666,15 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
 
   const [text, setText] = useState("");
   const currentChannel = channels.find((c) => c.id === currentChannelId);
-  const [kanbanByChan, setKanbanByChan] = useState<Record<string, KanbanList[]>>({});
-  const [kanbanTagsByChan, setKanbanTagsByChan] = useState<Record<string, KanbanTag[]>>({});
-  const currentKanbanFqid = currentChannel?.type === 'kanban' ? fq(currentVoidId, currentChannelId) : null;
-  const currentKanbanLists = currentKanbanFqid ? (kanbanByChan[currentKanbanFqid] || []) : [];
-  const currentKanbanTags = currentKanbanFqid ? (kanbanTagsByChan[currentKanbanFqid] || []) : [];
+const [kanbanByChan, setKanbanByChan] = useState<Record<string, KanbanList[]>>({});
+const [channelTagsByChan, setChannelTagsByChan] = useState<Record<string, KanbanTag[]>>({});
+const channelTagsRef = useRef(channelTagsByChan);
+useEffect(() => { channelTagsRef.current = channelTagsByChan; }, [channelTagsByChan]);
+const currentChannelFqid = currentVoidId && currentChannelId ? fq(currentVoidId, currentChannelId) : null;
+const currentKanbanFqid = currentChannel?.type === 'kanban' ? fq(currentVoidId, currentChannelId) : null;
+const currentKanbanLists = currentKanbanFqid ? (kanbanByChan[currentKanbanFqid] || []) : [];
+const currentKanbanTags = currentKanbanFqid ? (channelTagsByChan[currentKanbanFqid] || []) : [];
+const currentChannelTags = currentChannelFqid ? (channelTagsByChan[currentChannelFqid] || []) : [];
   const [pendingUploads, setPendingUploads] = useState<{ url: string; contentType?: string; name?: string; size?: number }[]>([]);
   const [spoiler, setSpoiler] = useState<boolean>(false);
   const [revealedSpoilers, setRevealedSpoilers] = useState<Record<string, boolean>>({});
@@ -629,7 +688,7 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
       timers[cid] = window.setTimeout(async () => {
         try { await reloadForm(cid); } finally { delete timers[cid]; }
       }, delay);
-    } catch {}
+    } catch { /* noop */ }
   }
   // Track local submission state (per-question) for the current user to show a checkmark after pressing Enter
   const [myFormSubmitted, setMyFormSubmitted] = useState<Record<string, boolean>>({});
@@ -647,16 +706,16 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
         const res = await api.getAuth('/users/me/favorites', tok);
         const arr = Array.isArray(res?.favorites) ? res.favorites as string[] : [];
         setFavorites(arr);
-        try { localStorage.setItem('favorites', JSON.stringify(arr)); } catch {}
-      } catch {}
+        try { localStorage.setItem('favorites', JSON.stringify(arr)); } catch { /* noop */ }
+      } catch { /* noop */ }
     })();
   }, [token]);
-  useEffect(() => { try { localStorage.setItem('favorites', JSON.stringify(favorites)); } catch {} }, [favorites]);
+  useEffect(() => { try { localStorage.setItem('favorites', JSON.stringify(favorites)); } catch { /* noop */ } }, [favorites]);
   const isFav = (vId: string, cId: string) => favorites.includes(fq(vId, cId));
   const toggleFav = (vId: string, cId: string) => {
     const id = fq(vId, cId);
     setFavorites(prev => { if (prev.includes(id)) return prev.filter(x => x !== id); if (prev.length >= 4) { toast('You can pin up to 4 favorites', 'error'); return prev; } return [...prev, id]; });
-    (async () => { try { const tok = localStorage.getItem('token') || ''; if (!tok) return; if (favorites.includes(id)) await api.deleteAuth('/users/me/favorites', { id }, tok); else await api.postAuth('/users/me/favorites', { id }, tok); } catch {} })();
+    (async () => { try { const tok = localStorage.getItem('token') || ''; if (!tok) return; if (favorites.includes(id)) await api.deleteAuth('/users/me/favorites', { id }, tok); else await api.postAuth('/users/me/favorites', { id }, tok); } catch { /* noop */ } })();
   };
   // Kanban list favorites support (id format: klist:<voidId>:<channelId>:<listId>)
   const listFavId = (vId: string, cId: string, listId: string) => `klist:${vId}:${cId}:${listId}`;
@@ -664,7 +723,7 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
   const toggleListFav = (vId: string, cId: string, listId: string) => {
     const id = listFavId(vId, cId, listId);
     setFavorites(prev => { if (prev.includes(id)) return prev.filter(x => x !== id); if (prev.length >= 4) { toast('You can pin up to 4 favorites', 'error'); return prev; } return [...prev, id]; });
-    (async () => { try { const tok = localStorage.getItem('token') || ''; if (!tok) return; if (favorites.includes(id)) await api.deleteAuth('/users/me/favorites', { id }, tok); else await api.postAuth('/users/me/favorites', { id }, tok); } catch {} })();
+    (async () => { try { const tok = localStorage.getItem('token') || ''; if (!tok) return; if (favorites.includes(id)) await api.deleteAuth('/users/me/favorites', { id }, tok); else await api.postAuth('/users/me/favorites', { id }, tok); } catch { /* noop */ } })();
   };
   function parseListFav(fid: string): { vId: string; cIdRaw: string; fqid: string; listId: string } | null {
     if (!fid.startsWith('klist:')) return null;
@@ -724,7 +783,7 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
       const raw = localStorage.getItem('favEmojis');
       const arr = raw ? JSON.parse(raw) : null;
       if (Array.isArray(arr) && arr.length === 6 && arr.every(x => typeof x === 'string')) return arr as string[];
-    } catch {}
+    } catch { /* noop */ }
     return defaultFavEmojis;
   }
   const [favEmojis, setFavEmojis] = useState<string[]>(getFavEmojis());
@@ -860,7 +919,7 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
     if (!ch || ch === '?' || ch === '??') return;
     setRecentEmojis(prev => {
       const arr = [ch, ...prev.filter(c => c !== ch)].slice(0, 24);
-      try { localStorage.setItem('emojiRecent', JSON.stringify(arr)); } catch {}
+      try { localStorage.setItem('emojiRecent', JSON.stringify(arr)); } catch { /* noop */ }
       return arr;
     });
   }
@@ -883,7 +942,7 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
       (window as any).__echoVoids = voids;
       const cache = voids.filter(v=>!String(v.id).startsWith('dm_')).map(v=>({ id: v.id, name: v.name||v.id }));
       localStorage.setItem('__echo_spaces_cache__', JSON.stringify(cache));
-    } catch {}
+    } catch { /* noop */ }
   }, [voids]);
   const [viewUserId, setViewUserId] = useState<string | null>(null);
   const [viewUserCard, setViewUserCard] = useState<null | { id: string; x: number; y: number }>(null);
@@ -897,7 +956,7 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
   const [outbox, setOutbox] = useState<OutboxItem[]>(() => {
     try { const s = localStorage.getItem('outbox'); return s ? JSON.parse(s) : []; } catch { return []; }
   });
-  useEffect(() => { try { localStorage.setItem('outbox', JSON.stringify(outbox)); } catch {} }, [outbox]);
+  useEffect(() => { try { localStorage.setItem('outbox', JSON.stringify(outbox)); } catch { /* noop */ } }, [outbox]);
   const heartbeatRef = useRef<number | null>(null);
   // Composer kebab menu (mobile)
   const [composerMenuOpen, setComposerMenuOpen] = useState(false);
@@ -949,6 +1008,7 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
   const [showJump, setShowJump] = useState(false);
   const [unreadMarkerByChan, setUnreadMarkerByChan] = useState<Record<string, string | null>>({});
   const [friendIds, setFriendIds] = useState<Record<string, boolean>>({});
+  const [friendsList, setFriendsList] = useState<FriendSummary[]>([]);
   const [friendReqCount, setFriendReqCount] = useState<number>(0);
   const [friendRingEnabled, setFriendRingEnabled] = useState<boolean>(() => {
     try {
@@ -956,7 +1016,7 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
       if (raw) { const u = JSON.parse(raw); if (typeof u?.friendRingEnabled === 'boolean') return !!u.friendRingEnabled; }
       const f = localStorage.getItem('friendRingEnabled');
       if (f === '0') return false; if (f === '1') return true;
-    } catch {}
+    } catch { /* noop */ }
     return true;
   });
   const [friendRingColor, setFriendRingColor] = useState<string>(() => {
@@ -974,18 +1034,23 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
   const [friendsOpen, setFriendsOpen] = useState(false);
   // Clear unseen badge when opening the Friends modal
   useEffect(() => { if (friendsOpen) setFriendReqCount(0); }, [friendsOpen]);
+  const friendsOnline = useMemo(() => {
+    if (!friendsList.length || !globalUserIds.length) return [];
+    const onlineSet = new Set(globalUserIds);
+    return friendsList.filter((friend) => friend.id && onlineSet.has(friend.id));
+  }, [friendsList, globalUserIds]);
   // DM icons can be hidden from the Spaces column (still available under Direct Messages)
   const [hiddenDms, setHiddenDms] = useState<string[]>(() => {
     try { const s = localStorage.getItem('hiddenDMs'); return s ? JSON.parse(s) : []; } catch { return []; }
   });
-  useEffect(() => { try { localStorage.setItem('hiddenDMs', JSON.stringify(hiddenDms)); } catch {} }, [hiddenDms]);
+  useEffect(() => { try { localStorage.setItem('hiddenDMs', JSON.stringify(hiddenDms)); } catch { /* noop */ } }, [hiddenDms]);
   // Hidden spaces sent to the Vault (excluded from lists)
   const [hiddenSpaces, setHiddenSpaces] = useState<Record<string, boolean>>(() => {
     try { const s = localStorage.getItem('hiddenSpaces'); return s ? JSON.parse(s) : {}; } catch { return {}; }
   });
-  useEffect(() => { try { localStorage.setItem('hiddenSpaces', JSON.stringify(hiddenSpaces)); } catch {} }, [hiddenSpaces]);
+  useEffect(() => { try { localStorage.setItem('hiddenSpaces', JSON.stringify(hiddenSpaces)); } catch { /* noop */ } }, [hiddenSpaces]);
   useEffect(() => {
-    function onHidden(e: any) { try { const hs = e?.detail || {}; if (hs && typeof hs === 'object') setHiddenSpaces(hs); } catch {} }
+    function onHidden(e: any) { try { const hs = e?.detail || {}; if (hs && typeof hs === 'object') setHiddenSpaces(hs); } catch { /* noop */ } }
     (window as any).addEventListener('echo:hiddenSpaces', onHidden);
     return () => (window as any).removeEventListener('echo:hiddenSpaces', onHidden);
   }, []);
@@ -1004,11 +1069,11 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
       if (navigator.serviceWorker && navigator.serviceWorker.controller) {
         navigator.serviceWorker.controller.postMessage({ type: 'SET_MUTED_SPACES', data: effective });
       }
-    } catch {}
+    } catch { /* noop */ }
   }, [mutedSpaces, hiddenSpaces]);
   // Listen for external mutedSpaces updates (from settings modal)
   useEffect(() => {
-    function onMuted(e: any) { try { const ms = e?.detail || {}; if (ms && typeof ms === 'object') setMutedSpaces(ms); } catch {} }
+    function onMuted(e: any) { try { const ms = e?.detail || {}; if (ms && typeof ms === 'object') setMutedSpaces(ms); } catch { /* noop */ } }
     (window as any).addEventListener('echo:mutedSpaces', onMuted);
     return () => (window as any).removeEventListener('echo:mutedSpaces', onMuted);
   }, []);
@@ -1134,12 +1199,12 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
       source.connect(analyser);
       meterNodesRef.current.set(id, { analyser, data, source });
       startMetersLoop();
-    } catch {}
+    } catch { /* noop */ }
   }
   function stopMeter(id: string) {
     const node = meterNodesRef.current.get(id);
     if (!node) return;
-    try { node.source.disconnect(); } catch {}
+    try { node.source.disconnect(); } catch { /* noop */ }
     meterNodesRef.current.delete(id);
     setVoiceLevels(prev => { const n = { ...prev }; delete n[id]; return n; });
     if (meterNodesRef.current.size === 0) stopMetersLoop();
@@ -1156,15 +1221,15 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
       const cur = localStreamRef.current?.getAudioTracks?.()[0];
       const curId = (cur?.getSettings?.() as any)?.deviceId || null;
       if (curId && !selectedInputId) setSelectedInputId(curId);
-    } catch {}
+    } catch { /* noop */ }
   }
 
   async function applyOutputDevice(sinkId: string | null) {
     try {
       for (const el of audioElsRef.current.values()) {
-        try { if (el && typeof (el as any).setSinkId === 'function' && sinkId) { await (el as any).setSinkId(sinkId); } } catch {}
+        try { if (el && typeof (el as any).setSinkId === 'function' && sinkId) { await (el as any).setSinkId(sinkId); } } catch { /* noop */ }
       }
-    } catch {}
+    } catch { /* noop */ }
   }
 
   async function switchMicrophone(deviceId: string) {
@@ -1177,10 +1242,10 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
       // Replace on all peer connections
       for (const pc of pcMapRef.current.values()) {
         const sender = pc.getSenders().find(s => s.track && s.track.kind === 'audio');
-        try { await sender?.replaceTrack(newTrack); } catch {}
+        try { await sender?.replaceTrack(newTrack); } catch { /* noop */ }
       }
       // Stop previous track and update local stream
-      if (localStreamRef.current) { for (const t of localStreamRef.current.getAudioTracks()) { try { t.stop(); } catch {} } }
+      if (localStreamRef.current) { for (const t of localStreamRef.current.getAudioTracks()) { try { t.stop(); } catch { /* noop */ } } }
       localStreamRef.current = newStream;
       // Update meter
       stopMeter('self');
@@ -1214,7 +1279,7 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
           if (turnUser && turnPass) iceServers.push({ urls: turnUrl, username: turnUser, credential: turnPass });
           else iceServers.push({ urls: turnUrl });
         }
-      } catch {}
+      } catch { /* noop */ }
       pc = new RTCPeerConnection({ iceServers });
       pc.onicecandidate = (ev) => {
         if (ev.candidate) {
@@ -1257,7 +1322,7 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
   async function renegotiatePeer(peerId: string) {
     try {
       await createAndSendOffer(peerId);
-    } catch {}
+    } catch { /* noop */ }
   }
   async function handleVoiceSignal({ from, payload }: any) {
     const type = payload?.type;
@@ -1271,12 +1336,12 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
     } else if (type === 'answer') {
       await pc.setRemoteDescription({ type: 'answer', sdp: payload.sdp } as any);
     } else if (type === 'candidate') {
-      try { await pc.addIceCandidate(payload.candidate); } catch {}
+      try { await pc.addIceCandidate(payload.candidate); } catch { /* noop */ }
     }
   }
   function cleanupVoicePeer(peerId: string) {
     const pc = pcMapRef.current.get(peerId);
-    if (pc) { try { pc.close(); } catch {} pcMapRef.current.delete(peerId); }
+    if (pc) { try { pc.close(); } catch { /* noop */ } pcMapRef.current.delete(peerId); }
     remoteStreamsRef.current.delete(peerId);
     setRemoteVideoStreams(prev => { const next = { ...prev }; delete next[peerId]; return next; });
     stopMeter(peerId);
@@ -1304,7 +1369,7 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
       }
       const home = created[payload.homeKey] || created['general'];
       if (home) {
-        try { await api.patchAuth('/spaces', { spaceId: sid, homeChannelId: home.id }, token); } catch {}
+        try { await api.patchAuth('/spaces', { spaceId: sid, homeChannelId: home.id }, token); } catch { /* noop */ }
       }
       socket.emit('void:list');
       setCurrentVoidId(sid);
@@ -1432,18 +1497,18 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
       setStatus("connected");
       socket.emit("void:list");
       // Kick off heartbeat to keep presence fresh
-      try { if (heartbeatRef.current) clearInterval(heartbeatRef.current); } catch {}
+      try { if (heartbeatRef.current) clearInterval(heartbeatRef.current); } catch { /* noop */ }
       heartbeatRef.current = window.setInterval(() => {
-        try { socket.emit('presence:ping', { ts: Date.now() }); } catch {}
+        try { socket.emit('presence:ping', { ts: Date.now() }); } catch { /* noop */ }
       }, 15000);
       // Flush any queued outbox messages
       try {
         setOutbox(prev => {
           const items = [...prev];
-          for (const it of items) { try { socket.emit('message:send', it); } catch {} }
+          for (const it of items) { try { socket.emit('message:send', it); } catch { /* noop */ } }
           return prev; // Keep until ack; onNew will remove by tempId
         });
-      } catch {}
+      } catch { /* noop */ }
       if (currentVoidId) {
         socket.emit("void:switch", { voidId: currentVoidId });
         socket.emit("channel:list", { voidId: currentVoidId });
@@ -1458,7 +1523,7 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
             const tok = localStorage.getItem('token') || '';
             const res = await api.getAuth(`/spaces/members?spaceId=${encodeURIComponent(currentVoidId)}`, tok);
             setMembers(res.members || []);
-          } catch {}
+          } catch { /* noop */ }
         })();
       }
       // seed toneUrl so notifications use custom sound even before profile is reopened
@@ -1468,7 +1533,7 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
           const u = await api.getAuth('/users/me', tok);
           if (u?.toneUrl) localStorage.setItem('toneUrl', u.toneUrl);
           if (u?.nameColor) localStorage.setItem('nameColor', u.nameColor); else localStorage.removeItem('nameColor');
-        } catch {}
+        } catch { /* noop */ }
       })();
     };
     const onDisconnect = () => { setStatus("disconnected"); if (voiceJoined) leaveVoice(); };
@@ -1485,10 +1550,10 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
             (socket as any).auth = { ...(socket as any).auth, token: nt };
             setStatus('connecting');
             // auth will be updated by effect; reconnect shortly
-            setTimeout(() => { try { connectSocket(); } catch {} }, 50);
+            setTimeout(() => { try { connectSocket(); } catch { /* noop */ } }, 50);
           }
         }
-      } catch {}
+      } catch { /* noop */ }
     };
 
     const onAuthAccepted = ({ userId, name, avatarUrl }: { userId: string; name: string; avatarUrl?: string | null }) => {
@@ -1534,7 +1599,7 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
           for (const c of channels) { const fid = fq(voidId, c.id); if (c.type) next[fid] = String(c.type); }
           return next;
         });
-      } catch {}
+      } catch { /* noop */ }
       setChanOrder((prev) => {
         const cur = prev[voidId] || [];
         const known = new Set(cur);
@@ -1562,7 +1627,7 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
           if (curMeta.type === 'kanban') loadKanbanIfNeeded(fqid);
           if (curMeta.type === 'form') loadFormIfNeeded(fqid);
         }
-      } catch {}
+      } catch { /* noop */ }
     };
 
     const onBacklog = ({ voidId, channelId, messages }: { voidId: string; channelId: string; messages: Msg[] }) => {
@@ -1579,7 +1644,7 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
         setKanbanByChan(old => ({ ...old, [channelId]: lists }));
       }
       if (Array.isArray(tags)) {
-        setKanbanTagsByChan(old => ({ ...old, [channelId]: tags }));
+        setChannelTagsByChan(old => ({ ...old, [channelId]: tags }));
       }
     }
     function onFormState({ channelId, questions, allSubmitted, participants }: { channelId: string; questions: FormQuestion[]; allSubmitted?: Record<string, boolean>; participants?: string[] }) {
@@ -1767,7 +1832,7 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
         return { ...old, [fid]: list };
       });
       // Proactively refresh preview data for favorites (keeps gallery frame fresh)
-      try { if (favorites.includes(fid)) refreshPreview(fid); } catch {}
+      try { if (favorites.includes(fid)) refreshPreview(fid); } catch { /* noop */ }
       // Notifications: skip for our own messages
       if (isMineMsg) return;
       // Suppress notifications for muted or hidden (vaulted) spaces/DMs
@@ -1784,7 +1849,7 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
           // Prefer persisted toneUrl; fallback to user JSON if needed
           let toneUrl = localStorage.getItem('toneUrl');
           if (!toneUrl) {
-            const stored = localStorage.getItem('user'); let u: any = null; try { if (stored) u = JSON.parse(stored); } catch {}
+            const stored = localStorage.getItem('user'); let u: any = null; try { if (stored) u = JSON.parse(stored); } catch { /* noop */ }
             toneUrl = u?.toneUrl || null;
           }
           if (toneUrl) new Audio(toneUrl).play().catch(()=>{}); else {
@@ -1800,7 +1865,7 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
             n.onclick = () => { window.focus(); n.close(); };
           }
         }
-      } catch {}
+      } catch { /* noop */ }
       };
 
     connectSocket();
@@ -1883,7 +1948,7 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
           const raw = localStorage.getItem('user');
           const prev = raw ? JSON.parse(raw) : {};
           localStorage.setItem('user', JSON.stringify({ ...prev, status }));
-        } catch {}
+        } catch { /* noop */ }
       }
     };
     socket.on("user:status", onUserStatus);
@@ -1925,7 +1990,7 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
       socket.off("user:notify", onSpaceNotify);
       document.removeEventListener("visibilitychange", onVis);
       disconnectSocket();
-      try { if (heartbeatRef.current) { clearInterval(heartbeatRef.current); heartbeatRef.current = null; } } catch {}
+      try { if (heartbeatRef.current) { clearInterval(heartbeatRef.current); heartbeatRef.current = null; } } catch { /* noop */ }
     };
   }, [currentVoidId, currentChannelId, token, onTokenChange]);
 
@@ -1967,7 +2032,7 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
         const el = favScrollRefs.current[fid];
         if (el) el.scrollTop = el.scrollHeight;
       }
-    } catch {}
+    } catch { /* noop */ }
   }, [favorites, msgsByKey, previewsByChan, kanbanByChan]);
 
   // actions
@@ -2018,7 +2083,7 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
     setOutbox(prev => [...prev, payload]);
     try {
       socket.emit("message:send", payload);
-    } catch {}
+    } catch { /* noop */ }
     setText(""); setPendingUploads([]); setReplyTo(null); setSpoiler(false); sendTypingFalse();
   }
 
@@ -2030,7 +2095,7 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
       if (Array.isArray(fav) && fav.length === 6 && fav.every((x:any) => typeof x === 'string' && x.trim())) {
         return fav as string[];
       }
-    } catch {}
+    } catch { /* noop */ }
     try {
       const raw = localStorage.getItem('emojiRecent');
       const list: string[] = raw ? JSON.parse(raw) : [];
@@ -2130,7 +2195,7 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
           console.error('Paste upload failed', err);
         }
       }
-    } catch {}
+    } catch { /* noop */ }
   }
 
   function isMine(m: Msg) {
@@ -2139,7 +2204,7 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
 
   function startEdit(m: Msg) {
     if (!isMine(m)) return;
-    try { setPickerFor(null); } catch {}
+    try { setPickerFor(null); } catch { /* noop */ }
     setEditingId(m.id);
     setEditText(m.content);
   }
@@ -2167,11 +2232,11 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
       setMsgsByKey(old => ({ ...old, [kk]: [...(old[kk] ?? []), { id: tempId, content: '', optimistic: true, attachments: atts }] }));
       socket.emit('message:send', { voidId: currentVoidId, channelId: fq(currentVoidId, currentChannelId), content: '', tempId, attachments: atts });
       // Ensure landing favorites gallery widget refreshes even for our own uploads
-      try { refreshPreview(fq(currentVoidId, currentChannelId)); } catch {}
+      try { refreshPreview(fq(currentVoidId, currentChannelId)); } catch { /* noop */ }
     } catch (e: any) {
       toast(e?.message || 'Failed to add photos', 'error');
     } finally {
-      try { if (galleryFileRef.current) galleryFileRef.current.value = ''; } catch {}
+      try { if (galleryFileRef.current) galleryFileRef.current.value = ''; } catch { /* noop */ }
     }
   }
 
@@ -2258,50 +2323,64 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
     });
   }, [currentVoidId, currentChannelId, setMsgsByKey]);
 
-  async function loadKanbanIfNeeded(fqChanId: string) {
-    try {
-      if (Object.prototype.hasOwnProperty.call(kanbanByChan, fqChanId)) return;
-      const tok = localStorage.getItem('token') || '';
-      const res = await api.getAuth(`/kanban?channelId=${encodeURIComponent(fqChanId)}`, tok);
-      const lists = Array.isArray(res?.lists) ? (res.lists as KanbanList[]) : [];
-      const tags = Array.isArray(res?.tags) ? (res.tags as KanbanTag[]) : [];
-      setKanbanByChan(old => ({ ...old, [fqChanId]: lists }));
-      setKanbanTagsByChan(old => ({ ...old, [fqChanId]: tags }));
-    } catch {
-      // Mark as loaded (empty) to avoid endless "Loading" and allow UI to render fallback
-      setKanbanByChan(old => (Object.prototype.hasOwnProperty.call(old, fqChanId) ? old : { ...old, [fqChanId]: [] }));
-      setKanbanTagsByChan(old => (Object.prototype.hasOwnProperty.call(old, fqChanId) ? old : { ...old, [fqChanId]: [] }));
-    }
+const fetchChannelTags = useCallback(async (fqChanId: string, options?: { force?: boolean }) => {
+  if (!fqChanId) return;
+  const alreadyLoaded = Object.prototype.hasOwnProperty.call(channelTagsRef.current, fqChanId);
+  if (alreadyLoaded && !options?.force) return;
+  try {
+    const tok = localStorage.getItem('token') || '';
+    const res = await api.getAuth(`/channel-tags?channelId=${encodeURIComponent(fqChanId)}`, tok);
+    const tags = Array.isArray(res?.tags) ? (res.tags as KanbanTag[]) : [];
+    setChannelTagsByChan(old => ({ ...old, [fqChanId]: tags }));
+  } catch {
+    setChannelTagsByChan(old => (Object.prototype.hasOwnProperty.call(old, fqChanId) ? old : { ...old, [fqChanId]: [] }));
   }
+}, []);
 
-  async function reloadKanban(fqChanId: string) {
-    try {
-      const tok = localStorage.getItem('token') || '';
-      const res = await api.getAuth(`/kanban?channelId=${encodeURIComponent(fqChanId)}`, tok);
-      const lists = Array.isArray(res?.lists) ? (res.lists as KanbanList[]) : [];
-      const tags = Array.isArray(res?.tags) ? (res.tags as KanbanTag[]) : [];
-      setKanbanByChan(old => ({ ...old, [fqChanId]: lists }));
-      setKanbanTagsByChan(old => ({ ...old, [fqChanId]: tags }));
-    } catch {
-      // keep existing state on error
-    }
+async function loadKanbanIfNeeded(fqChanId: string) {
+  try {
+    if (Object.prototype.hasOwnProperty.call(kanbanByChan, fqChanId)) return;
+    const tok = localStorage.getItem('token') || '';
+    const res = await api.getAuth(`/kanban?channelId=${encodeURIComponent(fqChanId)}`, tok);
+    const lists = Array.isArray(res?.lists) ? (res.lists as KanbanList[]) : [];
+    const tags = Array.isArray(res?.tags) ? (res.tags as KanbanTag[]) : [];
+    setKanbanByChan(old => ({ ...old, [fqChanId]: lists }));
+    setChannelTagsByChan(old => ({ ...old, [fqChanId]: tags }));
+  } catch {
+    // Mark as loaded (empty) to avoid endless "Loading" and allow UI to render fallback
+    setKanbanByChan(old => (Object.prototype.hasOwnProperty.call(old, fqChanId) ? old : { ...old, [fqChanId]: [] }));
+    setChannelTagsByChan(old => (Object.prototype.hasOwnProperty.call(old, fqChanId) ? old : { ...old, [fqChanId]: [] }));
   }
-  const mutateKanbanLists = useCallback((fqChanId: string, updater: (prev: KanbanList[]) => KanbanList[]) => {
-    setKanbanByChan(old => {
-      const prev = old[fqChanId] || [];
-      const next = updater(prev);
-      if (prev === next) return old;
-      return { ...old, [fqChanId]: next };
-    });
-  }, []);
-  const mutateKanbanTags = useCallback((fqChanId: string, updater: (prev: KanbanTag[]) => KanbanTag[]) => {
-    setKanbanTagsByChan(old => {
-      const prev = old[fqChanId] || [];
-      const next = updater(prev);
-      if (prev === next) return old;
-      return { ...old, [fqChanId]: next };
-    });
-  }, []);
+}
+
+async function reloadKanban(fqChanId: string) {
+  try {
+      const tok = localStorage.getItem('token') || '';
+    const res = await api.getAuth(`/kanban?channelId=${encodeURIComponent(fqChanId)}`, tok);
+    const lists = Array.isArray(res?.lists) ? (res.lists as KanbanList[]) : [];
+    const tags = Array.isArray(res?.tags) ? (res.tags as KanbanTag[]) : [];
+    setKanbanByChan(old => ({ ...old, [fqChanId]: lists }));
+    setChannelTagsByChan(old => ({ ...old, [fqChanId]: tags }));
+  } catch {
+    // keep existing state on error
+  }
+}
+const mutateKanbanLists = useCallback((fqChanId: string, updater: (prev: KanbanList[]) => KanbanList[]) => {
+  setKanbanByChan(old => {
+    const prev = old[fqChanId] || [];
+    const next = updater(prev);
+    if (prev === next) return old;
+    return { ...old, [fqChanId]: next };
+  });
+}, []);
+const mutateChannelTags = useCallback((fqChanId: string, updater: (prev: KanbanTag[]) => KanbanTag[]) => {
+  setChannelTagsByChan(old => {
+    const prev = old[fqChanId] || [];
+    const next = updater(prev);
+    if (prev === next) return old;
+    return { ...old, [fqChanId]: next };
+  });
+}, []);
 
   // Proactively load kanban data for any favorited lists (works on landing)
   useEffect(() => {
@@ -2318,7 +2397,7 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
       }
       // De-dupe
       Array.from(new Set(need)).forEach(id => { loadKanbanIfNeeded(id); });
-    } catch {}
+    } catch { /* noop */ }
   }, [favorites, kanbanByChan]);
 
   // Proactively load message previews for favorited channels
@@ -2335,7 +2414,7 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
           loadPreviewIfNeeded(fqid);
         }
       }
-    } catch {}
+    } catch { /* noop */ }
   }, [favorites, previewsByChan, msgsByKey]);
 
   // If kanban exists but came back empty (due to timing or transient error), try one reload per channel
@@ -2352,7 +2431,7 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
           reloadKanban(fqid);
         }
       }
-    } catch {}
+    } catch { /* noop */ }
   }, [favorites, kanbanByChan]);
 
   async function loadFormIfNeeded(fqChanId: string) {
@@ -2369,7 +2448,7 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
           participants: payload.participants || [],
         },
       }));
-    } catch {}
+    } catch { /* noop */ }
   }
   async function reloadForm(fqChanId: string) {
     try {
@@ -2384,7 +2463,7 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
           participants: payload.participants || [],
         },
       }));
-    } catch {}
+    } catch { /* noop */ }
   }
   // --- Voice controls ---
   async function joinVoice() {
@@ -2405,21 +2484,21 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
     }
   }
   function leaveVoice() {
-    try { socket.emit('voice:leave'); } catch {}
-    for (const pc of pcMapRef.current.values()) { try { pc.close(); } catch {} }
+    try { socket.emit('voice:leave'); } catch { /* noop */ }
+    for (const pc of pcMapRef.current.values()) { try { pc.close(); } catch { /* noop */ } }
     pcMapRef.current.clear();
     remoteStreamsRef.current.clear();
     setRemoteVideoStreams({});
     videoSendersRef.current.clear();
     setVoicePeers({});
-    if (localStreamRef.current) { for (const t of localStreamRef.current.getTracks()) { try { t.stop(); } catch {} } }
+    if (localStreamRef.current) { for (const t of localStreamRef.current.getTracks()) { try { t.stop(); } catch { /* noop */ } } }
     localStreamRef.current = null;
-    if (localVideoTrackRef.current) { try { localVideoTrackRef.current.stop(); } catch {} localVideoTrackRef.current = null; }
+    if (localVideoTrackRef.current) { try { localVideoTrackRef.current.stop(); } catch { /* noop */ } localVideoTrackRef.current = null; }
     setLocalVideoStream(null);
     setVideoEnabled(false);
     stopMeter('self');
     // close audio context if any
-    try { audioCtxRef.current?.close(); } catch {}
+    try { audioCtxRef.current?.close(); } catch { /* noop */ }
     audioCtxRef.current = null;
     setVoiceJoined(false);
   }
@@ -2457,17 +2536,17 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
   async function stopVideo() {
     const track = localVideoTrackRef.current;
     if (!track) return;
-    try { track.stop(); } catch {}
+    try { track.stop(); } catch { /* noop */ }
     localVideoTrackRef.current = null;
     if (localStreamRef.current) {
-      try { localStreamRef.current.removeTrack(track); } catch {}
+      try { localStreamRef.current.removeTrack(track); } catch { /* noop */ }
     }
     setLocalVideoStream(null);
     setVideoEnabled(false);
     for (const [peerId, pc] of pcMapRef.current.entries()) {
       const sender = videoSendersRef.current.get(peerId);
       if (sender) {
-        try { pc.removeTrack(sender); } catch {}
+        try { pc.removeTrack(sender); } catch { /* noop */ }
         videoSendersRef.current.delete(peerId);
         await renegotiatePeer(peerId);
       }
@@ -2544,7 +2623,7 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
         const tok = localStorage.getItem('token') || '';
         const res = await api.getAuth(`/spaces/members?spaceId=${encodeURIComponent(id)}`, tok);
         setMembers(res.members || []);
-      } catch {}
+      } catch { /* noop */ }
     })();
     if (String(id).startsWith('dm_')) {
       // Ensure DM icon is visible in spaces when opened
@@ -2580,6 +2659,14 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
     if (meta && meta.type === 'form') { loadFormIfNeeded(fqid); }
   }
 
+  useEffect(() => {
+    if (!currentChannelFqid || !currentChannelId) return;
+    const meta = channels.find(c => c.id === currentChannelId);
+    if (!meta) return;
+    if (!['kanban', 'form', 'notes'].includes(String(meta.type || '').toLowerCase())) return;
+    fetchChannelTags(currentChannelFqid);
+  }, [currentChannelFqid, currentChannelId, channels, fetchChannelTags]);
+
   // While viewing a form channel, periodically refresh answers to keep everyone in sync
   useEffect(() => {
     try {
@@ -2590,7 +2677,7 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
       reloadForm(fid);
       const t = window.setInterval(() => { reloadForm(fid); }, 5000);
       return () => window.clearInterval(t);
-    } catch {}
+    } catch { /* noop */ }
   }, [currentVoidId, currentChannelId, channels]);
 
   // --- Minimal UI ---
@@ -2673,11 +2760,11 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
               <button onClick={() => { switchVoid(v.id); setReorderedSpaceId(v.id); setTimeout(()=>setReorderedSpaceId(null), 260); }} title={v.name}
                 className={`relative h-10 w-10 rounded-full overflow-hidden border ${v.id===currentVoidId?'border-emerald-600 shadow-[0_0_0_2px_rgba(16,185,129,0.35)]':'border-transparent'} bg-elevated flex items-center justify-center transition-transform duration-150 ease-out will-change-transform ${dragSpaceId===v.id?'scale-110 ring-2 ring-emerald-600 shadow-[0_12px_24px_rgba(0,0,0,0.45)] z-10':''} ${reorderedSpaceId===v.id?'anim-pop':''} hover:scale-105 active:scale-95`}
               draggable
-              onDragStart={(e) => { e.dataTransfer.setData('text/plain', v.id); try { e.dataTransfer.effectAllowed='move'; const img = new Image(); img.src = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+tm0kAAAAASUVORK5CYII='; if (e.dataTransfer.setDragImage) e.dataTransfer.setDragImage(img, 0, 0); } catch {} setDragSpaceId(v.id); setDragStartIndex(idx); setDragHoverIndex(idx); }}
+              onDragStart={(e) => { e.dataTransfer.setData('text/plain', v.id); try { e.dataTransfer.effectAllowed='move'; const img = new Image(); img.src = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+tm0kAAAAASUVORK5CYII='; if (e.dataTransfer.setDragImage) e.dataTransfer.setDragImage(img, 0, 0); } catch { /* noop */ } setDragSpaceId(v.id); setDragStartIndex(idx); setDragHoverIndex(idx); }}
               onDragEnd={() => { setDragSpaceId(null); setDragHoverIndex(null); setDragStartIndex(null); }}
               onDragOver={(e) => {
                 e.preventDefault();
-                try { e.dataTransfer.dropEffect='move'; } catch {}
+                try { e.dataTransfer.dropEffect='move'; } catch { /* noop */ }
                 const el = (e.currentTarget as HTMLElement) || (e.target as HTMLElement | null);
                 if (!el || !el.getBoundingClientRect) return;
                 const rect = el.getBoundingClientRect();
@@ -2771,12 +2858,11 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
           {members.map(m => {
             const online = globalUserIds.includes(m.id) || spaceUserIds.includes(m.id) || roomUserIds.includes(m.id);
             const onMobile = globalMobileIds.includes(m.id) || spaceMobileIds.includes(m.id) || roomMobileIds.includes(m.id);
-            const activityText = (() => { const t = activityByUser[m.id]; return t ? t : ''; })();
             const miniFromBio = (() => { const b = String((m as any).bio || '').trim(); return b ? b.split(/\r?\n/)[0].slice(0, 120) : ''; })();
             return (
               <UserRow
                 key={m.id}
-                data={{ id: m.id, name: m.name, username: m.username, avatarUrl: m.avatarUrl, nameColor: m.nameColor, status: ((m as any).activity || miniFromBio) || undefined, rawStatus: (m as any).status, online, onMobile, activityText }}
+                data={{ id: m.id, name: m.name, username: m.username, avatarUrl: m.avatarUrl, nameColor: m.nameColor, status: ((m as any).activity || miniFromBio) || undefined, rawStatus: (m as any).status, online, onMobile }}
                 onClick={(e: any) => { if (m.id !== me.userId) { const rect = (e.currentTarget as HTMLElement).getBoundingClientRect(); setViewUserCard({ id: m.id, x: rect.right + 8, y: rect.top + 8 }); } else setSettingsOpen(true); }}
               />
             );
@@ -3041,35 +3127,49 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
                     </button>
                   </div>
                 </div>
-                {voids && voids.length>0 && (
-            <div className="relative z-10 mt-6 max-w-5xl mx-auto">
-              <div className="mb-2 text-neutral-300 font-medium text-center">Your Spaces</div>
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 justify-center mx-auto">
-                {voids.filter(v=>!String(v.id).startsWith('dm_') && !hiddenSpaces[v.id]).map(v => {
-                  const total = Object.keys(unread).reduce((a,k)=> k.startsWith(v.id+':') ? a + (unread[k]||0) : a, 0);
-                  const badge = total>99 ? '99+' : (total||'');
-                  return (
-                  <button key={v.id} onClick={()=>switchVoid(v.id)} className="relative group text-left rounded-xl border border-neutral-800 bg-neutral-900/60 hover:border-emerald-700 p-3 flex items-center gap-3 w-full">
-                    <div className="relative h-10 w-10 rounded-lg overflow-hidden bg-neutral-800 border border-neutral-700 flex items-center justify-center">
-                      {v.avatarUrl ? (
-                        <img src={v.avatarUrl} alt={v.name} className="h-full w-full object-cover" />
-                      ) : (
-                        <span className="text-neutral-400 text-sm">{(v.name?.[0]||'?').toUpperCase()}</span>
-                      )}
+                <div className="relative z-10 mt-6 max-w-5xl mx-auto">
+                  <div className="mb-2 text-neutral-300 font-medium text-center">Friends Online</div>
+                  {friendsOnline.length > 0 ? (
+                    <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-4 justify-center">
+                      {friendsOnline.slice(0, 12).map((friend) => {
+                        const presence = String(friend.status || '').toLowerCase();
+                        const dot =
+                          presence === 'dnd' ? 'bg-red-500' :
+                          presence === 'idle' ? 'bg-amber-400' :
+                          'bg-emerald-400';
+                        return (
+                          <button
+                            key={friend.id}
+                            className="flex flex-col items-center gap-2 text-center text-sm text-neutral-200 hover:text-emerald-200 transition"
+                            onClick={() => setFriendsOpen(true)}
+                          >
+                            <div className="relative h-14 w-14 rounded-full overflow-hidden bg-neutral-800 border border-neutral-700 flex items-center justify-center">
+                              {friend.avatarUrl ? (
+                                <img src={friend.avatarUrl} alt={friend.name || friend.username || 'Friend'} className="h-full w-full object-cover" />
+                              ) : (
+                                <span className="text-neutral-400 text-base">
+                                  {(friend.name?.[0] || friend.username?.[0] || '?').toUpperCase()}
+                                </span>
+                              )}
+                              <span className={`absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-neutral-900 ${dot}`} />
+                            </div>
+                            <div className="text-xs font-medium truncate w-full" style={friend.nameColor ? { color: friend.nameColor } : undefined}>
+                              {friend.name || friend.username || 'Friend'}
+                            </div>
+                          </button>
+                        );
+                      })}
                     </div>
-                    <div className="min-w-0">
-                      <div className="truncate text-neutral-200">{v.name}</div>
-                      <div className="text-xs text-neutral-500 group-hover:text-neutral-400">Open space</div>
+                  ) : (
+                    <div className="rounded-xl border border-neutral-800 bg-neutral-900/70 p-4 text-sm text-neutral-400 flex flex-col items-center gap-3">
+                      <div>{friendsList.length === 0 ? 'Add friends to see them here.' : 'No friends online right now.'}</div>
+                      <button className="px-3 py-1.5 rounded-full border border-neutral-700 text-neutral-200 hover:bg-neutral-800/60" onClick={() => setFriendsOpen(true)}>
+                        Open Friends
+                      </button>
                     </div>
-                    {total>0 && (
-                      <span className="ml-auto inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-emerald-700 text-emerald-50 text-[11px]">{badge}</span>
-                    )}
-                  </button>
-                  );
-                })}
-              </div>
-              {/* Favorites Dashboard */}
-              {(() => { const showFav = (()=>{ try { return localStorage.getItem('landing.showFavorites') !== '0'; } catch { return true; } })(); return showFav && favorites.length > 0; })() && (
+                  )}
+                  {/* Favorites Dashboard */}
+                  {(() => { const showFav = (()=>{ try { return localStorage.getItem('landing.showFavorites') !== '0'; } catch { return true; } })(); return showFav && favorites.length > 0; })() && (
                 <div className="relative z-10 mt-8 max-w-6xl mx-auto">
                   <div className="mb-2 text-neutral-300 font-medium text-center">Favorites Dashboard</div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
@@ -3119,7 +3219,7 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
                                   incomplete.map(it => (
                                     <div key={it.id} className="px-2 py-1 rounded border border-neutral-800 bg-neutral-950/50 flex items-start gap-2">
                                       <input type="checkbox" className="mt-0.5 accent-emerald-500" checked={false} onChange={async(e)=>{
-                                        try { const tok=localStorage.getItem('token')||''; await api.patchAuth('/kanban/items',{ itemId: it.id, done: e.target.checked }, tok); } catch {}
+                                        try { const tok=localStorage.getItem('token')||''; await api.patchAuth('/kanban/items',{ itemId: it.id, done: e.target.checked }, tok); } catch { /* noop */ }
                                         setKanbanByChan(old => {
                                           const all = (old[fqid]||[]).map(l=>({ ...l, items: [...l.items] }));
                                           const L = all.find(l=>l.id===listId); if(!L) return old;
@@ -3309,8 +3409,7 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
                   </div>
                 </div>
               )}
-            </div>
-          )}
+                </div>
               </div>
             </div>
           ) : currentChannel?.type === 'habit' ? (
@@ -3321,7 +3420,7 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
               lists={currentKanbanLists}
               mutateLists={(updater) => mutateKanbanLists(currentKanbanFqid || fq(currentVoidId, currentChannelId), updater)}
               channelTags={currentKanbanTags}
-              mutateTags={(updater) => mutateKanbanTags(currentKanbanFqid || fq(currentVoidId, currentChannelId), updater)}
+              mutateTags={(updater) => mutateChannelTags(currentKanbanFqid || fq(currentVoidId, currentChannelId), updater)}
               askInput={askInput}
               currentVoidId={currentVoidId}
               currentChannelId={currentChannelId}
@@ -3329,7 +3428,14 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
               toggleListFav={toggleListFav}
             />
           ) : currentChannel?.type === 'form' ? (
-            <FormChannelView fid={fq(currentVoidId, currentChannelId)} members={members} meId={me.userId || null} />
+            <FormChannelView
+              fid={currentChannelFqid || fq(currentVoidId, currentChannelId)}
+              members={members}
+              meId={me.userId || null}
+              channelTags={currentChannelTags}
+              mutateTags={(updater) => mutateChannelTags(currentChannelFqid || fq(currentVoidId, currentChannelId), updater)}
+              refreshTags={() => fetchChannelTags(currentChannelFqid || fq(currentVoidId, currentChannelId), { force: true })}
+            />
           ) : (
           (() => {
             if (currentChannel?.type === 'gallery') {
@@ -3486,6 +3592,9 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
                 <NotesChannelView
                   fid={fq(currentVoidId, currentChannelId)}
                   notes={noteMessages}
+                  channelTags={currentChannelTags}
+                  mutateTags={(updater) => mutateChannelTags(fq(currentVoidId, currentChannelId), updater)}
+                  refreshTags={() => fetchChannelTags(fq(currentVoidId, currentChannelId), { force: true })}
                   onCreateNote={createNote}
                   onUpdateNote={updateNote}
                   onDeleteNote={deleteNote}
@@ -3562,7 +3671,7 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
                           const alt = localStorage.getItem('nameColor');
                           if (alt) color = String(alt);
                         }
-                      } catch {}
+                      } catch { /* noop */ }
                     } else if (m.authorColor) {
                       color = String(m.authorColor);
                     }
@@ -3660,7 +3769,7 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
                           try {
                             const r = (e.currentTarget as HTMLButtonElement).getBoundingClientRect();
                             setReactionTipPos({ x: Math.round(r.left + r.width / 2), y: Math.round(r.top) });
-                          } catch {}
+                          } catch { /* noop */ }
                         }}
                         onMouseLeave={() => {
                           setHoverReaction(hr => (hr && hr.messageId === m.id && hr.emoji === emoji ? null : hr));
@@ -3707,7 +3816,7 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
                       try {
                         const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
                         setSeenTip({ x: Math.round(r.right), y: Math.round(r.top), ids: byIds });
-                      } catch {}
+                      } catch { /* noop */ }
                     }}
                     onMouseLeave={() => setSeenTip(null)}
                   >
@@ -3838,14 +3947,14 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
                   </button>
                   {needsAudioUnlock && (
                     <button className="px-3 py-2 rounded-md border border-amber-800 text-amber-200 hover:bg-amber-900/30 inline-flex items-center gap-1" onClick={async()=>{
-                      try { await audioCtxRef.current?.resume(); } catch {}
+                      try { await audioCtxRef.current?.resume(); } catch { /* noop */ }
                       try {
                         let ok = true;
                         for (const el of audioElsRef.current.values()) {
                           try { const p = el.play(); if (p && typeof (p as any).then === 'function') { await p; } } catch { ok = false; }
                         }
                         if (ok) setNeedsAudioUnlock(false);
-                      } catch {}
+                      } catch { /* noop */ }
                     }} title="Enable Audio">
                       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M11 5v14l-7-4V9z"/><path d="M19 5v14"/></svg>
                       <span className="hidden sm:inline">Enable Audio</span>
@@ -3897,9 +4006,9 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
                           if (selectedOutputId && typeof (el as any).setSinkId === 'function') {
                             (el as any).setSinkId(selectedOutputId).catch(()=>{});
                           }
-                        } catch {}
-                        try { el.volume = (voiceVolumes[pid] ?? 1); } catch {}
-                        try { el.muted = !!voiceSilenced[pid]; } catch {}
+                        } catch { /* noop */ }
+                        try { el.volume = (voiceVolumes[pid] ?? 1); } catch { /* noop */ }
+                        try { el.muted = !!voiceSilenced[pid]; } catch { /* noop */ }
                         try { const p = el.play(); if (p && typeof (p as any).then === 'function') { (p as any).catch(()=> setNeedsAudioUnlock(true)); } }
                         catch { setNeedsAudioUnlock(true); }
                       } else {
@@ -4216,7 +4325,7 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
             localStorage.setItem('user', JSON.stringify({ ...prev, name: u?.name, avatarUrl: u?.avatarUrl ?? null, toneUrl: u?.toneUrl ?? prev?.toneUrl, status: u?.status || prev?.status, nameColor: u?.nameColor ?? null }));
             if (u?.nameColor) localStorage.setItem('nameColor', u.nameColor); else localStorage.removeItem('nameColor');
             if (u?.toneUrl) localStorage.setItem('toneUrl', u.toneUrl); else localStorage.removeItem('toneUrl');
-          } catch {}
+          } catch { /* noop */ }
         }}
         onSpaceDeleted={()=>{
           const fallback = 'home';
@@ -4347,7 +4456,7 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
               const raw = localStorage.getItem('user');
               const prev = raw ? JSON.parse(raw) : {};
               localStorage.setItem('user', JSON.stringify({ ...prev, status: u?.status || p }));
-            } catch {}
+            } catch { /* noop */ }
             setUserQuickOpen(false);
           } catch (e) {
             // no-op; leave open for another try
@@ -4675,12 +4784,11 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
               {members.map(m => {
                 const online = globalUserIds.includes(m.id) || spaceUserIds.includes(m.id) || roomUserIds.includes(m.id);
                 const onMobile = globalMobileIds.includes(m.id) || spaceMobileIds.includes(m.id) || roomMobileIds.includes(m.id);
-                const activityText = (() => { const t = activityByUser[m.id]; return t ? t : ''; })();
                 const miniFromBio = (() => { const b = String((m as any).bio || '').trim(); return b ? b.split(/\r?\n/)[0].slice(0, 120) : ''; })();
                 return (
                   <UserRow
                     key={m.id}
-                    data={{ id: m.id, name: m.name, username: m.username, avatarUrl: m.avatarUrl, nameColor: m.nameColor, status: (miniFromBio) || undefined, rawStatus: (m as any).status, online, onMobile, activityText }}
+                    data={{ id: m.id, name: m.name, username: m.username, avatarUrl: m.avatarUrl, nameColor: m.nameColor, status: (miniFromBio) || undefined, rawStatus: (m as any).status, online, onMobile }}
                     onClick={(e: any) => { setUsersSheetOpen(false); if (m.id !== me.userId) { const rect = (e.currentTarget as HTMLElement).getBoundingClientRect(); setViewUserCard({ id: m.id, x: rect.left - 328, y: rect.top + 8 }); } else setSettingsOpen(true); }}
                   />
                 );
@@ -4747,5 +4855,6 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: any; onT
       </div>
     );
   }
+
 
 

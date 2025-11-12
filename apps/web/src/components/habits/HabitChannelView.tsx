@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useHabitChannel } from '../../hooks/useHabitChannel';
 import type { HabitUserProgress } from '../../lib/habits/types';
 import { askConfirm, toast } from '../../lib/ui';
+import ChannelStatsBar from '../common/ChannelStatsBar';
 
 type Member = { id: string; name?: string; username?: string };
 type AskInputFn = (cfg: { title?: string; label?: string; placeholder?: string; initialValue?: string; textarea?: boolean; okText?: string }) => Promise<string | null>;
@@ -98,15 +99,7 @@ export default function HabitChannelView({ fid, members, meId, askInput = fallba
 
   return (
     <div className="space-y-4">
-      <div className="grid gap-3 md:grid-cols-3">
-        {stats.map((s) => (
-          <div key={s.label} className="rounded-2xl border border-neutral-800 bg-neutral-950/70 px-4 py-3 shadow-inner shadow-black/30">
-            <div className="text-xs uppercase tracking-wide text-neutral-500">{s.label}</div>
-            <div className="text-2xl font-semibold text-neutral-50">{s.value}</div>
-          </div>
-        ))}
-      </div>
-
+      <ChannelStatsBar stats={stats} />
       <div className="rounded-2xl border border-neutral-800 bg-neutral-900/70 p-4 shadow-inner shadow-black/40 space-y-3">
         <h3 className="text-sm font-semibold text-neutral-100">Add a habit</h3>
         <div className="flex flex-col gap-2 md:flex-row md:items-center">
