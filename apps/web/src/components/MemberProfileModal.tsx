@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../lib/api';
+import MarkdownText from './common/MarkdownText';
 
 type Profile = {
   id: string;
@@ -113,11 +114,10 @@ export default function MemberProfileModal({ token, userId, open, onClose, onSta
 
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
+    <div className="fixed inset-0 z-50 flex items-center justify-center px-3">
       <div className="absolute inset-0 bg-black/50" onClick={onClose} />
-      <div className="relative w-full max-w-4xl rounded-2xl border border-neutral-800 bg-neutral-900 shadow-2xl overflow-hidden">
-        {/* Banner */}
-        <div className="relative h-40 w-full bg-neutral-800">
+      <div className="relative w-full max-w-4xl max-h-[90vh] rounded-3xl border border-neutral-800 bg-neutral-900 shadow-[0_40px_120px_rgba(0,0,0,0.85)] overflow-hidden flex flex-col">
+        <div className="relative h-40 w-full bg-neutral-800 flex-shrink-0">
           {u?.bannerUrl ? (<img src={String(u.bannerUrl)} alt="banner" className="h-full w-full object-cover" />) : (<div className="h-full w-full brand-login-bg opacity-80" />)}
           <button
             className="absolute top-3 right-3 h-9 w-9 rounded-full bg-black/40 text-neutral-200 border border-neutral-700 hover:bg-black/60 flex items-center justify-center"
@@ -134,9 +134,8 @@ export default function MemberProfileModal({ token, userId, open, onClose, onSta
             {u?.avatarUrl ? (<img src={String(u.avatarUrl)} alt="avatar" className="h-full w-full object-cover" />) : (<span className="text-sm text-neutral-400">{(u?.name||u?.username||'?')[0]?.toUpperCase?.()}</span>)}
           </div>
         </div>
-        {/* Body */}
-        <div className="pt-14 px-6 pb-6 grid grid-cols-1 md:grid-cols-[1fr_360px] gap-6">
-          <div className="min-w-0">
+        <div className="grid grid-cols-1 md:grid-cols-[minmax(0,2.2fr)_minmax(280px,1fr)] gap-6 flex-1 min-h-0 px-6 pb-6 pt-14">
+          <div className="min-h-0 overflow-auto pr-2">
             {loading && <div className="text-neutral-400 text-sm">Loading…</div>}
             {!loading && err && <div className="text-red-400 text-sm">{err}</div>}
             {!!u && (
@@ -144,7 +143,11 @@ export default function MemberProfileModal({ token, userId, open, onClose, onSta
                 <div className="text-2xl font-semibold text-white">{u.name || u.username || 'User'} {u?.pronouns ? <span className="ml-2 text-base text-neutral-400">({String(u.pronouns)})</span> : null}</div>
                 <div className="text-neutral-400">{u.username ? `@${u.username}` : ''}</div>
                 {!!miniStatus && (<div className="mt-2 inline-block px-2 py-1 rounded bg-neutral-800 text-neutral-200 text-sm">{miniStatus}</div>)}
-                {u.bio && (<div className="mt-4 whitespace-pre-wrap text-neutral-200">{u.bio}</div>)}
+                {u.bio && (
+                  <div className="mt-4 max-h-64 overflow-y-auto pr-1">
+                    <MarkdownText content={u.bio} className="text-neutral-200 text-sm leading-relaxed" />
+                  </div>
+                )}
                 {Array.isArray(u.skills) && u.skills.length>0 && (
                   <div className="mt-4">
                     <div className="text-sm text-neutral-400 mb-2">Skills</div>
@@ -164,8 +167,7 @@ export default function MemberProfileModal({ token, userId, open, onClose, onSta
               </>
             )}
           </div>
-          {/* Sidebar */}
-          <div className="min-w-0">
+          <div className="min-h-0 border-t border-neutral-800 pt-4 md:border-t-0 md:border-l md:pl-4 overflow-auto">
             {!!u && (
               <div className="space-y-4">
                 {/* Mutuals */}

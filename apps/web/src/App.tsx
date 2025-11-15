@@ -24,6 +24,7 @@ import type { AuthUser } from "./types/auth";
 import UserQuickSettings from "./components/UserQuickSettings";
 import ToastHost from "./components/ToastHost";
 import ConfirmHost from "./components/ConfirmHost";
+import BottomNav from "./components/BottomNav";
 import UserRow from "./components/people/UserRow";
 import MemberProfileCard from "./components/MemberProfileCard";
 import { askConfirm, toast } from "./lib/ui";
@@ -1210,6 +1211,43 @@ const currentChannelTags = currentChannelFqid ? (channelTagsByChan[currentChanne
   // Profile modal removed; avatar now navigates to landing
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [userQuickOpen, setUserQuickOpen] = useState(false);
+  const currentSpace = useMemo(() => voids.find((v) => v.id === currentVoidId), [voids, currentVoidId]);
+  const isDmSpace = !!currentVoidId && String(currentVoidId).startsWith('dm_');
+  const headerSpaceLabel = currentSpace?.name || currentVoidId || 'Select space';
+  const headerChannelLabel = useMemo(() => {
+    if (!currentVoidId) return 'Pick a space';
+    if (isDmSpace) return currentSpace?.name || 'Direct message';
+    if (!currentChannelId) return 'Select channel';
+    return currentChannel?.name ? `#${currentChannel.name}` : `#${currentChannelId}`;
+  }, [currentVoidId, isDmSpace, currentSpace, currentChannelId, currentChannel]);
+  const headerChannelEyebrow = isDmSpace ? 'Conversation' : 'Channel';
+  const composerPlaceholder = isDmSpace
+    ? `Message ${currentSpace?.name || 'this conversation'}`
+    : `Message #${currentChannel?.name ?? currentChannelId ?? 'general'}`;
+  const dmUnreadCount = useMemo(() => {
+    try {
+      return voids.reduce((acc, space) => {
+        if (!String(space.id).startsWith('dm_')) return acc;
+        const count = unread[`${space.id}:chat`] || 0;
+        return acc + count;
+      }, 0);
+    } catch {
+      return 0;
+    }
+  }, [unread, voids]);
+  const chanDrawerProgress = (swipePanel === 'chan')
+    ? (swipeMode === 'close' ? (1 - swipeProgress) : swipeProgress)
+    : (chanSheetOpen ? 1 : 0);
+  const usersDrawerProgress = (swipePanel === 'users')
+    ? (swipeMode === 'close' ? (1 - swipeProgress) : swipeProgress)
+    : (usersSheetOpen ? 1 : 0);
+  const mobileNavActive = useMemo<'spaces' | 'channels' | 'people' | 'settings' | null>(() => {
+    if (settingsOpen) return 'settings';
+    if (voidSheetOpen) return 'spaces';
+    if (chanSheetOpen || swipePanel === 'chan') return 'channels';
+    if (showPeople && (usersSheetOpen || swipePanel === 'users')) return 'people';
+    return null;
+  }, [settingsOpen, voidSheetOpen, chanSheetOpen, usersSheetOpen, swipePanel, showPeople]);
 
   // Expose a lightweight spaces cache for settings Vault section
   useEffect(() => {
@@ -1233,10 +1271,6 @@ const currentChannelTags = currentChannelFqid ? (channelTagsByChan[currentChanne
   });
   useEffect(() => { try { localStorage.setItem('outbox', JSON.stringify(outbox)); } catch { /* noop */ } }, [outbox]);
   const heartbeatRef = useRef<number | null>(null);
-  // Composer kebab menu (mobile)
-  const [composerMenuOpen, setComposerMenuOpen] = useState(false);
-  const composerMenuBtnRef = useRef<HTMLButtonElement | null>(null);
-  const composerMenuRef = useRef<HTMLDivElement | null>(null);
   // Removed: reaction picker refs (cleanup)
 
   // Close the add menu when clicking or tapping outside, or on Escape
@@ -1258,26 +1292,6 @@ const currentChannelTags = currentChannelFqid ? (channelTagsByChan[currentChanne
       document.removeEventListener('keydown', onKey);
     };
   }, [addOpen]);
-
-  // Close composer kebab when clicking outside or on Escape
-  useEffect(() => {
-    if (!composerMenuOpen) return;
-    const onOutside = (e: Event) => {
-      const t = e.target as Node | null;
-      const insideBtn = composerMenuBtnRef.current && t ? composerMenuBtnRef.current.contains(t) : false;
-      const insideMenu = composerMenuRef.current && t ? composerMenuRef.current.contains(t) : false;
-      if (!insideBtn && !insideMenu) setComposerMenuOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setComposerMenuOpen(false); };
-    document.addEventListener('mousedown', onOutside, true);
-    document.addEventListener('touchstart', onOutside, true);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onOutside, true);
-      document.removeEventListener('touchstart', onOutside, true);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [composerMenuOpen]);
 
   // Removed: reaction picker outside/escape handling
   const [showJump, setShowJump] = useState(false);
@@ -3031,29 +3045,18 @@ const mutateChannelTags = useCallback((fqChanId: string, updater: (prev: KanbanT
     <div className="h-app w-full flex brand-app-bg text-neutral-100 overflow-hidden">
       <ToastHost />
       <ConfirmHost />
-      {/* Mobile Top Header: current space + settings */}
+      {/* Mobile Top Header: context only */}
       <div className="sm:hidden fixed top-0 inset-x-0 z-40 pointer-events-none">
         <div className="px-3 pt-[env(safe-area-inset-top)]">
-          <header className="pointer-events-auto mx-auto max-w-3xl rounded-2xl border border-white/10 bg-black/70 md:backdrop-blur px-3 py-2 flex items-center justify-between gap-2 shadow-lg min-h-[44px]">
-            <button
-              className="min-w-0 flex items-center gap-1.5 px-2 py-1 rounded-lg text-white/90 hover:bg-white/10 min-h-[44px]"
-              onClick={() => setVoidSheetOpen(true)}
-              aria-label="Open Spaces"
-              title="Spaces"
-            >
-              <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 9l6 6 6-6"/></svg>
-              <span className="truncate text-sm">
-                {voids.find(v=>v.id===currentVoidId)?.name || (currentVoidId || 'Select Space')}
-              </span>
-            </button>
-            <button
-              className="px-2 py-1 rounded-lg text-white/90 hover:bg-white/10 min-h-[44px]"
-              onClick={() => setSettingsOpen(true)}
-              aria-label="Open Settings"
-              title="Settings"
-            >
-              <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06A2 2 0 1 1 7.04 3.5l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V2a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c0 .66.39 1.25 1 1.51.32.14.67.21 1.02.21H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/></svg>
-            </button>
+          <header className="pointer-events-auto mx-auto max-w-3xl rounded-[28px] border border-white/10 bg-black/70 px-4 py-3 flex items-center justify-between gap-4 shadow-lg shadow-black/40 backdrop-blur">
+            <div className="min-w-0">
+              <p className="text-[11px] uppercase tracking-[0.15em] text-white/55">Space</p>
+              <p className="truncate text-sm font-semibold text-white">{headerSpaceLabel}</p>
+            </div>
+            <div className="min-w-0 text-right">
+              <p className="text-[11px] uppercase tracking-[0.15em] text-white/55">{headerChannelEyebrow}</p>
+              <p className="truncate text-sm font-semibold text-white">{headerChannelLabel}</p>
+            </div>
           </header>
         </div>
       </div>
@@ -3332,7 +3335,7 @@ const mutateChannelTags = useCallback((fqChanId: string, updater: (prev: KanbanT
         {/* Removed top channel bar; channels now in left column */}
 
         {/* Messages, Kanban, or landing */}
-        <div ref={listRef} className="overflow-auto p-4 space-y-2 bg-transparent pb-8 md:pb-4">
+        <div ref={listRef} className="overflow-auto p-4 space-y-2 bg-transparent pb-36 sm:pb-12 md:pb-4">
           {currentVoidId && currentChannel?.type === "voice" && (
             <div className="max-w-5xl mx-auto py-4 space-y-4">
               {voiceJoined ? (
@@ -4208,169 +4211,168 @@ const mutateChannelTags = useCallback((fqChanId: string, updater: (prev: KanbanT
               </div>
             </div>
           ) : (currentChannel?.type === 'form' || currentChannel?.type === 'gallery') ? null : (
-            <>
-      {pendingUploads.length > 0 && (
-        <div className="mb-2 flex flex-wrap gap-2">
-          {pendingUploads.map((a, i) => {
-            const isImg = (() => {
-              if (a.contentType && a.contentType.startsWith('image/')) return true;
-              const u = (a.url || '').toLowerCase();
-              const n = (a.name || '').toLowerCase();
-              return /(\.png|\.jpe?g|\.gif|\.webp|\.svg)(\?.*)?$/.test(u) || /(\.png|\.jpe?g|\.gif|\.webp|\.svg)(\?.*)?$/.test(n);
-            })();
-            return (
-              <div key={i} className="flex items-center gap-2 border border-neutral-800 rounded px-2 py-1 bg-neutral-950">
-                {isImg ? (
-                  <img src={a.url} alt={a.name || ''} className="h-10 w-10 object-cover rounded" />
-                ) : (
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M21.44 11.05l-8.49 8.49a5 5 0 0 1-7.07-7.07l8.49-8.49a3.5 3.5 0 0 1 4.95 4.95l-8.49 8.49a2 2 0 1 1-2.83-2.83l8.49-8.49"/></svg>
-                )}
-                <span className="text-sm text-neutral-300">{a.name}</span>
-                <button aria-label="Remove attachment" className="ml-1 px-1.5 py-0.5 rounded bg-neutral-900/70 border border-neutral-700 text-neutral-300 hover:text-red-300 hover:border-red-500" onClick={() => setPendingUploads(prev => prev.filter((_, idx) => idx !== i))}>
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
-                    <line x1="18" y1="6" x2="6" y2="18" />
-                    <line x1="6" y1="6" x2="18" y2="18" />
-                  </svg>
-                </button>
-              </div>
-            );
-          })}
-        </div>
-      )}
-              <div className="flex items-center gap-1 md:gap-2 w-full max-w-full overflow-visible relative">
-                <div className="flex items-center gap-2 w-full rounded-full bg-neutral-900 border border-neutral-800 px-2 py-1.5">
-                <button
-                  ref={addBtnRef}
-                  type="button"
-                  className="shrink-0 h-9 w-9 rounded-full text-neutral-300 hover:text-neutral-100 hover:bg-neutral-800/60 flex items-center justify-center"
-                  title="Add"
-                  aria-label="Add"
-                  onClick={() => {
-                    // Ignore the synthetic click that follows a touch to avoid double-toggle
-                    if (Date.now() - (lastTouchAtRef.current || 0) < 500) return;
-                    setAddOpen(v => !v);
-                  }}
-                  onTouchStart={(e) => {
-                    e.preventDefault();
-                    lastTouchAtRef.current = Date.now();
-                    setAddOpen(v => !v);
-                  }}
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5"><path d="M12 5v14M5 12h14"/></svg>
-                </button>
-                {addOpen && (
-                  <div ref={addMenuRef} className="absolute bottom-full mb-2 left-0 z-40 rounded-md border border-neutral-800 bg-neutral-900 shadow-xl p-1 flex gap-1">
-                    <button
-                      className={`px-2 py-1 rounded ${spoiler ? 'bg-amber-800/40 text-amber-100' : 'hover:bg-neutral-800 text-neutral-200'}`}
-                      onClick={()=>{ setSpoiler(v=>!v); }}
-                      title="Toggle spoiler"
-                      aria-pressed={spoiler}
-                      aria-label="Toggle spoiler"
-                    >
-                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
-                        <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/>
-                        <line x1="1" y1="1" x2="23" y2="23"/>
-                      </svg>
-                    </button>
-                    {/* Emoji moved next to Send inside the pill */}
-                    <button className="px-2 py-1 rounded hover:bg-neutral-800 text-neutral-200" onClick={()=>{ setGifOpen(true); setAddOpen(false); }} title="GIF">GIF</button>
-                    <label className="px-2 py-1 rounded hover:bg-neutral-800 text-neutral-200 cursor-pointer" title="File">
-                      <input type="file" multiple className="hidden" onChange={(e)=>{ onFilesSelected(e.target.files); setAddOpen(false); }} />
-                      File
-                    </label>
-                    <label className="px-2 py-1 rounded hover:bg-neutral-800 text-neutral-200 cursor-pointer" title="Camera">
-                      <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e)=>{ onFilesSelected(e.target.files); setAddOpen(false); }} />
-                      Camera
-                    </label>
-                  </div>
-                )}
-                {replyTo && (
-                  <div className="absolute -top-9 left-0 right-0 mb-1 text-xs text-neutral-300 flex items-center justify-between bg-neutral-900/70 border border-neutral-800 rounded px-2 py-1">
-                    <div className="truncate">
-                      Replying to <span style={{ color: (replyTo as any)?.authorColor || '#34d399' }}>{replyTo.authorName || 'User'}</span>: <span className="text-neutral-400">{(replyTo.content || '').slice(0, 80)}</span>
-                    </div>
-                    <button className="ml-2 text-neutral-400 hover:text-neutral-200" onClick={()=>setReplyTo(null)} aria-label="Cancel reply" title="Cancel reply">
-                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
-                        <line x1="18" y1="6" x2="6" y2="18" />
-                        <line x1="6" y1="6" x2="18" y2="18" />
-                      </svg>
-                    </button>
-                  </div>
-                )}
-                <textarea
-                  ref={inputRef}
-                  rows={1}
-                  className="min-w-0 flex-1 px-2 py-2 text-base bg-transparent text-neutral-100 placeholder-neutral-500 outline-none ring-0 border-0 resize-none max-h-32 overflow-y-auto"
-                  placeholder={`Message #${currentChannel?.name ?? 'general'}`}
-                  value={text}
-                  onChange={(e) => onInputChange(e.target.value)}
-                  onPaste={onComposerPaste}
-                  onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
-                  autoComplete="off"
-                  autoCorrect="on"
-                  autoCapitalize="sentences"
-                  spellCheck={true}
-                  name="chat-message"
-                  data-lpignore="true"
-                  data-1p-ignore
-                  data-bw-ignore
-                  data-form-type="other"
-                />
-                {/* Emoji button inside pill */}
-                <button
-                  type="button"
-                  className="shrink-0 h-9 w-9 rounded-full text-neutral-300 hover:text-neutral-100 hover:bg-neutral-800/60 flex items-center justify-center"
-                  title="Emoji" aria-label="Emoji"
-                  onClick={() => setComposerPickerOpen(true)}
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
-                    <circle cx="12" cy="12" r="9"/>
-                    <path d="M8 14s1.5 2 4 2 4-2 4-2"/>
-                    <path d="M9 9h.01M15 9h.01"/>
-                  </svg>
-                </button>
-                {/* Mobile kebab: quick Settings/Spaces access */}
-                <div className="relative sm:hidden">
+            <div className="px-3 sm:px-4 pt-4 pb-28 sm:pb-6 safe-bottom border-t border-white/5 bg-black/30 backdrop-blur-md md:border-transparent md:bg-transparent md:backdrop-blur-none">
+              {pendingUploads.length > 0 && (
+                <div className="mb-3 flex flex-wrap gap-2">
+                  {pendingUploads.map((a, i) => {
+                    const isImg = (() => {
+                      if (a.contentType && a.contentType.startsWith('image/')) return true;
+                      const u = (a.url || '').toLowerCase();
+                      const n = (a.name || '').toLowerCase();
+                      return /(\.png|\.jpe?g|\.gif|\.webp|\.svg)(\?.*)?$/.test(u) || /(\.png|\.jpe?g|\.gif|\.webp|\.svg)(\?.*)?$/.test(n);
+                    })();
+                    return (
+                      <div key={i} className="flex items-center gap-2 rounded-2xl border border-white/10 bg-neutral-950/70 px-3 py-1.5">
+                        {isImg ? (
+                          <img src={a.url} alt={a.name || ''} className="h-10 w-10 rounded object-cover" />
+                        ) : (
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 text-neutral-400">
+                            <path d="M21.44 11.05l-8.49 8.49a5 5 0 0 1-7.07-7.07l8.49-8.49a3.5 3.5 0 0 1 4.95 4.95l-8.49 8.49a2 2 0 1 1-2.83-2.83l8.49-8.49" />
+                          </svg>
+                        )}
+                        <span className="text-sm text-neutral-200">{a.name}</span>
+                        <button
+                          aria-label="Remove attachment"
+                          className="ml-1 rounded-full border border-neutral-700 px-1.5 py-0.5 text-neutral-400 hover:border-red-500 hover:text-red-200"
+                          onClick={() => setPendingUploads((prev) => prev.filter((_, idx) => idx !== i))}
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+                            <line x1="18" y1="6" x2="6" y2="18" />
+                            <line x1="6" y1="6" x2="18" y2="18" />
+                          </svg>
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              <div className="relative flex w-full max-w-full items-center gap-1 md:gap-2">
+                <div className="flex w-full items-center gap-2 rounded-full border border-white/10 bg-neutral-900/80 px-2.5 py-1.5 shadow-[0_10px_30px_rgba(0,0,0,0.35)] backdrop-blur">
                   <button
-                    ref={composerMenuBtnRef}
+                    ref={addBtnRef}
                     type="button"
-                    className="shrink-0 h-9 w-9 rounded-full text-neutral-300 hover:text-neutral-100 hover:bg-neutral-800/60 flex items-center justify-center"
-                    aria-label="More"
-                    title="More"
-                    onClick={() => setComposerMenuOpen(v=>!v)}
+                    className="shrink-0 h-9 w-9 rounded-full text-neutral-300 transition hover:bg-white/10 hover:text-white"
+                    title="Add"
+                    aria-label="Add"
+                    onClick={() => {
+                      if (Date.now() - (lastTouchAtRef.current || 0) < 500) return;
+                      setAddOpen((v) => !v);
+                    }}
+                    onTouchStart={(e) => {
+                      e.preventDefault();
+                      lastTouchAtRef.current = Date.now();
+                      setAddOpen((v) => !v);
+                    }}
                   >
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg>
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
+                      <path d="M12 5v14M5 12h14" />
+                    </svg>
                   </button>
-                  {composerMenuOpen && (
-                    <div ref={composerMenuRef} className="absolute bottom-full mb-2 right-0 z-40 rounded-md border border-neutral-800 bg-neutral-900 shadow-xl p-1 w-40">
-                      <button className="w-full text-left px-2 py-1 rounded hover:bg-neutral-800 text-neutral-200" onClick={()=>{ setComposerMenuOpen(false); setVoidSheetOpen(true); }}>Spaces…</button>
-                      <button className="w-full text-left px-2 py-1 rounded hover:bg-neutral-800 text-neutral-200" onClick={()=>{ setComposerMenuOpen(false); setSettingsOpen(true); }}>Settings…</button>
+                  {addOpen && (
+                    <div ref={addMenuRef} className="absolute bottom-full left-0 z-40 mb-2 flex gap-1 rounded-xl border border-white/10 bg-neutral-900/95 p-2 shadow-2xl">
+                      <button
+                        className={`rounded-lg px-2 py-1 text-sm ${spoiler ? 'bg-amber-800/40 text-amber-100' : 'text-neutral-200 hover:bg-white/10'}`}
+                        onClick={() => {
+                          setSpoiler((v) => !v);
+                        }}
+                        title="Toggle spoiler"
+                        aria-pressed={spoiler}
+                        aria-label="Toggle spoiler"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+                          <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z" />
+                          <line x1="1" y1="1" x2="23" y2="23" />
+                        </svg>
+                      </button>
+                      <button className="rounded-lg px-2 py-1 text-sm text-neutral-200 hover:bg-white/10" onClick={() => { setGifOpen(true); setAddOpen(false); }} title="GIF">
+                        GIF
+                      </button>
+                      <label className="cursor-pointer rounded-lg px-2 py-1 text-sm text-neutral-200 hover:bg-white/10" title="File">
+                        <input type="file" multiple className="hidden" onChange={(e) => { onFilesSelected(e.target.files); setAddOpen(false); }} />
+                        File
+                      </label>
+                      <label className="cursor-pointer rounded-lg px-2 py-1 text-sm text-neutral-200 hover:bg-white/10" title="Camera">
+                        <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => { onFilesSelected(e.target.files); setAddOpen(false); }} />
+                        Camera
+                      </label>
                     </div>
                   )}
-                </div>
-                <button
-                  type="button"
-                  className="shrink-0 h-9 w-9 rounded-full bg-emerald-700 hover:bg-emerald-600 text-white flex items-center justify-center"
-                  title="Send"
-                  aria-label="Send"
-                  onClick={send}
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
-                    <path d="M22 2L11 13"/>
-                    <path d="M22 2l-7 20-4-9-9-4 20-7z"/>
-                  </svg>
-                </button>
+                  {replyTo && (
+                    <div className="absolute -top-10 left-0 right-0 mb-1 flex items-center justify-between rounded-2xl border border-white/10 bg-neutral-900/80 px-3 py-1 text-xs text-neutral-200">
+                      <div className="truncate">
+                        Replying to <span style={{ color: (replyTo as any)?.authorColor || '#34d399' }}>{replyTo.authorName || 'User'}</span>: <span className="text-neutral-400">{(replyTo.content || '').slice(0, 80)}</span>
+                      </div>
+                      <button className="ml-2 text-neutral-400 hover:text-neutral-200" onClick={() => setReplyTo(null)} aria-label="Cancel reply" title="Cancel reply">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+                          <line x1="18" y1="6" x2="6" y2="18" />
+                          <line x1="6" y1="6" x2="18" y2="18" />
+                        </svg>
+                      </button>
+                    </div>
+                  )}
+                  <textarea
+                    ref={inputRef}
+                    rows={1}
+                    className="min-w-0 flex-1 resize-none border-0 bg-transparent px-2 text-base text-neutral-100 outline-none placeholder:text-neutral-500"
+                    placeholder={composerPlaceholder}
+                    value={text}
+                    onChange={(e) => onInputChange(e.target.value)}
+                    onPaste={onComposerPaste}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        send();
+                      }
+                    }}
+                    autoComplete="off"
+                    autoCorrect="on"
+                    autoCapitalize="sentences"
+                    spellCheck={true}
+                    name="chat-message"
+                    data-lpignore="true"
+                    data-1p-ignore
+                    data-bw-ignore
+                    data-form-type="other"
+                  />
+                  <button
+                    type="button"
+                    className="shrink-0 h-9 w-9 rounded-full text-neutral-300 transition hover:bg-white/10 hover:text-white"
+                    title="Emoji"
+                    aria-label="Emoji"
+                    onClick={() => setComposerPickerOpen(true)}
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
+                      <circle cx="12" cy="12" r="9" />
+                      <path d="M8 14s1.5 2 4 2 4-2 4-2" />
+                      <path d="M9 9h.01M15 9h.01" />
+                    </svg>
+                  </button>
+                  <button
+                    type="button"
+                    className="shrink-0 h-9 w-9 rounded-full bg-emerald-600 text-white transition hover:bg-emerald-500 flex items-center justify-center"
+                    title="Send"
+                    aria-label="Send"
+                    onClick={send}
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
+                      <path d="M22 2L11 13" />
+                      <path d="M22 2l-7 20-4-9-9-4 20-7z" />
+                    </svg>
+                  </button>
                 </div>
               </div>
               {composerPickerOpen && (
                 <Suspense>
                   <EmojiPanel
                     onClose={() => setComposerPickerOpen(false)}
-                    onSelect={(native: string) => { addRecentEmoji(native); insertEmojiAtCaret(native); }}
+                    onSelect={(native: string) => {
+                      addRecentEmoji(native);
+                      insertEmojiAtCaret(native);
+                    }}
                   />
                 </Suspense>
               )}
-            </>
+            </div>
           )}
         </div>
       )}
@@ -4552,7 +4554,8 @@ const mutateChannelTags = useCallback((fqChanId: string, updater: (prev: KanbanT
   {showJump && (
     <button
       aria-label="Jump to present"
-      className="md:hidden fixed bottom-20 right-4 z-40 px-3 py-2 rounded-full bg-emerald-700 text-white shadow-lg border border-emerald-600"
+      className="md:hidden fixed right-4 z-40 px-3 py-2 rounded-full bg-emerald-700 text-white shadow-lg border border-emerald-600"
+      style={{ bottom: 'calc(5.5rem + env(safe-area-inset-bottom))' }}
       onClick={() => {
         const el = listRef.current; if (!el) return; el.scrollTop = el.scrollHeight; setShowJump(false);
         const cid = fq(currentVoidId, currentChannelId); setUnreadMarkerByChan(prev => ({ ...prev, [cid]: null }));
@@ -4743,92 +4746,147 @@ const mutateChannelTags = useCallback((fqChanId: string, updater: (prev: KanbanT
       {/* Mobile: Spaces sheet */}
       {voidSheetOpen && (
         <div className="md:hidden fixed inset-0 z-40">
-          <div className="absolute inset-0 bg-black/50" onClick={()=>setVoidSheetOpen(false)} />
-          <div className="absolute inset-y-0 left-0 w-4/5 max-w-xs bg-neutral-950 border-r border-neutral-800 shadow-xl flex flex-col py-3">
-            <div className="px-3 flex items-center justify-between mb-2">
-              <div className="text-neutral-300 font-semibold">Spaces</div>
-              <button className="text-neutral-400 hover:text-neutral-200" onClick={()=>setVoidSheetOpen(false)} aria-label="Close" title="Close">
+          <div className="absolute inset-0 bg-black/60" onClick={() => setVoidSheetOpen(false)} />
+          <div className="absolute inset-x-0 bottom-0 max-h-[90%] rounded-t-[32px] border border-white/10 bg-neutral-950/95 shadow-[0_-30px_80px_rgba(0,0,0,0.7)] flex flex-col">
+            <div className="px-5 pt-4 pb-3 border-b border-white/10 flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-xs uppercase tracking-[0.2em] text-neutral-500">Spaces</p>
+                <p className="truncate text-lg font-semibold text-white">{headerSpaceLabel}</p>
+              </div>
+              <button className="rounded-full border border-white/10 p-2 text-neutral-300 hover:text-white" onClick={() => setVoidSheetOpen(false)} aria-label="Close">
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
                   <line x1="18" y1="6" x2="6" y2="18" />
                   <line x1="6" y1="6" x2="18" y2="18" />
                 </svg>
               </button>
             </div>
-            <div className="px-3">
+            <div className="px-5 pt-3">
               <button
-                className="h-10 w-10 rounded-full overflow-hidden border border-neutral-700 bg-neutral-900 flex items-center justify-center hover:border-emerald-600"
+                className="flex w-full items-center gap-3 rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-left text-white/80 hover:border-emerald-500/40"
                 title="Profile"
-                onClick={() => { setVoidSheetOpen(false); setChanSheetOpen(false); setUsersSheetOpen(false); if (voiceJoined) leaveVoice(); setCurrentVoidId(""); setCurrentChannelId("general"); }}
+                onClick={() => {
+                  setVoidSheetOpen(false);
+                  setChanSheetOpen(false);
+                  setUsersSheetOpen(false);
+                  if (voiceJoined) leaveVoice();
+                  setCurrentVoidId('');
+                  setCurrentChannelId('general');
+                }}
               >
-                {me?.avatarUrl ? (
-                  <img src={me.avatarUrl} alt="me" className="h-full w-full object-cover" />
-                ) : (
-                  <span className="text-[10px] text-neutral-400">{(me?.name?.[0] || user?.username?.[0] || '?').toUpperCase()}</span>
-                )}
-              </button>
-            </div>
-            <div className="mt-3 flex-1 overflow-auto px-2 space-y-2">
-              {voids.filter(v=>!String(v.id).startsWith('dm_') && !hiddenSpaces[v.id]).map(v => (
-                <div key={v.id} className="flex items-center justify-between gap-2">
-                  <button onClick={() => { switchVoid(v.id); setVoidSheetOpen(false); }}
-                          className={`flex-1 px-3 py-2 rounded-md text-left border ${v.id===currentVoidId?'border-emerald-700 bg-emerald-900/30 text-emerald-200':'border-neutral-800 bg-neutral-900 text-neutral-300'}`}
-                  >
-                    <div className="flex items-center gap-2">
-                      <div className="h-8 w-8 rounded-full overflow-hidden border border-neutral-700 bg-neutral-900 flex items-center justify-center">
-                        {v.avatarUrl ? <img src={v.avatarUrl} className="h-full w-full object-cover"/> : <span className="text-[10px] text-neutral-400">{(v.name?.[0]||'?').toUpperCase()}</span>}
-                      </div>
-                      <div className="truncate">{v.name}</div>
-                    </div>
-                  </button>
-                  {v.id === currentVoidId && (
-                    <button
-                      className="shrink-0 h-10 w-10 rounded-full border border-neutral-700 bg-neutral-900 text-neutral-300 hover:border-emerald-600 flex items-center justify-center"
-                      title="Space Settings"
-                      onClick={()=>{ setSettingsOpen(true); setVoidSheetOpen(false); }}
-                      aria-label="Space settings"
-                    >
-                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
-                        <circle cx="12" cy="12" r="3"/>
-                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V22a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 8 20.17a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 3 15.4 1.65 1.65 0 0 0 1.5 14H1.41a2 2 0 1 1 0-4H1.5A1.65 1.65 0 0 0 3 8.6 1.65 1.65 0 0 0 2.17 6.77l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 8 3.83 1.65 1.65 0 0 0 9.5 2.5V2.41a2 2 0 1 1 4 0V2.5A1.65 1.65 0 0 0 15.4 3a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 21 8.6c.36.5.57 1.11.5 1.77H21.5a2 2 0 1 1 0 4H21.5A1.65 1.65 0 0 0 19.4 15z"/>
-                      </svg>
-                    </button>
+                <div className="h-10 w-10 rounded-full overflow-hidden border border-white/10 bg-neutral-900 flex items-center justify-center">
+                  {me?.avatarUrl ? (
+                    <img src={me.avatarUrl} alt="me" className="h-full w-full object-cover" />
+                  ) : (
+                    <span className="text-sm font-semibold">{(me?.name?.[0] || user?.username?.[0] || '?').toUpperCase()}</span>
                   )}
                 </div>
-              ))}
-              {Object.keys(hiddenSpaces).some(id=>hiddenSpaces[id]) && (
-                <div className="mt-3">
-                  <div className="px-1 text-neutral-400 text-xs mb-1">Vault</div>
-                  {voids.filter(v=>!String(v.id).startsWith('dm_') && hiddenSpaces[v.id]).map(v => (
-                    <div key={v.id} className="flex items-center justify-between gap-2">
-                      <button onClick={() => { switchVoid(v.id); setVoidSheetOpen(false); }}
-                              className="flex-1 px-3 py-2 rounded-md text-left border border-neutral-800 bg-neutral-900 text-neutral-300">
-                        <div className="flex items-center gap-2">
-                          <div className="h-8 w-8 rounded-full overflow-hidden border border-neutral-700 bg-neutral-900 flex items-center justify-center">
-                            {v.avatarUrl ? <img src={v.avatarUrl} className="h-full w-full object-cover"/> : <span className="text-[10px] text-neutral-400">{(v.name?.[0]||'?').toUpperCase()}</span>}
+                <div>
+                  <div className="text-xs uppercase tracking-wide text-neutral-400">Home</div>
+                  <div className="text-sm font-semibold text-white">{me?.name || user?.username || 'You'}</div>
+                </div>
+              </button>
+            </div>
+            <div className="flex-1 overflow-auto px-5 py-4 space-y-4">
+              <div className="space-y-2">
+                {voids.filter((v) => !String(v.id).startsWith('dm_') && !hiddenSpaces[v.id]).map((v) => {
+                  const active = v.id === currentVoidId;
+                  return (
+                    <div key={v.id} className="flex items-center gap-2">
+                      <button
+                        onClick={() => {
+                          switchVoid(v.id);
+                          setVoidSheetOpen(false);
+                        }}
+                        className={`flex-1 rounded-2xl border px-3 py-2 text-left transition ${
+                          active ? 'border-emerald-500/60 bg-emerald-500/10 text-white' : 'border-white/5 bg-white/5 text-neutral-200 hover:border-white/15'
+                        }`}
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="h-10 w-10 rounded-full overflow-hidden border border-white/10 bg-neutral-900 flex items-center justify-center">
+                            {v.avatarUrl ? <img src={v.avatarUrl} className="h-full w-full object-cover" /> : <span className="text-sm text-neutral-400">{(v.name?.[0] || '?').toUpperCase()}</span>}
                           </div>
-                          <div className="truncate">{v.name}</div>
+                          <div className="min-w-0">
+                            <div className="truncate text-base font-semibold">{v.name}</div>
+                            {active && <div className="text-xs text-emerald-200">Current space</div>}
+                          </div>
                         </div>
                       </button>
-                      <button className="shrink-0 h-10 px-2 rounded border border-emerald-700 text-emerald-200" onClick={()=>{ const next={...hiddenSpaces}; delete next[v.id]; setHiddenSpaces(next); }}>
-                        Unhide
-                      </button>
+                      {active && (
+                        <button
+                          className="shrink-0 rounded-full border border-white/10 p-2 text-neutral-300 hover:border-emerald-500/50 hover:text-white"
+                          title="Space settings"
+                          onClick={() => {
+                            setSettingsOpen(true);
+                            setVoidSheetOpen(false);
+                          }}
+                          aria-label="Space settings"
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
+                            <circle cx="12" cy="12" r="3" />
+                            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V22a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 8 20.17a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 3 15.4 1.65 1.65 0 0 0 1.5 14H1.41a2 2 0 1 1 0-4H1.5A1.65 1.65 0 0 0 3 8.6 1.65 1.65 0 0 0 2.17 6.77l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 8 3.83 1.65 1.65 0 0 0 9.5 2.5V2.41a2 2 0 1 1 4 0V2.5A1.65 1.65 0 0 0 15.4 3a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 21 8.6c.36.5.57 1.11.5 1.77H21.5a2 2 0 1 1 0 4H21.5A1.65 1.65 0 0 0 19.4 15z" />
+                          </svg>
+                        </button>
+                      )}
                     </div>
-                  ))}
+                  );
+                })}
+              </div>
+              {Object.keys(hiddenSpaces).some((id) => hiddenSpaces[id]) && (
+                <div>
+                  <div className="text-xs uppercase tracking-wide text-neutral-500">Vault</div>
+                  <div className="mt-2 space-y-2">
+                    {voids
+                      .filter((v) => !String(v.id).startsWith('dm_') && hiddenSpaces[v.id])
+                      .map((v) => (
+                        <div key={v.id} className="flex items-center gap-2">
+                          <button
+                            onClick={() => {
+                              switchVoid(v.id);
+                              setVoidSheetOpen(false);
+                            }}
+                            className="flex-1 rounded-2xl border border-white/5 bg-white/5 px-3 py-2 text-left text-neutral-300 hover:border-white/15"
+                          >
+                            <div className="flex items-center gap-3">
+                              <div className="h-10 w-10 rounded-full border border-white/10 bg-neutral-900 flex items-center justify-center overflow-hidden">
+                                {v.avatarUrl ? <img src={v.avatarUrl} className="h-full w-full object-cover" /> : <span className="text-sm text-neutral-400">{(v.name?.[0] || '?').toUpperCase()}</span>}
+                              </div>
+                              <div className="truncate">{v.name}</div>
+                            </div>
+                          </button>
+                          <button
+                            className="shrink-0 rounded-full border border-emerald-500/60 px-3 py-1 text-sm text-emerald-200"
+                            onClick={() => {
+                              const next = { ...hiddenSpaces };
+                              delete next[v.id];
+                              setHiddenSpaces(next);
+                            }}
+                          >
+                            Unhide
+                          </button>
+                        </div>
+                      ))}
+                  </div>
                 </div>
               )}
             </div>
-            <div className="px-2 mt-2 flex items-center gap-2">
-              <button className="flex-1 px-3 py-2 rounded border border-neutral-700 text-neutral-200 hover:bg-neutral-800/60" onClick={()=>{ createSpace(); setVoidSheetOpen(false); }}>New Space</button>
+            <div className="safe-bottom px-5 pb-4 pt-3 border-t border-white/10 flex items-center gap-2">
               <button
-                className="h-10 w-10 rounded-full border border-neutral-700 bg-neutral-900 text-neutral-300 hover:border-emerald-600 flex items-center justify-center"
-                title="Space Settings"
-                onClick={()=>{ setSettingsOpen(true); setVoidSheetOpen(false); }}
-                aria-label="Space settings"
+                className="flex-1 rounded-2xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-emerald-50 shadow-lg shadow-emerald-900/40"
+                onClick={() => {
+                  createSpace();
+                  setVoidSheetOpen(false);
+                }}
               >
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
-                  <circle cx="12" cy="12" r="3"/>
-                  <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V22a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 8 20.17a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 3 15.4 1.65 1.65 0 0 0 1.5 14H1.41a2 2 0 1 1 0-4H1.5A1.65 1.65 0 0 0 3 8.6 1.65 1.65 0 0 0 2.17 6.77l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 8 3.83 1.65 1.65 0 0 0 9.5 2.5V2.41a2 2 0 1 1 4 0V2.5A1.65 1.65 0 0 0 15.4 3a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 21 8.6c.36.5.57 1.11.5 1.77H21.5a2 2 0 1 1 0 4H21.5A1.65 1.65 0 0 0 19.4 15z"/>
-                </svg>
+                New space
+              </button>
+              <button
+                className="rounded-2xl border border-white/10 bg-white/5 px-4 py-2 text-sm text-white hover:border-emerald-500/40"
+                onClick={() => {
+                  setSettingsOpen(true);
+                  setVoidSheetOpen(false);
+                }}
+              >
+                Settings
               </button>
             </div>
           </div>
@@ -4836,49 +4894,55 @@ const mutateChannelTags = useCallback((fqChanId: string, updater: (prev: KanbanT
       )}
 
       {/* Mobile: Channels sheet (gesture-aware) */}
-      { (chanSheetOpen || swipePanel==='chan') && (
+      {(chanSheetOpen || swipePanel === 'chan') && (
         <div className="md:hidden fixed inset-0 z-40">
           <div
-            className="absolute inset-0 bg-black"
+            className="absolute inset-0 bg-black/60"
             style={{
-              opacity: ((swipePanel==='chan') ? (swipeMode==='close' ? (1 - swipeProgress) : swipeProgress) : (chanSheetOpen ? 1 : 0)) * 0.5,
-              transition: swipePanel==='chan' ? 'none' : 'opacity 200ms ease-out',
-              pointerEvents: (((swipePanel==='chan') ? (swipeMode==='close' ? (1 - swipeProgress) : swipeProgress) : (chanSheetOpen ? 1 : 0)) > 0.01) ? 'auto' : 'none'
+              opacity: chanDrawerProgress * 0.6,
+              transition: swipePanel === 'chan' ? 'none' : 'opacity 200ms ease-out',
+              pointerEvents: chanDrawerProgress > 0.01 ? 'auto' : 'none',
             }}
-            onClick={()=>setChanSheetOpen(false)}
+            onClick={() => setChanSheetOpen(false)}
           />
           <div
-            className="absolute inset-y-0 left-0 w-4/5 max-w-sm bg-neutral-900 border-r border-neutral-800 shadow-xl flex flex-col"
+            className="absolute inset-x-0 bottom-0 max-h-[88%] rounded-t-[32px] border border-white/10 bg-neutral-950/95 shadow-[0_-30px_80px_rgba(0,0,0,0.7)] flex flex-col"
             style={{
-              transform: `translateX(-${(1 - ((swipePanel==='chan') ? (swipeMode==='close' ? (1 - swipeProgress) : swipeProgress) : (chanSheetOpen ? 1 : 0))) * 100}%)`,
-              transition: swipePanel==='chan' ? 'none' : 'transform 200ms ease-out',
-              willChange: 'transform'
+              transform: `translateY(${(1 - chanDrawerProgress) * 100}%)`,
+              transition: swipePanel === 'chan' ? 'none' : 'transform 200ms ease-out',
+              willChange: 'transform',
             }}
           >
-            <div className="h-12 flex items-center justify-between px-3 border-b border-neutral-800">
-              <div className="font-semibold text-emerald-300">Channels</div>
-              <button className="text-neutral-400 hover:text-neutral-200" onClick={()=>setChanSheetOpen(false)} aria-label="Close" title="Close">
+            <div className="px-5 pt-4 pb-3 border-b border-white/10 flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-xs uppercase tracking-[0.2em] text-neutral-500">{isDmSpace ? 'Conversation' : 'Channels'}</p>
+                <p className="truncate text-lg font-semibold text-white">{isDmSpace ? (currentSpace?.name || 'Direct messages') : (voids.find((v) => v.id === currentVoidId)?.name || headerSpaceLabel)}</p>
+              </div>
+              <button className="rounded-full border border-white/10 p-2 text-neutral-300 hover:text-white" onClick={() => setChanSheetOpen(false)} aria-label="Close">
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
                   <line x1="18" y1="6" x2="6" y2="18" />
                   <line x1="6" y1="6" x2="18" y2="18" />
                 </svg>
               </button>
             </div>
-            <div className="p-2">
-              {!String(currentVoidId).startsWith('dm_') && (
-                <div className="mb-2">
+            <div className="flex-1 overflow-auto px-5 py-4 space-y-4">
+              {!isDmSpace && (
+                <div className="space-y-2 rounded-2xl border border-white/10 bg-white/5 p-3">
                   <button
-                    className="w-full px-3 py-2 rounded border border-neutral-700 text-neutral-200 hover:bg-neutral-800/60"
+                    className="flex w-full items-center justify-between rounded-2xl border border-white/10 bg-neutral-900/70 px-3 py-2 text-left text-white hover:border-emerald-500/50"
                     onClick={() => setChanTypePickerOpen((prev) => !prev)}
                   >
-                    {chanTypePickerOpen ? 'Choose channel type' : '+ Channel'}
+                    <span className="font-semibold">{chanTypePickerOpen ? 'Choose a channel type' : 'Create channel'}</span>
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
+                      <path d="M12 5v14M5 12h14" />
+                    </svg>
                   </button>
                   {chanTypePickerOpen && (
-                    <div className="mt-2 grid grid-cols-2 gap-2">
+                    <div className="grid grid-cols-2 gap-2">
                       {CHANNEL_TYPE_OPTIONS.map((opt) => (
                         <button
                           key={opt.id}
-                          className="text-left rounded-xl border border-neutral-800 bg-neutral-900/70 px-3 py-2 text-sm text-neutral-100 hover:border-emerald-600 hover:bg-neutral-900"
+                          className="rounded-2xl border border-white/10 bg-neutral-900/80 px-3 py-2 text-left text-neutral-100 hover:border-emerald-500/60"
                           onClick={async () => {
                             setChanTypePickerOpen(false);
                             setChanSheetOpen(false);
@@ -4893,92 +4957,136 @@ const mutateChannelTags = useCallback((fqChanId: string, updater: (prev: KanbanT
                   )}
                 </div>
               )}
-              <ul className="space-y-1">
-                {(!String(currentVoidId).startsWith('dm_') ? channels : channels.filter(ch=>ch.id==='chat')).map(ch => (
-                  <li key={ch.id}>
-                    <button className={`w-full text-left px-3 py-2 rounded-md transition-colors hover:bg-neutral-800/70 ${ch.id===currentChannelId?'bg-emerald-900/30 text-emerald-200 border border-emerald-800/40':''}`}
-                            onClick={() => { switchChannel(ch.id); setChanSheetOpen(false); }}
-                    >#{ch.name}</button>
-                  </li>
-                ))}
-              </ul>
-              {/* DMs with close control */}
-              <div className="mt-3 px-1 text-neutral-400 text-xs">Direct Messages</div>
-              <ul className="mt-1 space-y-1">
-                {(() => {
-                  const dmList = voids.filter(v => {
-                    if (!String(v.id).startsWith('dm_')) return false;
-                    const count = unread[`${v.id}:chat`] || 0;
-                    // If hidden, only show when there are unread messages
-                    if (hiddenDms.includes(v.id)) return (count > 0) && !mutedSpaces[v.id];
-                    return true;
-                  });
-                  return dmList.map(v => {
-                  const count = unread[`${v.id}:chat`] || 0;
-                  const active = currentVoidId === v.id;
-                  return (
-                    <li key={v.id} className="flex items-center gap-2">
-                      <button className={`flex-1 text-left px-3 py-2 rounded-md transition-colors ${active?'bg-emerald-900/30 text-emerald-200 border border-emerald-800/40':'hover:bg-neutral-800/70 text-neutral-300'}`} onClick={()=>{ switchVoid(v.id); switchChannel('chat'); setChanSheetOpen(false); }}>
-                        {v.name || 'DM'}
-                      </button>
-                      {count>0 && <span className="min-w-5 h-5 px-1 rounded-full bg-emerald-600 text-white text-[10px] flex items-center justify-center">{count>99?'99+':count}</span>}
-                      {/* Mute moved to settings */}
-                      <button title="Close DM" aria-label="Close DM" className="px-2 py-1 rounded text-neutral-400 hover:text-red-300 hover:bg-red-900/20" onClick={(e)=>{ e.stopPropagation(); setHiddenDms(prev => prev.includes(v.id) ? prev : [...prev, v.id]); }}>
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
-                          <line x1="18" y1="6" x2="6" y2="18" />
-                          <line x1="6" y1="6" x2="18" y2="18" />
-                        </svg>
-                      </button>
-                    </li>
-                  );
-                  });
-                })()}
-              </ul>
+              <div>
+                <div className="text-xs uppercase tracking-[0.2em] text-neutral-500">{isDmSpace ? 'Conversation' : 'Channels'}</div>
+                <ul className="mt-2 space-y-1.5">
+                  {(!isDmSpace ? channels : channels.filter((ch) => ch.id === 'chat')).map((ch) => {
+                    const active = ch.id === currentChannelId;
+                    return (
+                      <li key={ch.id}>
+                        <button
+                          className={`w-full rounded-2xl border px-3 py-2 text-left transition ${
+                            active ? 'border-emerald-500/60 bg-emerald-500/10 text-white' : 'border-white/5 bg-white/5 text-neutral-200 hover:border-white/15'
+                          }`}
+                          onClick={() => {
+                            switchChannel(ch.id);
+                            setChanSheetOpen(false);
+                          }}
+                        >
+                          {!isDmSpace && <span className="text-neutral-400 mr-1">#</span>}
+                          {ch.name}
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+              <div>
+                <div className="text-xs uppercase tracking-[0.2em] text-neutral-500">Direct messages</div>
+                <ul className="mt-2 space-y-1.5">
+                  {(() => {
+                    const dmList = voids.filter((v) => {
+                      if (!String(v.id).startsWith('dm_')) return false;
+                      const count = unread[`${v.id}:chat`] || 0;
+                      if (hiddenDms.includes(v.id)) return count > 0 && !mutedSpaces[v.id];
+                      return true;
+                    });
+                    return dmList.map((v) => {
+                      const count = unread[`${v.id}:chat`] || 0;
+                      const active = currentVoidId === v.id;
+                      return (
+                        <li key={v.id} className="flex items-center gap-2">
+                          <button
+                            className={`flex-1 rounded-2xl border px-3 py-2 text-left transition ${active ? 'border-emerald-500/60 bg-emerald-500/10 text-white' : 'border-white/5 bg-white/5 text-neutral-200 hover:border-white/15'}`}
+                            onClick={() => {
+                              switchVoid(v.id);
+                              switchChannel('chat');
+                              setChanSheetOpen(false);
+                            }}
+                          >
+                            {v.name || 'DM'}
+                          </button>
+                          {count > 0 && (
+                            <span className="min-w-6 rounded-full bg-emerald-600 px-2 py-1 text-center text-xs font-semibold text-white">{count > 99 ? '99+' : count}</span>
+                          )}
+                          <button
+                            title="Hide DM"
+                            aria-label="Hide DM"
+                            className="rounded-full border border-white/10 p-2 text-neutral-400 hover:text-red-200 hover:border-red-400/60"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setHiddenDms((prev) => (prev.includes(v.id) ? prev : [...prev, v.id]));
+                            }}
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+                              <line x1="18" y1="6" x2="6" y2="18" />
+                              <line x1="6" y1="6" x2="18" y2="18" />
+                            </svg>
+                          </button>
+                        </li>
+                      );
+                    });
+                  })()}
+                </ul>
+              </div>
             </div>
           </div>
         </div>
       )}
 
       {/* Mobile: People sheet (gesture-aware) */}
-      { showPeople && (usersSheetOpen || swipePanel==='users') && (
+      {showPeople && (usersSheetOpen || swipePanel === 'users') && (
         <div className="md:hidden fixed inset-0 z-40">
           <div
-            className="absolute inset-0 bg-black"
+            className="absolute inset-0 bg-black/60"
             style={{
-              opacity: ((swipePanel==='users') ? (swipeMode==='close' ? (1 - swipeProgress) : swipeProgress) : (usersSheetOpen ? 1 : 0)) * 0.5,
-              transition: swipePanel==='users' ? 'none' : 'opacity 200ms ease-out',
-              pointerEvents: (((swipePanel==='users') ? (swipeMode==='close' ? (1 - swipeProgress) : swipeProgress) : (usersSheetOpen ? 1 : 0)) > 0.01) ? 'auto' : 'none'
+              opacity: usersDrawerProgress * 0.6,
+              transition: swipePanel === 'users' ? 'none' : 'opacity 200ms ease-out',
+              pointerEvents: usersDrawerProgress > 0.01 ? 'auto' : 'none',
             }}
-            onClick={()=>setUsersSheetOpen(false)}
+            onClick={() => setUsersSheetOpen(false)}
           />
           <div
-            className="absolute inset-y-0 right-0 w-4/5 max-w-sm bg-neutral-900 border-l border-neutral-800 shadow-xl flex flex-col"
+            className="absolute inset-x-0 bottom-0 max-h-[88%] rounded-t-[32px] border border-white/10 bg-neutral-950/95 shadow-[0_-30px_80px_rgba(0,0,0,0.7)] flex flex-col"
             style={{
-              transform: `translateX(${(1 - ((swipePanel==='users') ? (swipeMode==='close' ? (1 - swipeProgress) : swipeProgress) : (usersSheetOpen ? 1 : 0))) * 100}%)`,
-              transition: swipePanel==='users' ? 'none' : 'transform 200ms ease-out',
-              willChange: 'transform'
+              transform: `translateY(${(1 - usersDrawerProgress) * 100}%)`,
+              transition: swipePanel === 'users' ? 'none' : 'transform 200ms ease-out',
+              willChange: 'transform',
             }}
           >
-            <div className="h-12 flex items-center justify-between px-3 border-b border-neutral-800">
-              <div className="font-semibold text-emerald-300">People</div>
-              <button className="text-neutral-400 hover:text-neutral-200" onClick={()=>setUsersSheetOpen(false)} aria-label="Close" title="Close">
+            <div className="px-5 pt-4 pb-3 border-b border-white/10 flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-xs uppercase tracking-[0.2em] text-neutral-500">People</p>
+                <p className="truncate text-lg font-semibold text-white">{voids.find((v) => v.id === currentVoidId)?.name || headerSpaceLabel}</p>
+              </div>
+              <button className="rounded-full border border-white/10 p-2 text-neutral-300 hover:text-white" onClick={() => setUsersSheetOpen(false)} aria-label="Close">
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
                   <line x1="18" y1="6" x2="6" y2="18" />
                   <line x1="6" y1="6" x2="18" y2="18" />
                 </svg>
               </button>
             </div>
-            <div className="p-2 space-y-1 overflow-auto">
-              {members.map(m => {
+            <div className="flex-1 overflow-auto px-5 py-4 space-y-2">
+              {members.map((m) => {
                 const online = globalUserIds.includes(m.id) || spaceUserIds.includes(m.id) || roomUserIds.includes(m.id);
                 const onMobile = globalMobileIds.includes(m.id) || spaceMobileIds.includes(m.id) || roomMobileIds.includes(m.id);
-                const miniFromBio = (() => { const b = String((m as any).bio || '').trim(); return b ? b.split(/\r?\n/)[0].slice(0, 120) : ''; })();
+                const miniFromBio = (() => {
+                  const b = String((m as any).bio || '').trim();
+                  return b ? b.split(/\r?\n/)[0].slice(0, 120) : '';
+                })();
                 return (
-                  <UserRow
-                    key={m.id}
-                    data={{ id: m.id, name: m.name, username: m.username, avatarUrl: m.avatarUrl, nameColor: m.nameColor, status: (miniFromBio) || undefined, rawStatus: (m as any).status, online, onMobile }}
-                    onClick={(e: any) => { setUsersSheetOpen(false); if (m.id !== me.userId) { const rect = (e.currentTarget as HTMLElement).getBoundingClientRect(); setViewUserCard({ id: m.id, x: rect.left - 328, y: rect.top + 8 }); } else setSettingsOpen(true); }}
-                  />
+                  <div key={m.id} className="rounded-2xl border border-white/5 bg-white/5 px-2 py-1">
+                    <UserRow
+                      data={{ id: m.id, name: m.name, username: m.username, avatarUrl: m.avatarUrl, nameColor: m.nameColor, status: miniFromBio || undefined, rawStatus: (m as any).status, online, onMobile }}
+                      onClick={(e: any) => {
+                        setUsersSheetOpen(false);
+                        if (m.id !== me.userId) {
+                          const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                          setViewUserCard({ id: m.id, x: rect.left - 328, y: rect.top + 8 });
+                        } else setSettingsOpen(true);
+                      }}
+                    />
+                  </div>
                 );
               })}
               {members.length === 0 && <div className="text-neutral-500 text-sm px-2">No members</div>}
@@ -4986,31 +5094,31 @@ const mutateChannelTags = useCallback((fqChanId: string, updater: (prev: KanbanT
           </div>
         </div>
       )}
-      {/* Mobile Edge Handles for drawers */}
-      <div className="sm:hidden fixed inset-y-0 inset-x-0 pointer-events-none z-40">
-        {/* Left handle: Channels */}
-        <button
-          className={`absolute left-0 top-1/2 -translate-y-1/2 ml-1 h-16 w-8 rounded-r-full border border-white/10 bg-black/50 md:backdrop-blur text-white/70 hover:text-white hover:bg-white/10 pointer-events-auto ${chanSheetOpen ? 'opacity-0' : 'opacity-80'}`}
-          aria-label="Open Channels"
-          title="Channels"
-          onClick={() => setChanSheetOpen(true)}
-        >
-          <span className="sr-only">Open Channels</span>
-        </button>
-        {/* Right handle: People */}
-        {showPeople && (
-          <button
-            className={`absolute right-0 top-1/2 -translate-y-1/2 mr-1 h-16 w-8 rounded-l-full border border-white/10 bg-black/50 md:backdrop-blur text-white/70 hover:text-white hover:bg-white/10 pointer-events-auto ${usersSheetOpen ? 'opacity-0' : 'opacity-80'}`}
-            aria-label="Open People"
-            title="People"
-            onClick={() => setUsersSheetOpen(true)}
-          >
-            <span className="sr-only">Open People</span>
-          </button>
-        )}
-      </div>
-
-
+      <BottomNav
+        active={mobileNavActive}
+        onSpaces={() => {
+          setVoidSheetOpen(true);
+          setChanSheetOpen(false);
+          setUsersSheetOpen(false);
+        }}
+        onChannels={() => {
+          if (!currentVoidId) {
+            setVoidSheetOpen(true);
+            return;
+          }
+          setChanSheetOpen(true);
+          setUsersSheetOpen(false);
+        }}
+        onPeople={() => {
+          if (!showPeople) return;
+          setUsersSheetOpen(true);
+          setChanSheetOpen(false);
+        }}
+        onSettings={() => setSettingsOpen(true)}
+        peopleUnread={dmUnreadCount}
+        disableChannels={!currentVoidId}
+        disablePeople={!showPeople}
+      />
     </div>
   );
 }

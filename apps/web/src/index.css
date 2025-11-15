@@ -91,6 +91,63 @@ body {
   background: var(--scrollbar-thumb-hover);
 }
 
+/* Lightweight markdown styles for bios */
+.markdown-bio {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.markdown-bio p,
+.markdown-bio h1,
+.markdown-bio h2,
+.markdown-bio h3,
+.markdown-bio h4,
+.markdown-bio h5,
+.markdown-bio h6 {
+  margin: 0;
+}
+.markdown-bio ul,
+.markdown-bio ol {
+  margin: 0;
+  padding-left: 1.25rem;
+}
+.markdown-bio li {
+  margin: 0.15rem 0;
+}
+.markdown-bio blockquote {
+  border-left: 2px solid rgba(255,255,255,0.2);
+  padding-left: 0.75rem;
+  margin: 0;
+  color: rgba(255,255,255,0.7);
+}
+.markdown-inline-code {
+  font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, Liberation Mono, monospace;
+  background: rgba(255,255,255,0.08);
+  padding: 0.05rem 0.35rem;
+  border-radius: 0.35rem;
+  font-size: 0.9em;
+}
+.markdown-code-block {
+  background: rgba(0,0,0,0.35);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 0.75rem;
+  padding: 0.75rem;
+  overflow-x: auto;
+  font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, Liberation Mono, monospace;
+  font-size: 0.9em;
+}
+.markdown-divider {
+  border-color: rgba(255,255,255,0.15);
+}
+.markdown-bio a {
+  color: #34d399;
+  text-decoration: underline;
+}
+.markdown-bio img {
+  max-width: 100%;
+  height: auto;
+}
+
 /* Accent helpers (driven by --echo-accent) */
 .accent-text { color: var(--echo-accent) !important; }
 .accent-bg-soft { background-color: color-mix(in srgb, var(--echo-accent) 18%, transparent) !important; }
