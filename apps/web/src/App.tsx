@@ -24,7 +24,6 @@ import type { AuthUser } from "./types/auth";
 import UserQuickSettings from "./components/UserQuickSettings";
 import ToastHost from "./components/ToastHost";
 import ConfirmHost from "./components/ConfirmHost";
-import BottomNav from "./components/BottomNav";
 import UserRow from "./components/people/UserRow";
 import MemberProfileCard from "./components/MemberProfileCard";
 import { askConfirm, toast } from "./lib/ui";
@@ -99,6 +98,34 @@ function FavGalleryVisual({ frames, fit, hover, rotate, seconds, pause, transiti
           <img src={cur.url} alt={cur.name||'image'} className={`absolute inset-0 w-full h-full object-cover ${hoverCls} bg-neutral-900`} />
         )
       )}
+      <div className="sm:hidden fixed inset-y-0 left-0 z-30 flex flex-col justify-center pl-1 pointer-events-none">
+        <button
+          className="pointer-events-auto h-20 w-8 rounded-r-full bg-black/60 border border-white/10 text-white/60 hover:text-white flex items-center justify-center"
+          aria-label="Open channels"
+          title="Channels"
+          onClick={() => { setChanSheetOpen(true); setUsersSheetOpen(false); }}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
+            <path d="M9 18l6-6-6-6" />
+          </svg>
+        </button>
+      </div>
+      {showPeople && (
+        <div className="sm:hidden fixed inset-y-0 right-0 z-30 flex flex-col justify-center pr-1 pointer-events-none">
+          <button
+            className="pointer-events-auto h-20 w-8 rounded-l-full bg-black/60 border border-white/10 text-white/60 hover:text-white flex items-center justify-center"
+            aria-label="Open people"
+            title="People"
+            onClick={() => { setUsersSheetOpen(true); setChanSheetOpen(false); }}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
+              <path d="M15 6l-6 6 6 6" />
+            </svg>
+          </button>
+        </div>
+      )}
+
+
     </div>
   );
 }
@@ -481,6 +508,15 @@ function ChatApp({ token, user, onTokenChange }: { token: string; user: AuthUser
       if (!currentVoidId) return; // nothing when no space selected
       const t = e.touches[0]; if (!t) return;
       startX = t.clientX; startY = t.clientY; active = true; decided = false;
+      const chanOpen = chanOpenRef.current;
+      const usersOpen = usersOpenRef.current;
+      const edgeZone = 56;
+      const width = window.innerWidth || 0;
+      const nearLeft = startX <= edgeZone;
+      const nearRight = startX >= (width - edgeZone);
+      if (!chanOpen && !usersOpen) {
+        if (!nearLeft && !(showPeople && nearRight)) { active = false; return; }
+      }
       setSwipePanel(null); setSwipeMode(null); setSwipeProgress(0);
       swipePanelRef.current = null; swipeModeRef.current = null; swipeProgRef.current = 0;
     }
@@ -1224,30 +1260,12 @@ const currentChannelTags = currentChannelFqid ? (channelTagsByChan[currentChanne
   const composerPlaceholder = isDmSpace
     ? `Message ${currentSpace?.name || 'this conversation'}`
     : `Message #${currentChannel?.name ?? currentChannelId ?? 'general'}`;
-  const dmUnreadCount = useMemo(() => {
-    try {
-      return voids.reduce((acc, space) => {
-        if (!String(space.id).startsWith('dm_')) return acc;
-        const count = unread[`${space.id}:chat`] || 0;
-        return acc + count;
-      }, 0);
-    } catch {
-      return 0;
-    }
-  }, [unread, voids]);
   const chanDrawerProgress = (swipePanel === 'chan')
     ? (swipeMode === 'close' ? (1 - swipeProgress) : swipeProgress)
     : (chanSheetOpen ? 1 : 0);
   const usersDrawerProgress = (swipePanel === 'users')
     ? (swipeMode === 'close' ? (1 - swipeProgress) : swipeProgress)
     : (usersSheetOpen ? 1 : 0);
-  const mobileNavActive = useMemo<'spaces' | 'channels' | 'people' | 'settings' | null>(() => {
-    if (settingsOpen) return 'settings';
-    if (voidSheetOpen) return 'spaces';
-    if (chanSheetOpen || swipePanel === 'chan') return 'channels';
-    if (showPeople && (usersSheetOpen || swipePanel === 'users')) return 'people';
-    return null;
-  }, [settingsOpen, voidSheetOpen, chanSheetOpen, usersSheetOpen, swipePanel, showPeople]);
 
   // Expose a lightweight spaces cache for settings Vault section
   useEffect(() => {
@@ -3048,14 +3066,58 @@ const mutateChannelTags = useCallback((fqChanId: string, updater: (prev: KanbanT
       {/* Mobile Top Header: context only */}
       <div className="sm:hidden fixed top-0 inset-x-0 z-40 pointer-events-none">
         <div className="px-3 pt-[env(safe-area-inset-top)]">
-          <header className="pointer-events-auto mx-auto max-w-3xl rounded-[28px] border border-white/10 bg-black/70 px-4 py-3 flex items-center justify-between gap-4 shadow-lg shadow-black/40 backdrop-blur">
-            <div className="min-w-0">
-              <p className="text-[11px] uppercase tracking-[0.15em] text-white/55">Space</p>
-              <p className="truncate text-sm font-semibold text-white">{headerSpaceLabel}</p>
+          <header className="pointer-events-auto mx-auto max-w-3xl rounded-[28px] border border-white/10 bg-black/70 px-4 py-3 flex flex-col gap-3 shadow-lg shadow-black/40 backdrop-blur">
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex items-center gap-2">
+                <button
+                  className="shrink-0 h-9 w-9 rounded-full border border-white/15 bg-black/60 text-white/70 hover:text-white flex items-center justify-center"
+                  title="Go home"
+                  aria-label="Go home"
+                  onClick={() => { setVoidSheetOpen(false); setChanSheetOpen(false); setUsersSheetOpen(false); if (voiceJoined) leaveVoice(); setCurrentVoidId(""); setCurrentChannelId("general"); }}
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
+                    <path d="M3 9l9-7 9 7" /><path d="M9 22V12h6v10" />
+                  </svg>
+                </button>
+                <div className="min-w-0">
+                  <p className="text-[11px] uppercase tracking-[0.15em] text-white/55">Space</p>
+                  <p className="truncate text-sm font-semibold text-white">{headerSpaceLabel}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="min-w-0 text-right">
+                  <p className="text-[11px] uppercase tracking-[0.15em] text-white/55">{headerChannelEyebrow}</p>
+                  <p className="truncate text-sm font-semibold text-white">{headerChannelLabel}</p>
+                </div>
+                <button
+                  className="shrink-0 h-9 w-9 rounded-full border border-white/15 bg-black/60 text-white/70 hover:text-white flex items-center justify-center"
+                  title="Settings"
+                  aria-label="Settings"
+                  onClick={() => setSettingsOpen(true)}
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
+                    <circle cx="12" cy="12" r="3" />
+                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V22a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 8 20.17a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 3 15.4 1.65 1.65 0 0 0 1.5 14H1.41a2 2 0 1 1 0-4H1.5A1.65 1.65 0 0 0 3 8.6 1.65 1.65 0 0 0 2.17 6.77l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 8 3.83 1.65 1.65 0 0 0 9.5 2.5V2.41a2 2 0 1 1 4 0V2.5A1.65 1.65 0 0 0 15.4 3a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 21 8.6c.36.5.57 1.11.5 1.77H21.5a2 2 0 1 1 0 4H21.5A1.65 1.65 0 0 0 19.4 15z" />
+                  </svg>
+                </button>
+              </div>
             </div>
-            <div className="min-w-0 text-right">
-              <p className="text-[11px] uppercase tracking-[0.15em] text-white/55">{headerChannelEyebrow}</p>
-              <p className="truncate text-sm font-semibold text-white">{headerChannelLabel}</p>
+            <div className="flex gap-3 overflow-x-auto pb-1 pt-1 -mx-1 px-1">
+              {voids.filter(v => !String(v.id).startsWith('dm_') && !hiddenSpaces[v.id]).map(v => {
+                const active = v.id === currentVoidId;
+                return (
+                  <button
+                    key={v.id}
+                    onClick={() => { switchVoid(v.id); }}
+                    className={`shrink-0 flex flex-col items-center gap-1 ${active ? 'text-white' : 'text-white/60'}`}
+                  >
+                    <div className={`h-12 w-12 rounded-full border ${active ? 'border-emerald-400 ring-2 ring-emerald-500/40' : 'border-white/15'} bg-black/60 flex items-center justify-center overflow-hidden`}>
+                      {v.avatarUrl ? <img src={v.avatarUrl} alt={v.name} className="h-full w-full object-cover" /> : <span className="text-sm font-semibold">{(v.name?.[0] || '?').toUpperCase()}</span>}
+                    </div>
+                    <span className="text-[11px] max-w-[72px] truncate">{v.name}</span>
+                  </button>
+                );
+              })}
             </div>
           </header>
         </div>
@@ -3335,7 +3397,7 @@ const mutateChannelTags = useCallback((fqChanId: string, updater: (prev: KanbanT
         {/* Removed top channel bar; channels now in left column */}
 
         {/* Messages, Kanban, or landing */}
-        <div ref={listRef} className="overflow-auto p-4 space-y-2 bg-transparent pb-36 sm:pb-12 md:pb-4">
+        <div ref={listRef} className="overflow-auto p-4 space-y-2 bg-transparent pb-28 sm:pb-12 md:pb-4">
           {currentVoidId && currentChannel?.type === "voice" && (
             <div className="max-w-5xl mx-auto py-4 space-y-4">
               {voiceJoined ? (
@@ -4211,7 +4273,7 @@ const mutateChannelTags = useCallback((fqChanId: string, updater: (prev: KanbanT
               </div>
             </div>
           ) : (currentChannel?.type === 'form' || currentChannel?.type === 'gallery') ? null : (
-            <div className="px-3 sm:px-4 pt-4 pb-28 sm:pb-6 safe-bottom border-t border-white/5 bg-black/30 backdrop-blur-md md:border-transparent md:bg-transparent md:backdrop-blur-none">
+            <div className="px-3 sm:px-4 pt-3 pb-6 safe-bottom bg-transparent border-t border-transparent md:border-transparent md:bg-transparent md:backdrop-blur-none">
               {pendingUploads.length > 0 && (
                 <div className="mb-3 flex flex-wrap gap-2">
                   {pendingUploads.map((a, i) => {
@@ -4900,16 +4962,16 @@ const mutateChannelTags = useCallback((fqChanId: string, updater: (prev: KanbanT
             className="absolute inset-0 bg-black/60"
             style={{
               opacity: chanDrawerProgress * 0.6,
-              transition: swipePanel === 'chan' ? 'none' : 'opacity 200ms ease-out',
+              transition: swipePanel === 'chan' ? 'none' : 'opacity 220ms ease-out',
               pointerEvents: chanDrawerProgress > 0.01 ? 'auto' : 'none',
             }}
             onClick={() => setChanSheetOpen(false)}
           />
           <div
-            className="absolute inset-x-0 bottom-0 max-h-[88%] rounded-t-[32px] border border-white/10 bg-neutral-950/95 shadow-[0_-30px_80px_rgba(0,0,0,0.7)] flex flex-col"
+            className="absolute inset-y-0 left-0 w-4/5 max-w-sm bg-neutral-950/95 border-r border-white/10 shadow-[0_10px_40px_rgba(0,0,0,0.8)] flex flex-col"
             style={{
-              transform: `translateY(${(1 - chanDrawerProgress) * 100}%)`,
-              transition: swipePanel === 'chan' ? 'none' : 'transform 200ms ease-out',
+              transform: `translateX(-${(1 - chanDrawerProgress) * 100}%)`,
+              transition: swipePanel === 'chan' ? 'none' : 'transform 220ms ease-out',
               willChange: 'transform',
             }}
           >
@@ -4918,115 +4980,115 @@ const mutateChannelTags = useCallback((fqChanId: string, updater: (prev: KanbanT
                 <p className="text-xs uppercase tracking-[0.2em] text-neutral-500">{isDmSpace ? 'Conversation' : 'Channels'}</p>
                 <p className="truncate text-lg font-semibold text-white">{isDmSpace ? (currentSpace?.name || 'Direct messages') : (voids.find((v) => v.id === currentVoidId)?.name || headerSpaceLabel)}</p>
               </div>
-              <button className="rounded-full border border-white/10 p-2 text-neutral-300 hover:text-white" onClick={() => setChanSheetOpen(false)} aria-label="Close">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
-                  <line x1="18" y1="6" x2="6" y2="18" />
-                  <line x1="6" y1="6" x2="18" y2="18" />
-                </svg>
-              </button>
-            </div>
-            <div className="flex-1 overflow-auto px-5 py-4 space-y-4">
-              {!isDmSpace && (
-                <div className="space-y-2 rounded-2xl border border-white/10 bg-white/5 p-3">
-                  <button
-                    className="flex w-full items-center justify-between rounded-2xl border border-white/10 bg-neutral-900/70 px-3 py-2 text-left text-white hover:border-emerald-500/50"
-                    onClick={() => setChanTypePickerOpen((prev) => !prev)}
-                  >
-                    <span className="font-semibold">{chanTypePickerOpen ? 'Choose a channel type' : 'Create channel'}</span>
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
-                      <path d="M12 5v14M5 12h14" />
-                    </svg>
-                  </button>
-                  {chanTypePickerOpen && (
-                    <div className="grid grid-cols-2 gap-2">
-                      {CHANNEL_TYPE_OPTIONS.map((opt) => (
-                        <button
-                          key={opt.id}
-                          className="rounded-2xl border border-white/10 bg-neutral-900/80 px-3 py-2 text-left text-neutral-100 hover:border-emerald-500/60"
-                          onClick={async () => {
-                            setChanTypePickerOpen(false);
-                            setChanSheetOpen(false);
-                            await createChannel(opt.id);
-                          }}
-                        >
-                          <div className="font-semibold">{opt.label}</div>
-                          <div className="text-xs text-neutral-400">{opt.desc}</div>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-              <div>
-                <div className="text-xs uppercase tracking-[0.2em] text-neutral-500">{isDmSpace ? 'Conversation' : 'Channels'}</div>
-                <ul className="mt-2 space-y-1.5">
-                  {(!isDmSpace ? channels : channels.filter((ch) => ch.id === 'chat')).map((ch) => {
-                    const active = ch.id === currentChannelId;
-                    return (
-                      <li key={ch.id}>
-                        <button
-                          className={`w-full rounded-2xl border px-3 py-2 text-left transition ${
-                            active ? 'border-emerald-500/60 bg-emerald-500/10 text-white' : 'border-white/5 bg-white/5 text-neutral-200 hover:border-white/15'
-                          }`}
-                          onClick={() => {
-                            switchChannel(ch.id);
-                            setChanSheetOpen(false);
-                          }}
-                        >
-                          {!isDmSpace && <span className="text-neutral-400 mr-1">#</span>}
-                          {ch.name}
-                        </button>
-                      </li>
-                    );
-                  })}
-                </ul>
+                <button className="rounded-full border border-white/10 p-2 text-neutral-300 hover:text-white" onClick={() => setChanSheetOpen(false)} aria-label="Close">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                </button>
               </div>
-              <div>
-                <div className="text-xs uppercase tracking-[0.2em] text-neutral-500">Direct messages</div>
-                <ul className="mt-2 space-y-1.5">
-                  {(() => {
-                    const dmList = voids.filter((v) => {
-                      if (!String(v.id).startsWith('dm_')) return false;
-                      const count = unread[`${v.id}:chat`] || 0;
-                      if (hiddenDms.includes(v.id)) return count > 0 && !mutedSpaces[v.id];
-                      return true;
-                    });
-                    return dmList.map((v) => {
-                      const count = unread[`${v.id}:chat`] || 0;
-                      const active = currentVoidId === v.id;
-                      return (
-                        <li key={v.id} className="flex items-center gap-2">
+              <div className="flex-1 overflow-auto px-5 py-4 space-y-4">
+                {!isDmSpace && (
+                  <div className="space-y-2 rounded-2xl border border-white/10 bg-white/5 p-3">
+                    <button
+                      className="flex w-full items-center justify-between rounded-2xl border border-white/10 bg-neutral-900/70 px-3 py-2 text-left text-white hover:border-emerald-500/50"
+                      onClick={() => setChanTypePickerOpen((prev) => !prev)}
+                    >
+                      <span className="font-semibold">{chanTypePickerOpen ? 'Choose a channel type' : 'Create channel'}</span>
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
+                        <path d="M12 5v14M5 12h14" />
+                      </svg>
+                    </button>
+                    {chanTypePickerOpen && (
+                      <div className="grid grid-cols-2 gap-2">
+                        {CHANNEL_TYPE_OPTIONS.map((opt) => (
                           <button
-                            className={`flex-1 rounded-2xl border px-3 py-2 text-left transition ${active ? 'border-emerald-500/60 bg-emerald-500/10 text-white' : 'border-white/5 bg-white/5 text-neutral-200 hover:border-white/15'}`}
+                            key={opt.id}
+                            className="rounded-2xl border border-white/10 bg-neutral-900/80 px-3 py-2 text-left text-neutral-100 hover:border-emerald-500/60"
+                            onClick={async () => {
+                              setChanTypePickerOpen(false);
+                              setChanSheetOpen(false);
+                              await createChannel(opt.id);
+                            }}
+                          >
+                            <div className="font-semibold">{opt.label}</div>
+                            <div className="text-xs text-neutral-400">{opt.desc}</div>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+                <div>
+                  <div className="text-xs uppercase tracking-[0.2em] text-neutral-500">{isDmSpace ? 'Conversation' : 'Channels'}</div>
+                  <ul className="mt-2 space-y-1.5">
+                    {(!isDmSpace ? channels : channels.filter((ch) => ch.id === 'chat')).map((ch) => {
+                      const active = ch.id === currentChannelId;
+                      return (
+                        <li key={ch.id}>
+                          <button
+                            className={`w-full rounded-2xl border px-3 py-2 text-left transition ${
+                              active ? 'border-emerald-500/60 bg-emerald-500/10 text-white' : 'border-white/5 bg-white/5 text-neutral-200 hover:border-white/15'
+                            }`}
                             onClick={() => {
-                              switchVoid(v.id);
-                              switchChannel('chat');
+                              switchChannel(ch.id);
                               setChanSheetOpen(false);
                             }}
                           >
-                            {v.name || 'DM'}
-                          </button>
-                          {count > 0 && (
-                            <span className="min-w-6 rounded-full bg-emerald-600 px-2 py-1 text-center text-xs font-semibold text-white">{count > 99 ? '99+' : count}</span>
-                          )}
-                          <button
-                            title="Hide DM"
-                            aria-label="Hide DM"
-                            className="rounded-full border border-white/10 p-2 text-neutral-400 hover:text-red-200 hover:border-red-400/60"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setHiddenDms((prev) => (prev.includes(v.id) ? prev : [...prev, v.id]));
-                            }}
-                          >
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
-                              <line x1="18" y1="6" x2="6" y2="18" />
-                              <line x1="6" y1="6" x2="18" y2="18" />
-                            </svg>
+                            {!isDmSpace && <span className="text-neutral-400 mr-1">#</span>}
+                            {ch.name}
                           </button>
                         </li>
                       );
-                    });
-                  })()}
+                    })}
+                  </ul>
+                </div>
+                <div>
+                  <div className="text-xs uppercase tracking-[0.2em] text-neutral-500">Direct messages</div>
+                  <ul className="mt-2 space-y-1.5">
+                    {(() => {
+                      const dmList = voids.filter((v) => {
+                        if (!String(v.id).startsWith('dm_')) return false;
+                        const count = unread[`${v.id}:chat`] || 0;
+                        if (hiddenDms.includes(v.id)) return count > 0 && !mutedSpaces[v.id];
+                        return true;
+                      });
+                      return dmList.map((v) => {
+                        const count = unread[`${v.id}:chat`] || 0;
+                        const active = currentVoidId === v.id;
+                        return (
+                          <li key={v.id} className="flex items-center gap-2">
+                            <button
+                              className={`flex-1 rounded-2xl border px-3 py-2 text-left transition ${active ? 'border-emerald-500/60 bg-emerald-500/10 text-white' : 'border-white/5 bg-white/5 text-neutral-200 hover:border-white/15'}`}
+                              onClick={() => {
+                                switchVoid(v.id);
+                                switchChannel('chat');
+                                setChanSheetOpen(false);
+                              }}
+                            >
+                              {v.name || 'DM'}
+                            </button>
+                            {count > 0 && (
+                              <span className="min-w-6 rounded-full bg-emerald-600 px-2 py-1 text-center text-xs font-semibold text-white">{count > 99 ? '99+' : count}</span>
+                            )}
+                            <button
+                              title="Hide DM"
+                              aria-label="Hide DM"
+                              className="rounded-full border border-white/10 p-2 text-neutral-400 hover:text-red-200 hover:border-red-400/60"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setHiddenDms((prev) => (prev.includes(v.id) ? prev : [...prev, v.id]));
+                              }}
+                            >
+                              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+                                <line x1="18" y1="6" x2="6" y2="18" />
+                                <line x1="6" y1="6" x2="18" y2="18" />
+                              </svg>
+                            </button>
+                          </li>
+                        );
+                      });
+                    })()}
                 </ul>
               </div>
             </div>
@@ -5041,16 +5103,16 @@ const mutateChannelTags = useCallback((fqChanId: string, updater: (prev: KanbanT
             className="absolute inset-0 bg-black/60"
             style={{
               opacity: usersDrawerProgress * 0.6,
-              transition: swipePanel === 'users' ? 'none' : 'opacity 200ms ease-out',
+              transition: swipePanel === 'users' ? 'none' : 'opacity 220ms ease-out',
               pointerEvents: usersDrawerProgress > 0.01 ? 'auto' : 'none',
             }}
             onClick={() => setUsersSheetOpen(false)}
           />
           <div
-            className="absolute inset-x-0 bottom-0 max-h-[88%] rounded-t-[32px] border border-white/10 bg-neutral-950/95 shadow-[0_-30px_80px_rgba(0,0,0,0.7)] flex flex-col"
+            className="absolute inset-y-0 right-0 w-4/5 max-w-sm bg-neutral-950/95 border-l border-white/10 shadow-[0_10px_40px_rgba(0,0,0,0.8)] flex flex-col"
             style={{
-              transform: `translateY(${(1 - usersDrawerProgress) * 100}%)`,
-              transition: swipePanel === 'users' ? 'none' : 'transform 200ms ease-out',
+              transform: `translateX(${(1 - usersDrawerProgress) * 100}%)`,
+              transition: swipePanel === 'users' ? 'none' : 'transform 220ms ease-out',
               willChange: 'transform',
             }}
           >
@@ -5065,8 +5127,8 @@ const mutateChannelTags = useCallback((fqChanId: string, updater: (prev: KanbanT
                   <line x1="6" y1="6" x2="18" y2="18" />
                 </svg>
               </button>
-            </div>
-            <div className="flex-1 overflow-auto px-5 py-4 space-y-2">
+              </div>
+              <div className="flex-1 overflow-auto px-5 py-4 space-y-2">
               {members.map((m) => {
                 const online = globalUserIds.includes(m.id) || spaceUserIds.includes(m.id) || roomUserIds.includes(m.id);
                 const onMobile = globalMobileIds.includes(m.id) || spaceMobileIds.includes(m.id) || roomMobileIds.includes(m.id);
@@ -5094,31 +5156,6 @@ const mutateChannelTags = useCallback((fqChanId: string, updater: (prev: KanbanT
           </div>
         </div>
       )}
-      <BottomNav
-        active={mobileNavActive}
-        onSpaces={() => {
-          setVoidSheetOpen(true);
-          setChanSheetOpen(false);
-          setUsersSheetOpen(false);
-        }}
-        onChannels={() => {
-          if (!currentVoidId) {
-            setVoidSheetOpen(true);
-            return;
-          }
-          setChanSheetOpen(true);
-          setUsersSheetOpen(false);
-        }}
-        onPeople={() => {
-          if (!showPeople) return;
-          setUsersSheetOpen(true);
-          setChanSheetOpen(false);
-        }}
-        onSettings={() => setSettingsOpen(true)}
-        peopleUnread={dmUnreadCount}
-        disableChannels={!currentVoidId}
-        disablePeople={!showPeople}
-      />
     </div>
   );
 }
